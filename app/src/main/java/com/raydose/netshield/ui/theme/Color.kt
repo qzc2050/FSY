@@ -1,5 +1,6 @@
 package com.raydose.netshield.ui.theme
 
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 
 val NetShieldBackgroundTop = Color(0xFF1A1B3A)
@@ -20,3 +21,20 @@ val NetShieldSettingsNavBg = Color(0xFF0C1018)
 val NetShieldSettingsContentBg = Color(0xFF283242)
 /** 中间区内探头编辑卡片（略亮于内容区底） */
 val NetShieldSettingsEditorPanel = Color(0xFF343F52)
+
+/** 参考音乐/相册原型的氛围底色：顶部冷蓝灰，主体蓝黑到紫红横向渐变。 */
+val NetShieldAtmosphereTopBarBg = Color(0xFF303858)
+val NetShieldAtmosphereGradientStart = Color(0xFF101426)
+val NetShieldAtmosphereGradientMid = Color(0xFF342047)
+val NetShieldAtmosphereGradientWarm = Color(0xFF4A2947)
+val NetShieldAtmosphereGradientEnd = Color(0xFF222437)
+val NetShieldAtmosphereListPanelBg = Color(0xCC101421)
+val NetShieldAtmospherePlayerOverlay = Color(0x66404047)
+val NetShieldAtmosphereBackgroundBrush = Brush.horizontalGradient(
+    colors = listOf(
+        NetShieldAtmosphereGradientStart,
+        NetShieldAtmosphereGradientMid,
+        NetShieldAtmosphereGradientWarm,
+        NetShieldAtmosphereGradientEnd,
+    ),
+)

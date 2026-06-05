@@ -1,10 +1,14 @@
 package com.raydose.netshield
 
+import android.Manifest
 import android.graphics.Color
 import android.os.Build
 import android.os.Bundle
+import android.content.pm.PackageManager
 import android.view.WindowInsets
 import android.view.WindowInsetsController
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.SystemBarStyle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -12,14 +16,22 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
+import androidx.core.content.ContextCompat
 import com.raydose.netshield.ui.MainViewModel
 import com.raydose.netshield.ui.components.SideDrawerDestination
 import com.raydose.netshield.ui.home.HomeScreen
+import com.raydose.netshield.ui.music.MusicScreen
+import com.raydose.netshield.ui.music.MusicViewModel
 import com.raydose.netshield.ui.settings.SettingsScreen
 import com.raydose.netshield.ui.theme.NetShieldTheme
 
 class MainActivity : ComponentActivity() {
     private val viewModel: MainViewModel by viewModels()
+    private val musicViewModel: MusicViewModel by viewModels()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -37,6 +49,25 @@ class MainActivity : ComponentActivity() {
                 val settingsState by viewModel.settingsUiState.collectAsState()
                 val showSettings by viewModel.settingsVisible.collectAsState()
                 val systemTimeHint by viewModel.systemTimeHint.collectAsState()
+                var showMusic by rememberSaveable { mutableStateOf(false) }
+                var hasAudioPermission by remember { mutableStateOf(hasAudioReadPermission()) }
+                val audioPermissionLauncher = rememberLauncherForActivityResult(
+                    contract = ActivityResultContracts.RequestMultiplePermissions(),
+                ) {
+                    hasAudioPermission = hasAudioReadPermission()
+                }
+                val requestAudioPermission = {
+                    val missing = requiredAudioPermissions()
+                        .filter {
+                            ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
+                        }
+                        .toTypedArray()
+                    if (missing.isEmpty()) {
+                        hasAudioPermission = true
+                    } else {
+                        audioPermissionLauncher.launch(missing)
+                    }
+                }
 
                 if (showSettings) {
                     SettingsScreen(
@@ -81,6 +112,14 @@ class MainActivity : ComponentActivity() {
                         onConfirmDeleteProbe = viewModel::confirmRemoveProbe,
                         onDismissSaveSuccess = viewModel::dismissSaveSuccessDialog,
                     )
+                } else if (showMusic) {
+                    MusicScreen(
+                        viewModel = musicViewModel,
+                        hasAudioPermission = hasAudioPermission,
+                        probes = homeState.slaveProbes,
+                        onRequestPermission = requestAudioPermission,
+                        onBack = { showMusic = false },
+                    )
                 } else {
                     HomeScreen(
                         state = homeState,
@@ -89,8 +128,17 @@ class MainActivity : ComponentActivity() {
                         onSideDrawerDismiss = { viewModel.setSideDrawerOpen(false) },
                         onSideDrawerDestination = { dest ->
                             viewModel.setSideDrawerOpen(false)
-                            if (dest == SideDrawerDestination.Settings) {
-                                viewModel.openSettings()
+                            when (dest) {
+                                SideDrawerDestination.Music -> {
+                                    showMusic = true
+                                    if (!hasAudioPermission) {
+                                        requestAudioPermission()
+                                    }
+                                }
+                                SideDrawerDestination.Settings -> viewModel.openSettings()
+                                SideDrawerDestination.Album,
+                                SideDrawerDestination.Files,
+                                -> Unit
                             }
                         },
                         onStatusBarDismiss = { viewModel.setStatusBarExpanded(false) },
@@ -116,4 +164,16 @@ class MainActivity : ComponentActivity() {
                 WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
         }
     }
+
+    private fun requiredAudioPermissions(): Array<String> =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            arrayOf(Manifest.permission.READ_MEDIA_AUDIO)
+        } else {
+            arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE)
+        }
+
+    private fun hasAudioReadPermission(): Boolean =
+        requiredAudioPermissions().all {
+            ContextCompat.checkSelfPermission(this, it) == PackageManager.PERMISSION_GRANTED
+        }
 }
