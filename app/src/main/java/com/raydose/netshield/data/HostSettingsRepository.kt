@@ -1,6 +1,8 @@
 package com.raydose.netshield.data
 
 import android.content.Context
+import com.raydose.netshield.model.AlbumMessage
+import com.raydose.netshield.model.AlbumSettings
 import com.raydose.netshield.model.AppLanguage
 import com.raydose.netshield.model.DisplaySoundSettings
 import com.raydose.netshield.model.HostNetworkSettings
@@ -9,6 +11,7 @@ import com.raydose.netshield.model.ProbeCardDisplayMode
 import com.raydose.netshield.model.SavedProbe
 import com.raydose.netshield.model.SlaveNetworkCard
 import com.raydose.netshield.model.TimeSettings
+import org.json.JSONArray
 import org.json.JSONObject
 
 class HostSettingsRepository(context: Context) {
@@ -125,6 +128,66 @@ class HostSettingsRepository(context: Context) {
         prefs.edit().putString(KEY_TIME, o.toString()).apply()
     }
 
+    fun loadAlbumSettings(): AlbumSettings {
+        val o = prefs.getString(KEY_ALBUM, null)?.let { runCatching { JSONObject(it) }.getOrNull() }
+            ?: return AlbumSettings()
+        return AlbumSettings(
+            selectedImageUri = o.optString("selectedImageUri", ""),
+            applyStandby = o.optBoolean("applyStandby", false),
+            applyDesktop = o.optBoolean("applyDesktop", false),
+            applyMessageDesktop = o.optBoolean("applyMessageDesktop", true),
+        )
+    }
+
+    fun saveAlbumSettings(settings: AlbumSettings) {
+        val o = JSONObject().apply {
+            put("selectedImageUri", settings.selectedImageUri)
+            put("applyStandby", settings.applyStandby)
+            put("applyDesktop", settings.applyDesktop)
+            put("applyMessageDesktop", settings.applyMessageDesktop)
+        }
+        prefs.edit().putString(KEY_ALBUM, o.toString()).apply()
+    }
+
+    fun loadAlbumMessages(): List<AlbumMessage> {
+        val raw = prefs.getString(KEY_ALBUM_MESSAGES, null) ?: return defaultAlbumMessages()
+        return runCatching {
+            val array = JSONArray(raw)
+            buildList {
+                for (i in 0 until array.length()) {
+                    val o = array.getJSONObject(i)
+                    add(
+                        AlbumMessage(
+                            id = o.optLong("id"),
+                            text = o.optString("text"),
+                            createdAtMillis = o.optLong("createdAtMillis"),
+                        ),
+                    )
+                }
+            }.filter { it.id > 0L && it.text.isNotBlank() }
+        }.getOrDefault(defaultAlbumMessages())
+    }
+
+    fun saveAlbumMessages(messages: List<AlbumMessage>) {
+        val array = JSONArray()
+        messages.forEach { message ->
+            array.put(
+                JSONObject().apply {
+                    put("id", message.id)
+                    put("text", message.text)
+                    put("createdAtMillis", message.createdAtMillis)
+                },
+            )
+        }
+        prefs.edit().putString(KEY_ALBUM_MESSAGES, array.toString()).apply()
+    }
+
+    fun loadUsbTreeUri(): String = prefs.getString(KEY_USB_TREE_URI, "").orEmpty()
+
+    fun saveUsbTreeUri(uri: String) {
+        prefs.edit().putString(KEY_USB_TREE_URI, uri).apply()
+    }
+
     fun buildSlaveNetworkCards(probes: List<SavedProbe>): List<SlaveNetworkCard> {
         val overrides = loadSlaveNetworkOverrides()
         return probes.map { probe ->
@@ -147,5 +210,17 @@ class HostSettingsRepository(context: Context) {
         private const val KEY_HOST_NET = "host_network"
         private const val KEY_SLAVE_NET = "slave_network"
         private const val KEY_TIME = "time_settings"
+        private const val KEY_ALBUM = "album_settings"
+        private const val KEY_ALBUM_MESSAGES = "album_messages"
+        private const val KEY_USB_TREE_URI = "usb_tree_uri"
+
+        private fun defaultAlbumMessages(): List<AlbumMessage> {
+            val now = System.currentTimeMillis()
+            return listOf(
+                AlbumMessage(1, "十年离乱后，长大一相逢。", now),
+                AlbumMessage(2, "在转瞬间消灭了踪影。你我相逢在黑夜的海上，你有你的，我有我的方向。", now),
+                AlbumMessage(3, "有门，不用开开是我们的，就十分美好早晨，黑夜还要流浪", now),
+            )
+        }
     }
 }

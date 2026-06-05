@@ -1,5 +1,7 @@
 package com.raydose.netshield.ui.home
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -11,11 +13,16 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -24,15 +31,20 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.raydose.netshield.model.AlertLogKind
 import com.raydose.netshield.model.DoorState
 import com.raydose.netshield.model.HomeUiState
 import com.raydose.netshield.model.MessageItem
+import com.raydose.netshield.model.ProbeCardDisplayMode
 import com.raydose.netshield.model.SlaveProbeUi
 import com.raydose.netshield.model.SystemAlertLog
 import com.raydose.netshield.model.statusBarConnectedDevices
@@ -52,6 +64,9 @@ import com.raydose.netshield.ui.components.SlaveProbeCard
 import com.raydose.netshield.ui.components.StatusBarWithGesture
 import com.raydose.netshield.ui.components.rememberStatusBarPanelState
 import com.raydose.netshield.ui.theme.ScreenSpec
+import com.raydose.netshield.ui.theme.NetShieldTextPrimary
+import com.raydose.netshield.ui.theme.NetShieldTextSecondary
+import kotlinx.coroutines.delay
 object HomePreviewData {
     fun sampleOffline(): HomeUiState = HomeUiState(
         dateText = "2026年05月29日  农历四月十三",
@@ -106,6 +121,7 @@ object HomePreviewData {
 @Composable
 fun HomeScreen(
     state: HomeUiState,
+    probeCardMode: ProbeCardDisplayMode = ProbeCardDisplayMode.Fixed,
     onStatusBarToggle: () -> Unit,
     onSideDrawerToggle: () -> Unit,
     onSideDrawerDismiss: () -> Unit,
@@ -119,6 +135,9 @@ fun HomeScreen(
     val drawerPanelState = rememberSideDrawerPanelState()
     val statusBarPanelState = rememberStatusBarPanelState()
     val density = LocalDensity.current
+    val autoScroll = probeCardMode == ProbeCardDisplayMode.Scroll
+    var messageIndex by remember { mutableStateOf(0) }
+    var showMessageList by remember { mutableStateOf(false) }
 
     LaunchedEffect(state.sideDrawerOpen) {
         drawerPanelState.isOpen = state.sideDrawerOpen
@@ -136,6 +155,27 @@ fun HomeScreen(
         }
     }
 
+    LaunchedEffect(autoScroll, state.slaveProbes.size, state.statusBarExpanded) {
+        if (!autoScroll || state.statusBarExpanded || state.slaveProbes.size <= 1) return@LaunchedEffect
+        while (true) {
+            delay(4_000L)
+            pagerState.animateScrollToPage((pagerState.currentPage + 1) % state.slaveProbes.size)
+        }
+    }
+
+    LaunchedEffect(autoScroll, state.messages) {
+        messageIndex = 0
+        if (!autoScroll || state.messages.size <= 1) return@LaunchedEffect
+        while (true) {
+            delay(3_000L)
+            messageIndex = (messageIndex + 1) % state.messages.size
+        }
+    }
+
+    LaunchedEffect(state.statusBarExpanded, state.messages) {
+        if (state.statusBarExpanded || state.messages.isEmpty()) showMessageList = false
+    }
+
     Box(modifier = modifier.fillMaxSize()) {
         GradientBackground()
 
@@ -151,6 +191,8 @@ fun HomeScreen(
             val drawerTopInset = cardHeight * ScreenSpec.SIDE_DRAWER_TOP_INSET_RATIO_OF_CARD
             val drawerPanelWidthPx = with(density) { drawerWidth.toPx() }
             val drawerOpenThresholdPx = with(density) { 56.dp.toPx() }
+            val messageBarWidthFraction = 0.60f
+            val messagePopupWidthFraction = messageBarWidthFraction
             var cardTopInRoot by remember { mutableStateOf(0.dp) }
             val drawerLayout = SideDrawerLayout(
                 panelWidth = drawerWidth,
@@ -181,6 +223,7 @@ fun HomeScreen(
                         )
                         HostEnvScrollPanel(
                             readings = state.hostEnvReadings.map { it.label to it.value },
+                            autoScroll = autoScroll,
                         )
                     }
                 }
@@ -283,12 +326,17 @@ fun HomeScreen(
                                 modifier = Modifier.align(Alignment.CenterStart),
                             )
                             MessageTickerBar(
-                                previewText = state.messages.firstOrNull()?.text ?: "暂无留言",
+                                previewText = state.messages.getOrNull(messageIndex)?.text ?: "暂无留言",
                                 messageCount = state.messages.size,
-                                onClick = onMessageBarClick,
+                                onClick = {
+                                    if (state.messages.isNotEmpty()) {
+                                        showMessageList = !showMessageList
+                                    }
+                                    onMessageBarClick()
+                                },
                                 modifier = Modifier
                                     .align(Alignment.Center)
-                                    .fillMaxWidth(0.60f),
+                                    .fillMaxWidth(messageBarWidthFraction),
                                 widthFraction = 1f,
                             )
                         }
@@ -332,6 +380,56 @@ fun HomeScreen(
                 },
                 modifier = Modifier.fillMaxSize(),
             )
+
+            // 作为根层浮层渲染，不参与底部栏测量，避免点击留言时底栏元素上跳。
+            if (showMessageList && state.messages.isNotEmpty() && !state.statusBarExpanded) {
+                Box(
+                    modifier = Modifier.fillMaxSize(),
+                    contentAlignment = Alignment.BottomCenter,
+                ) {
+                    HomeMessagePopup(
+                        messages = state.messages,
+                        modifier = Modifier
+                            .fillMaxWidth(messagePopupWidthFraction)
+                            .padding(bottom = footerBottomInset + 66.dp),
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun HomeMessagePopup(
+    messages: List<MessageItem>,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        modifier = modifier
+            .clip(RoundedCornerShape(18.dp))
+            .background(Color(0xCC1B3555))
+            .padding(horizontal = 10.dp, vertical = 7.dp),
+    ) {
+        LazyColumn(
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(max = 170.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            items(messages, key = { it.id }) { message ->
+                Text(
+                    text = message.text,
+                    color = NetShieldTextPrimary,
+                    fontSize = 17.sp,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(Color.White.copy(alpha = 0.10f))
+                        .padding(horizontal = 8.dp, vertical = 6.dp),
+                )
+            }
         }
     }
 }
