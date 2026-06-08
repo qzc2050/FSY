@@ -11,6 +11,7 @@ import androidx.compose.foundation.pager.VerticalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
@@ -20,6 +21,7 @@ import androidx.compose.ui.unit.sp
 import com.raydose.netshield.ui.theme.NetShieldTextPrimary
 import com.raydose.netshield.ui.theme.NetShieldTextSecondary
 import com.raydose.netshield.ui.theme.ScreenSpec
+import kotlinx.coroutines.delay
 
 /**
  * 本机环境参数（转接板 0xEF）。
@@ -30,6 +32,7 @@ import com.raydose.netshield.ui.theme.ScreenSpec
 @Composable
 fun HostEnvScrollPanel(
     readings: List<Pair<String, String>>,
+    autoScroll: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
     if (readings.isEmpty()) return
@@ -38,6 +41,14 @@ fun HostEnvScrollPanel(
     val lineHeight = (ScreenSpec.HOME_HOST_ENV_SP + 10).sp
     val pages = readings.chunked(ScreenSpec.HOME_HOST_ENV_ITEMS_PER_PAGE)
     val pagerState = rememberPagerState(pageCount = { pages.size.coerceAtLeast(1) })
+
+    LaunchedEffect(autoScroll, pages.size) {
+        if (!autoScroll || pages.size <= 1) return@LaunchedEffect
+        while (true) {
+            delay(3_000L)
+            pagerState.animateScrollToPage((pagerState.currentPage + 1) % pages.size)
+        }
+    }
 
     VerticalPager(
         state = pagerState,

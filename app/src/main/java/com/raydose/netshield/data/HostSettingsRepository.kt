@@ -182,6 +182,13 @@ class HostSettingsRepository(context: Context) {
         prefs.edit().putString(KEY_ALBUM_MESSAGES, array.toString()).apply()
     }
 
+    fun loadProbeDetailOrgName(): String =
+        prefs.getString(KEY_PROBE_DETAIL_ORG_NAME, "NetShield")?.trim().orEmpty().ifBlank { "NetShield" }
+
+    fun saveProbeDetailOrgName(name: String) {
+        prefs.edit().putString(KEY_PROBE_DETAIL_ORG_NAME, name.trim().ifBlank { "NetShield" }).apply()
+    }
+
     fun loadUsbTreeUri(): String = prefs.getString(KEY_USB_TREE_URI, "").orEmpty()
 
     fun saveUsbTreeUri(uri: String) {
@@ -212,6 +219,7 @@ class HostSettingsRepository(context: Context) {
         private const val KEY_TIME = "time_settings"
         private const val KEY_ALBUM = "album_settings"
         private const val KEY_ALBUM_MESSAGES = "album_messages"
+        private const val KEY_PROBE_DETAIL_ORG_NAME = "probe_detail_org_name"
         private const val KEY_USB_TREE_URI = "usb_tree_uri"
 
         private fun defaultAlbumMessages(): List<AlbumMessage> {

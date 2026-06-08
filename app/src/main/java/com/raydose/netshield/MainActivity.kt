@@ -22,10 +22,14 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.core.content.ContextCompat
+import com.raydose.netshield.data.FileManagerRepository
 import com.raydose.netshield.data.HostSettingsRepository
+import com.raydose.netshield.data.ProbeDoseHistoryRepository
+import com.raydose.netshield.model.FileStorageLocation
 import com.raydose.netshield.model.AlbumMessage
 import com.raydose.netshield.model.AlbumSettings
 import com.raydose.netshield.model.MessageItem
+import com.raydose.netshield.model.SlaveProbeUi
 import com.raydose.netshield.ui.MainViewModel
 import com.raydose.netshield.ui.album.AlbumScreen
 import com.raydose.netshield.ui.components.SideDrawerDestination
@@ -34,8 +38,12 @@ import com.raydose.netshield.ui.files.FileManagerViewModel
 import com.raydose.netshield.ui.home.HomeScreen
 import com.raydose.netshield.ui.music.MusicScreen
 import com.raydose.netshield.ui.music.MusicViewModel
+import com.raydose.netshield.ui.probe.ProbeDetailScreen
 import com.raydose.netshield.ui.settings.SettingsScreen
 import com.raydose.netshield.ui.theme.NetShieldTheme
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 class MainActivity : ComponentActivity() {
     private val viewModel: MainViewModel by viewModels()
@@ -61,10 +69,18 @@ class MainActivity : ComponentActivity() {
                 var showMusic by rememberSaveable { mutableStateOf(false) }
                 var showAlbum by rememberSaveable { mutableStateOf(false) }
                 var showFiles by rememberSaveable { mutableStateOf(false) }
+                var showProbeDetail by rememberSaveable { mutableStateOf(false) }
+                var detailProbeId by rememberSaveable { mutableStateOf<String?>(null) }
                 val hostSettingsRepository = remember { HostSettingsRepository(this) }
+                val doseHistoryRepository = remember { ProbeDoseHistoryRepository(this) }
+                val fileManagerRepository = remember { FileManagerRepository(this) }
+                var usbGrantEpoch by remember { mutableStateOf(0) }
                 var displaySoundSettings by remember { mutableStateOf(hostSettingsRepository.loadDisplaySound()) }
                 var albumSettings by remember { mutableStateOf(hostSettingsRepository.loadAlbumSettings()) }
                 var albumMessages by remember { mutableStateOf(hostSettingsRepository.loadAlbumMessages()) }
+                var probeDetailOrgName by remember {
+                    mutableStateOf(hostSettingsRepository.loadProbeDetailOrgName())
+                }
                 val saveAlbumSettings: (AlbumSettings) -> Unit = { settings ->
                     albumSettings = settings
                     hostSettingsRepository.saveAlbumSettings(settings)
@@ -96,7 +112,9 @@ class MainActivity : ComponentActivity() {
                                 Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION,
                             )
                         }
+                        fileManagerRepository.saveUsbTreeUri(uri.toString())
                         fileManagerViewModel.grantUsbTree(uri.toString())
+                        usbGrantEpoch++
                     }
                 }
                 var hasAudioPermission by remember { mutableStateOf(hasAudioReadPermission()) }
@@ -118,7 +136,37 @@ class MainActivity : ComponentActivity() {
                     }
                 }
 
-                if (showSettings) {
+                if (showProbeDetail) {
+                    ProbeDetailScreen(
+                        probes = homeState.slaveProbes,
+                        initialProbeId = detailProbeId,
+                        organizationName = probeDetailOrgName,
+                        onSaveOrganizationName = { orgName ->
+                            probeDetailOrgName = orgName
+                            hostSettingsRepository.saveProbeDetailOrgName(orgName)
+                        },
+                        onSaveIdentity = { probeId, name, location ->
+                            viewModel.updateProbeIdentity(probeId, name, location)
+                        },
+                        fileManagerRepository = fileManagerRepository,
+                        usbGrantEpoch = usbGrantEpoch,
+                        onExportToPath = { probeId, storage, directoryPath ->
+                            val probe = homeState.slaveProbes.find { it.id == probeId }
+                            if (probe == null) {
+                                "导出失败：未找到探头"
+                            } else {
+                                exportProbeSnapshotCsv(probe, storage, directoryPath, fileManagerRepository)
+                            }
+                        },
+                        dailyDosesFor = { probeId, fallbackRate ->
+                            doseHistoryRepository.dailySummaries(probeId, fallbackRate)
+                        },
+                        onBack = {
+                            showProbeDetail = false
+                            detailProbeId = null
+                        },
+                    )
+                } else if (showSettings) {
                     SettingsScreen(
                         selectedTab = settingsState.selectedTab,
                         manageDrafts = settingsState.manageDrafts,
@@ -158,7 +206,13 @@ class MainActivity : ComponentActivity() {
                         onDismissAddDialog = viewModel::dismissAddProbeDialog,
                         onAddDevice = viewModel::addProbeFromDiscovery,
                         onDetailClick = { },
-                        onDataDetailClick = { },
+                        onDataDetailClick = { index ->
+                            detailProbeId = settingsState.manageDrafts.getOrNull(index)?.id
+                            if (detailProbeId != null) {
+                                viewModel.closeSettings()
+                                showProbeDetail = true
+                            }
+                        },
                         onRemoveProbe = viewModel::requestRemoveProbe,
                         onDismissDeleteConfirm = viewModel::dismissRemoveProbeConfirm,
                         onConfirmDeleteProbe = viewModel::confirmRemoveProbe,
@@ -218,7 +272,10 @@ class MainActivity : ComponentActivity() {
                             }
                         },
                         onStatusBarDismiss = { viewModel.setStatusBarExpanded(false) },
-                        onProbeDetailClick = { },
+                        onProbeDetailClick = { probeId ->
+                            detailProbeId = probeId
+                            showProbeDetail = true
+                        },
                         onMessageBarClick = { },
                     )
                 }
@@ -252,4 +309,47 @@ class MainActivity : ComponentActivity() {
         requiredAudioPermissions().all {
             ContextCompat.checkSelfPermission(this, it) == PackageManager.PERMISSION_GRANTED
         }
+
+    private fun exportProbeSnapshotCsv(
+        probe: SlaveProbeUi,
+        storage: FileStorageLocation,
+        directoryPath: String,
+        repository: FileManagerRepository,
+    ): String {
+        return runCatching {
+            val stamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date())
+            val safeName = probe.name.replace("\\s+".toRegex(), "_")
+            val fileName = "probe_${safeName}_${stamp}.csv"
+            val csv = buildProbeExportCsv(probe)
+            val savedPath = repository.writeTextFile(storage, directoryPath, fileName, csv).getOrThrow()
+            if (storage == FileStorageLocation.Usb) {
+                "导出成功：$savedPath（已刷盘，可拔出 U 盘）"
+            } else {
+                "导出成功：$savedPath"
+            }
+        }.getOrElse { e ->
+            "导出失败：${e.message ?: "未知错误"}"
+        }
+    }
+
+    private fun buildProbeExportCsv(probe: SlaveProbeUi): String = buildString {
+        appendLine("name,location,online,dose_rate,unit,temperature,pressure,humidity,co2,pm25,export_time")
+        appendLine(
+            listOf(
+                probe.name,
+                probe.location,
+                probe.isOnline.toString(),
+                probe.doseRateText,
+                probe.doseUnit,
+                probe.temperature,
+                probe.pressure,
+                probe.humidity,
+                probe.co2,
+                probe.pm25,
+                SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date()),
+            ).joinToString(",") { value ->
+                "\"${value.replace("\"", "\"\"")}\""
+            },
+        )
+    }
 }

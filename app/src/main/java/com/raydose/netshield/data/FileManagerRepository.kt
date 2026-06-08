@@ -3,6 +3,7 @@ package com.raydose.netshield.data
 import android.content.Context
 import android.net.Uri
 import android.os.Environment
+import android.os.ParcelFileDescriptor
 import com.raydose.netshield.model.FileListItem
 import com.raydose.netshield.model.FileStorageLocation
 import androidx.documentfile.provider.DocumentFile
@@ -193,6 +194,90 @@ class FileManagerRepository(context: Context) {
 
     fun loadUsbTreeUri(): String = settingsRepository.loadUsbTreeUri()
 
+    fun listDirectoryEntries(location: FileStorageLocation, directoryPath: String): List<FileListItem> =
+        listItems(location, directoryPath, "").filter { it.isDirectory }
+
+    fun writeTextFile(
+        location: FileStorageLocation,
+        directoryPath: String,
+        fileName: String,
+        content: String,
+    ): Result<String> = runCatching {
+        val safeName = fileName.trim().ifBlank { "probe_export.csv" }
+        val bytes = content.toByteArray(Charsets.UTF_8)
+        require(bytes.isNotEmpty()) { "导出内容为空" }
+        when (location) {
+            FileStorageLocation.Local -> {
+                val dir = requireLocalDirectory(directoryPath)
+                val target = uniqueTargetFile(dir, safeName)
+                writeBytesToLocalFile(target, bytes)
+                require(target.length() > 0L) { "写入后文件为空" }
+                target.absolutePath
+            }
+            FileStorageLocation.Usb -> {
+                val savedPath = if (isRootUsbPath(directoryPath)) {
+                    writeTextToRootUsb(directoryPath, safeName, bytes)
+                } else {
+                    val dir = requireUsbDirectory(directoryPath)
+                    writeBytesToUsbDirectory(dir, safeName, bytes)
+                }
+                flushUsbStorage(directoryPath)
+                savedPath
+            }
+        }
+    }
+
+    private fun writeBytesToLocalFile(target: File, bytes: ByteArray) {
+        target.parentFile?.let { parent -> if (!parent.exists()) parent.mkdirs() }
+        FileOutputStream(target).use { output ->
+            output.write(bytes)
+            output.flush()
+            output.fd.sync()
+        }
+    }
+
+    private fun writeBytesToUsbDirectory(dir: DocumentFile, fileName: String, bytes: ByteArray): String {
+        val created = dir.createFile("text/csv", uniqueUsbName(dir, fileName, null))
+            ?: error("创建文件失败")
+        val temp = File.createTempFile("probe_export_", ".csv", appContext.cacheDir)
+        try {
+            writeBytesToLocalFile(temp, bytes)
+            require(temp.length() > 0L) { "临时文件为空" }
+            val pfd = appContext.contentResolver.openFileDescriptor(created.uri, "wt")
+                ?: error("打开输出流失败")
+            pfd.use { descriptor ->
+                FileOutputStream(descriptor.fileDescriptor).use { stream ->
+                    FileInputStream(temp).use { input -> input.copyTo(stream) }
+                    stream.flush()
+                    descriptor.fileDescriptor.sync()
+                }
+            }
+            if (created.length() <= 0L) {
+                error("写入后文件为空")
+            }
+            return created.uri.toString()
+        } finally {
+            temp.delete()
+        }
+    }
+
+    /** 将 U 盘缓存刷入物理设备，避免导出后立即拔盘看到 0 字节。 */
+    private fun flushUsbStorage(directoryPath: String) {
+        if (!RootShell.isAvailable()) return
+        if (isRootUsbPath(directoryPath)) {
+            val mount = usbMountFromPath(directoryPath)
+            RootShell.run("sync ${RootShell.quote(mount)} 2>/dev/null; sync")
+        } else {
+            RootShell.run("sync")
+        }
+    }
+
+    private fun usbMountFromPath(directoryPath: String): String {
+        if (!directoryPath.startsWith("/storage/")) return directoryPath
+        val volume = directoryPath.removePrefix("/storage/").substringBefore('/')
+        return if (volume.isBlank()) directoryPath else "/storage/$volume"
+    }
+
     private fun localRoot(): File {
         val candidate = Environment.getExternalStorageDirectory()
         if (candidate != null && candidate.exists() && candidate.isDirectory && candidate.canRead()) {
@@ -204,6 +289,7 @@ class FileManagerRepository(context: Context) {
     private fun usbRoot(): Pair<String, String>? {
         val uriString = settingsRepository.loadUsbTreeUri().ifBlank { return null }
         val document = DocumentFile.fromTreeUri(appContext, Uri.parse(uriString)) ?: return null
+        if (!document.exists() || !document.isDirectory || !document.canRead()) return null
         return uriString to (document.name ?: "U盘存储")
     }
 
@@ -214,7 +300,9 @@ class FileManagerRepository(context: Context) {
         )
         if (!result.isSuccess || result.stdout.isBlank()) return null
         val path = result.stdout.lineSequence().first().trim()
-        return path to File(path).name
+        val dir = File(path)
+        if (!dir.exists() || !dir.isDirectory || !dir.canRead()) return null
+        return path to (dir.name.ifBlank { "U盘" })
     }
 
     private fun listLocalItems(directoryPath: String, keyword: String): List<FileListItem> {
@@ -238,24 +326,28 @@ class FileManagerRepository(context: Context) {
     }
 
     private fun listUsbItems(directoryPath: String, keyword: String): List<FileListItem> {
-        if (isRootUsbPath(directoryPath)) {
-            return listRootUsbItems(directoryPath, keyword)
-        }
-        val dir = requireUsbDirectory(directoryPath)
-        return dir.listFiles()
-            .asSequence()
-            .filter { file -> keyword.isEmpty() || file.name.orEmpty().lowercase(Locale.getDefault()).contains(keyword) }
-            .map { file ->
-                FileListItem(
-                    path = file.uri.toString(),
-                    name = file.name.orEmpty().ifBlank { "未命名" },
-                    isDirectory = file.isDirectory,
-                    sizeBytes = if (file.isFile) file.length().coerceAtLeast(0L) else 0L,
-                    modifiedAt = file.lastModified().coerceAtLeast(0L),
-                    storageLocation = FileStorageLocation.Usb,
-                )
+        return runCatching {
+            if (isRootUsbPath(directoryPath)) {
+                listRootUsbItems(directoryPath, keyword)
+            } else {
+                val dir = openUsbDirectory(directoryPath, requireWritable = false)
+                    ?: return emptyList()
+                dir.listFiles()
+                    .asSequence()
+                    .filter { file -> keyword.isEmpty() || file.name.orEmpty().lowercase(Locale.getDefault()).contains(keyword) }
+                    .map { file ->
+                        FileListItem(
+                            path = file.uri.toString(),
+                            name = file.name.orEmpty().ifBlank { "未命名" },
+                            isDirectory = file.isDirectory,
+                            sizeBytes = if (file.isFile) file.length().coerceAtLeast(0L) else 0L,
+                            modifiedAt = file.lastModified().coerceAtLeast(0L),
+                            storageLocation = FileStorageLocation.Usb,
+                        )
+                    }
+                    .toList()
             }
-            .toList()
+        }.getOrDefault(emptyList())
     }
 
     private fun listRootUsbItems(directoryPath: String, keyword: String): List<FileListItem> {
@@ -313,12 +405,21 @@ class FileManagerRepository(context: Context) {
         return file
     }
 
-    private fun requireUsbDirectory(path: String): DocumentFile {
-        require(!isRootUsbPath(path)) { "root U盘目录不应走SAF" }
+    private fun requireUsbDirectory(path: String): DocumentFile =
+        openUsbDirectory(path, requireWritable = true)
+            ?: error("U盘目录不可写")
+
+    private fun openUsbDirectory(path: String, requireWritable: Boolean): DocumentFile? {
+        if (isRootUsbPath(path)) return null
         val file = DocumentFile.fromTreeUri(appContext, Uri.parse(path))
             ?: DocumentFile.fromSingleUri(appContext, Uri.parse(path))
-        requireNotNull(file) { "U盘目录不可访问" }
-        require(file.exists() && file.isDirectory && file.canWrite()) { "U盘目录不可写" }
+            ?: return null
+        if (!file.exists() || !file.isDirectory) return null
+        if (requireWritable) {
+            if (!file.canWrite()) return null
+        } else if (!file.canRead()) {
+            return null
+        }
         return file
     }
 
@@ -377,6 +478,29 @@ class FileManagerRepository(context: Context) {
                 FileInputStream(source).use { input -> input.copyTo(output) }
             } ?: error("打开U盘输出流失败")
             createdFile
+        }
+    }
+
+    private fun writeTextToRootUsb(
+        directoryPath: String,
+        fileName: String,
+        bytes: ByteArray,
+    ): String {
+        val temp = File.createTempFile("probe_export_", ".csv", appContext.cacheDir)
+        try {
+            writeBytesToLocalFile(temp, bytes)
+            require(temp.length() > 0L) { "临时文件为空" }
+            val target = uniqueRootTargetPath(directoryPath, fileName)
+            val result = RootShell.run(
+                "cp ${RootShell.quote(temp.absolutePath)} ${RootShell.quote(target)}",
+            )
+            require(result.isSuccess) { result.stderr.ifBlank { "写入U盘失败" } }
+            val sizeCheck = RootShell.run("stat -c %s ${RootShell.quote(target)}")
+            val size = sizeCheck.stdout.trim().toLongOrNull() ?: 0L
+            require(size > 0L) { "写入后文件为空" }
+            return target
+        } finally {
+            temp.delete()
         }
     }
 

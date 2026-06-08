@@ -60,3 +60,17 @@ data class TimeSettings(
     val showGregorian: Boolean = true,
     val showHoliday: Boolean = false,
 )
+
+/** 电子相册首版设置：图片选择与应用开关。 */
+data class AlbumSettings(
+    val selectedImageUri: String = "",
+    val applyStandby: Boolean = false,
+    val applyDesktop: Boolean = false,
+    val applyMessageDesktop: Boolean = true,
+)
+
+data class AlbumMessage(
+    val id: Long,
+    val text: String,
+    val createdAtMillis: Long,
+)

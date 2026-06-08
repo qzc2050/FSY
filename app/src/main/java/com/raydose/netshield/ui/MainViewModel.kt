@@ -11,6 +11,7 @@ import com.raydose.netshield.data.HostSettingsRepository
 import com.raydose.netshield.ui.home.HomeClockFormatter
 import com.raydose.netshield.data.ProbeConfigRepository
 import com.raydose.netshield.data.ProbeConnectionManager
+import com.raydose.netshield.data.ProbeDoseHistoryRepository
 import com.raydose.netshield.model.DisplaySoundSettings
 import com.raydose.netshield.model.HostNetworkSettings
 import com.raydose.netshield.model.SlaveNetworkCard
@@ -77,6 +78,7 @@ data class ProbeSettingsUiState(
 class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val repository = ProbeConfigRepository(application)
     private val hostSettingsRepository = HostSettingsRepository(application)
+    private val doseHistoryRepository = ProbeDoseHistoryRepository(application)
     private val displaySoundController = DisplaySoundController(application)
     private val discoveredMap = ConcurrentHashMap<String, DiscoveredDevice>()
     private var nextAlertLogId = 1L
@@ -586,6 +588,38 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         Log.i(ProbeConnectionManager.TAG, "探头列表已保存到本机 count=${list.size}")
     }
 
+    /** 探头详情页回写名称/位置，统一落到 SavedProbe 与设置草稿。 */
+    fun updateProbeIdentity(probeId: String, displayName: String, location: String) {
+        val name = displayName.trim().ifBlank { "Detector" }
+        val loc = location.trim()
+        val current = _savedProbes.value
+        if (current.none { it.id == probeId }) return
+
+        val updated = current.map { probe ->
+            if (probe.id == probeId) {
+                probe.copy(displayName = name, location = loc)
+            } else {
+                probe
+            }
+        }
+        persistProbeList(updated)
+
+        _settings.update { state ->
+            val drafts = state.manageDrafts.map { draft ->
+                if (draft.id == probeId) {
+                    draft.withDisplayName(name).withLocation(loc)
+                } else {
+                    draft
+                }
+            }
+            state.copy(
+                manageDrafts = drafts,
+                draftProbes = updated,
+                slaveNetworkCards = hostSettingsRepository.buildSlaveNetworkCards(updated),
+            )
+        }
+    }
+
     private fun persistProbeList(list: List<SavedProbe>) {
         val prevIds = _savedProbes.value.map { it.id }.toSet()
         val newIds = list.map { it.id }.toSet()
@@ -641,7 +675,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private fun onTcpFrame(probeId: String, frame: com.raydose.netshield.net.ParsedFsyFrame) {
         _liveTelemetry.update { map ->
             val prev = map[probeId] ?: LiveProbeTelemetry()
-            map + (probeId to prev.applyParsedFrame(frame))
+            val next = prev.applyParsedFrame(frame)
+            frame.uploadValues?.takeIf { it.size >= 8 }?.let { values ->
+                val dose = values[0] / 100.0
+                doseHistoryRepository.recordSampleIfDue(probeId, dose)
+            }
+            map + (probeId to next)
+        }
+        // 设置页顶部辐射量摘要需要在任意子页实时刷新，不仅限探头管理页。
+        if (_showSettings.value) {
+            patchProbeRealtimeSummaryOnDraft(probeId)
         }
         // 仅主动读应答 0x13 刷新当前卡片一次；0x23 不刷新表单
         if (frame.func == 0x13 && _showSettings.value) {
@@ -682,6 +725,28 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _settings.update { state ->
             val drafts = state.manageDrafts.map { d ->
                 if (d.id != probeId) d else d.copy(isTcpOnline = online)
+            }
+            state.copy(manageDrafts = drafts)
+        }
+    }
+
+    private fun patchProbeRealtimeSummaryOnDraft(probeId: String) {
+        val telemetry = _liveTelemetry.value[probeId] ?: return
+        _settings.update { state ->
+            val drafts = state.manageDrafts.map { draft ->
+                if (draft.id != probeId) {
+                    draft
+                } else {
+                    val dose = if (telemetry.isOnline) telemetry.doseRateText else "---"
+                    if (draft.isTcpOnline == telemetry.isOnline && draft.doseRateSummary == dose) {
+                        draft
+                    } else {
+                        draft.copy(
+                            isTcpOnline = telemetry.isOnline,
+                            doseRateSummary = dose,
+                        )
+                    }
+                }
             }
             state.copy(manageDrafts = drafts)
         }
