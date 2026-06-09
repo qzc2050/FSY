@@ -14,6 +14,8 @@ val NetShieldTextSecondary = Color(0xFFB0B8D0)
 val NetShieldDoorOpen = Color(0xFFE53935)
 val NetShieldDoorClosed = Color(0xFF43A047)
 val NetShieldMessageBar = Color(0xFF1E3A5F)
+/** 待机页留言条目：极淡蓝底 */
+val NetShieldStandbyMessageBg = Color(0x3358B4F8)
 
 /** 设置页三区背景：顶栏探头摘要 / 左导航 / 中间设备管理 */
 val NetShieldSettingsSummaryBg = Color(0xFF1C2E4A)

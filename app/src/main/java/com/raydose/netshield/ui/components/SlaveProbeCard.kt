@@ -35,18 +35,30 @@ fun SlaveProbeCard(
     probe: SlaveProbeUi,
     onDetailClick: () -> Unit,
     modifier: Modifier = Modifier,
+    standbyFrosted: Boolean = false,
 ) {
-    val cardBrush = if (probe.isOnline) {
-        Brush.horizontalGradient(listOf(NetShieldCardOnlineStart, NetShieldCardOnlineEnd))
-    } else {
-        Brush.horizontalGradient(listOf(NetShieldCardOffline, NetShieldCardOffline.copy(alpha = 0.85f)))
+    val cardBrush = when {
+        standbyFrosted -> Brush.linearGradient(listOf(Color.Transparent, Color.Transparent))
+        probe.isOnline -> Brush.horizontalGradient(listOf(NetShieldCardOnlineStart, NetShieldCardOnlineEnd))
+        else -> Brush.horizontalGradient(listOf(NetShieldCardOffline, NetShieldCardOffline.copy(alpha = 0.85f)))
+    }
+    val envBarAlpha = when {
+        standbyFrosted -> 0f
+        else -> 0.25f
     }
 
     Column(
         modifier = modifier
             .fillMaxSize()
-            .clip(RoundedCornerShape(24.dp))
-            .background(cardBrush),
+            .then(
+                if (standbyFrosted) {
+                    Modifier
+                } else {
+                    Modifier
+                        .clip(RoundedCornerShape(24.dp))
+                        .background(cardBrush)
+                },
+            ),
     ) {
         Box(
             modifier = Modifier
@@ -76,13 +88,15 @@ fun SlaveProbeCard(
                     fontSize = 28.sp,
                     fontWeight = FontWeight.Medium,
                 )
-                Text(
-                    text = "🔍",
-                    fontSize = 24.sp,
-                    modifier = Modifier
-                        .padding(start = 10.dp)
-                        .clickable(onClick = onDetailClick),
-                )
+                if (!standbyFrosted) {
+                    Text(
+                        text = "🔍",
+                        fontSize = 24.sp,
+                        modifier = Modifier
+                            .padding(start = 10.dp)
+                            .clickable(onClick = onDetailClick),
+                    )
+                }
             }
 
             // 中间：超大辐射量 + 单位（单位相对数字垂直居中，对齐整行高度中点）
@@ -114,15 +128,22 @@ fun SlaveProbeCard(
             modifier = Modifier
                 .fillMaxWidth()
                 .weight(0.26f)
-                .clip(
-                    RoundedCornerShape(
-                        topStart = 0.dp,
-                        topEnd = 0.dp,
-                        bottomEnd = 24.dp,
-                        bottomStart = 24.dp,
-                    ),
+                .then(
+                    if (standbyFrosted) {
+                        Modifier
+                    } else {
+                        Modifier
+                            .clip(
+                                RoundedCornerShape(
+                                    topStart = 0.dp,
+                                    topEnd = 0.dp,
+                                    bottomEnd = 24.dp,
+                                    bottomStart = 24.dp,
+                                ),
+                            )
+                            .background(Color.Black.copy(alpha = envBarAlpha))
+                    },
                 )
-                .background(Color.Black.copy(alpha = 0.25f))
                 .padding(horizontal = 8.dp, vertical = 12.dp),
             contentAlignment = Alignment.Center,
         ) {

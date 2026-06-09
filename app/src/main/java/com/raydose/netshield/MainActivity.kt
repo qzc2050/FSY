@@ -40,6 +40,7 @@ import com.raydose.netshield.ui.music.MusicScreen
 import com.raydose.netshield.ui.music.MusicViewModel
 import com.raydose.netshield.ui.probe.ProbeDetailScreen
 import com.raydose.netshield.ui.settings.SettingsScreen
+import com.raydose.netshield.ui.standby.StandbyScreen
 import com.raydose.netshield.ui.theme.NetShieldTheme
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -69,6 +70,7 @@ class MainActivity : ComponentActivity() {
                 var showMusic by rememberSaveable { mutableStateOf(false) }
                 var showAlbum by rememberSaveable { mutableStateOf(false) }
                 var showFiles by rememberSaveable { mutableStateOf(false) }
+                var showStandby by rememberSaveable { mutableStateOf(false) }
                 var showProbeDetail by rememberSaveable { mutableStateOf(false) }
                 var detailProbeId by rememberSaveable { mutableStateOf<String?>(null) }
                 val hostSettingsRepository = remember { HostSettingsRepository(this) }
@@ -136,7 +138,16 @@ class MainActivity : ComponentActivity() {
                     }
                 }
 
-                if (showProbeDetail) {
+                if (showStandby) {
+                    StandbyScreen(
+                        state = homeState,
+                        albumSettings = albumSettings,
+                        messages = albumMessages,
+                        timeSettings = settingsState.timeSettings,
+                        probeCardMode = displaySoundSettings.probeCardMode,
+                        onExit = { showStandby = false },
+                    )
+                } else if (showProbeDetail) {
                     ProbeDetailScreen(
                         probes = homeState.slaveProbes,
                         initialProbeId = detailProbeId,
@@ -194,7 +205,10 @@ class MainActivity : ComponentActivity() {
                             viewModel.saveDisplaySoundSettings()
                             displaySoundSettings = settingsState.displaySound
                         },
-                        onPreviewStandby = viewModel::previewStandbyScreen,
+                        onPreviewStandby = {
+                            viewModel.closeSettings()
+                            showStandby = true
+                        },
                         onHostNetworkChange = viewModel::updateHostNetwork,
                         onSlaveNetworkChange = viewModel::updateSlaveNetworkCard,
                         onSaveHostNetwork = viewModel::saveHostNetworkSection,

@@ -45,6 +45,24 @@ object ScreenSpec {
     /** 主页探头卡片：高度占屏高比例（1920 原型约 49.8%） */
     const val HOME_CARD_HEIGHT_FRACTION = 0.498f
 
+    /** 待机页：下区（探头+留言）占屏高比例 */
+    const val STANDBY_BOTTOM_SECTION_FRACTION = 0.5f
+
+    /** 待机页：门状态区占屏高比例 */
+    const val STANDBY_DOOR_SECTION_FRACTION = 0.25f
+
+    /** 待机页：顶区（顶栏+日期时间环境）占屏高比例 */
+    const val STANDBY_HEADER_SECTION_FRACTION = 0.25f
+
+    /** 待机页探头列宽占下区 Row 比例（留言 1/3） */
+    const val STANDBY_PROBE_COLUMN_WEIGHT = 2f
+
+    /** 待机页留言列宽占下区 Row 比例 */
+    const val STANDBY_MESSAGE_COLUMN_WEIGHT = 1f
+
+    /** 待机探头名行距卡片顶（与 [SlaveProbeCard] 顶区 16.dp + 名称行 4.dp 一致） */
+    val standbyProbeNameRowTopInset = 20.dp
+
     /** 右侧预留给翻页箭头 / 侧滑提示的宽度比例 */
     const val HOME_SIDE_HINT_FRACTION = 0.045f
 
@@ -71,6 +89,9 @@ object ScreenSpec {
 
     /** 主页右侧本机环境参数每页显示条数 */
     const val HOME_HOST_ENV_ITEMS_PER_PAGE = 2
+
+    /** 监测组件「滚动」模式：多探头时每页停留时长（毫秒） */
+    const val PROBE_CARD_AUTO_SCROLL_INTERVAL_MS = 5_000L
 
     /** 主页卡片辐射量字号 */
     const val HOME_DOSE_SP = 228
@@ -182,6 +203,18 @@ object ScreenSpec {
     fun statusBarPasswordToggleSp(formFactor: TabletFormFactor): Int = when (formFactor) {
         TabletFormFactor.Compact -> 22
         TabletFormFactor.Expanded -> 26
+    }
+
+    /** 待机页留言字号 */
+    fun standbyMessageSp(formFactor: TabletFormFactor): Int = when (formFactor) {
+        TabletFormFactor.Compact -> 24
+        TabletFormFactor.Expanded -> 28
+    }
+
+    /** 待机页「留言」标题字号（略小于正文） */
+    fun standbyMessageTitleSp(formFactor: TabletFormFactor): Int = when (formFactor) {
+        TabletFormFactor.Compact -> 18
+        TabletFormFactor.Expanded -> 20
     }
 }
 

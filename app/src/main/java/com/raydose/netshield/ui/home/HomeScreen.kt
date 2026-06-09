@@ -54,6 +54,7 @@ import com.raydose.netshield.ui.components.GradientBackground
 import com.raydose.netshield.ui.components.HomeTopBar
 import com.raydose.netshield.ui.components.HostEnvScrollPanel
 import com.raydose.netshield.ui.components.MessageTickerBar
+import com.raydose.netshield.ui.components.ProbePagerAutoScroll
 import com.raydose.netshield.ui.components.ProbePageIndicator
 import com.raydose.netshield.ui.components.SideDrawerDestination
 import com.raydose.netshield.ui.components.SideDrawerLayout
@@ -155,13 +156,12 @@ fun HomeScreen(
         }
     }
 
-    LaunchedEffect(autoScroll, state.slaveProbes.size, state.statusBarExpanded) {
-        if (!autoScroll || state.statusBarExpanded || state.slaveProbes.size <= 1) return@LaunchedEffect
-        while (true) {
-            delay(4_000L)
-            pagerState.animateScrollToPage((pagerState.currentPage + 1) % state.slaveProbes.size)
-        }
-    }
+    ProbePagerAutoScroll(
+        enabled = autoScroll,
+        probeCount = state.slaveProbes.size,
+        pagerState = pagerState,
+        paused = state.statusBarExpanded,
+    )
 
     LaunchedEffect(autoScroll, state.messages) {
         messageIndex = 0

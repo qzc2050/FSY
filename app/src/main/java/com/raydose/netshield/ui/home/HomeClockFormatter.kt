@@ -24,6 +24,35 @@ object HomeClockFormatter {
         return dateLine to timeLine
     }
 
+    /** 待机页：第二行日期+农历，第三行时间（不含节假日单独占行）。 */
+    fun formatStandbyLines(
+        now: Date,
+        prefs: TimeSettings,
+        fallbackDateText: String,
+        fallbackTimeText: String,
+    ): StandbyClockLines {
+        val cal = Calendar.getInstance().apply { time = now }
+        val dateParts = mutableListOf<String>()
+        if (prefs.showGregorian) {
+            dateParts += gregorianDateFmt.format(now)
+        }
+        if (prefs.showLunar) {
+            formatLunar(cal)?.let { dateParts += it }
+        }
+        val dateLine = dateParts.joinToString("  ").ifBlank { fallbackDateText }
+        val timeLine = if (prefs.use24Hour) {
+            time24Fmt.format(now)
+        } else {
+            time12Fmt.format(now)
+        }.ifBlank { fallbackTimeText }
+        return StandbyClockLines(dateLine = dateLine, timeLine = timeLine)
+    }
+
+    data class StandbyClockLines(
+        val dateLine: String,
+        val timeLine: String,
+    )
+
     private fun buildDateLine(cal: Calendar, now: Date, prefs: TimeSettings): String {
         val parts = mutableListOf<String>()
         if (prefs.showGregorian) {

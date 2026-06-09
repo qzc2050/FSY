@@ -304,10 +304,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         Log.i(ProbeConnectionManager.TAG, "同步时间到设备（待实现） at=$hint")
     }
 
-    fun previewStandbyScreen() {
-        _settings.update { it.copy(statusHint = "待机画面功能待开发（image16）") }
-    }
-
     fun aboutDeviceInfo(): AboutDeviceInfo {
         val app = getApplication<Application>()
         val version = run {
