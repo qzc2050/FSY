@@ -40,6 +40,7 @@ import com.raydose.netshield.ui.music.MusicScreen
 import com.raydose.netshield.ui.music.MusicViewModel
 import com.raydose.netshield.ui.probe.ProbeDetailScreen
 import com.raydose.netshield.ui.settings.SettingsScreen
+import com.raydose.netshield.ui.standby.StandbyIdleWatcher
 import com.raydose.netshield.ui.standby.StandbyScreen
 import com.raydose.netshield.ui.theme.NetShieldTheme
 import java.text.SimpleDateFormat
@@ -50,6 +51,9 @@ class MainActivity : ComponentActivity() {
     private val viewModel: MainViewModel by viewModels()
     private val musicViewModel: MusicViewModel by viewModels()
     private val fileManagerViewModel: FileManagerViewModel by viewModels()
+
+    /** 由 [StandbyIdleWatcher] 注册；[onUserInteraction] 时回调以重置空闲计时。 */
+    private var onStandbyIdleUserInteraction: (() -> Unit)? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -137,6 +141,18 @@ class MainActivity : ComponentActivity() {
                         audioPermissionLauncher.launch(missing)
                     }
                 }
+
+                val isHomeScreen = !showStandby && !showProbeDetail && !showSettings &&
+                    !showMusic && !showAlbum && !showFiles
+
+                StandbyIdleWatcher(
+                    watchIdle = isHomeScreen,
+                    standbyMinutes = displaySoundSettings.standbyMinutes,
+                    onRegisterUserInteraction = { listener ->
+                        onStandbyIdleUserInteraction = listener
+                    },
+                    onEnterStandby = { showStandby = true },
+                )
 
                 if (showStandby) {
                     StandbyScreen(
@@ -295,6 +311,11 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+    }
+
+    override fun onUserInteraction() {
+        super.onUserInteraction()
+        onStandbyIdleUserInteraction?.invoke()
     }
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {
