@@ -123,6 +123,7 @@ object HomePreviewData {
 fun HomeScreen(
     state: HomeUiState,
     probeCardMode: ProbeCardDisplayMode = ProbeCardDisplayMode.Fixed,
+    visibleProbeCards: Int = 1,
     onStatusBarToggle: () -> Unit,
     onSideDrawerToggle: () -> Unit,
     onSideDrawerDismiss: () -> Unit,
@@ -132,7 +133,9 @@ fun HomeScreen(
     onMessageBarClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val pagerState = rememberPagerState(pageCount = { state.slaveProbes.size.coerceAtLeast(1) })
+    val probesPerPage = visibleProbeCards.coerceIn(1, 4)
+    val probePageCount = homeProbePageCount(state.slaveProbes.size, probesPerPage)
+    val pagerState = rememberPagerState(pageCount = { probePageCount })
     val drawerPanelState = rememberSideDrawerPanelState()
     val statusBarPanelState = rememberStatusBarPanelState()
     val density = LocalDensity.current
@@ -150,24 +153,27 @@ fun HomeScreen(
         if (!state.statusBarExpanded) statusBarPanelState.reset()
     }
 
-    LaunchedEffect(state.selectedProbeIndex) {
-        if (state.slaveProbes.isNotEmpty() && pagerState.currentPage != state.selectedProbeIndex) {
-            pagerState.animateScrollToPage(state.selectedProbeIndex)
+    LaunchedEffect(state.selectedProbeIndex, probesPerPage) {
+        if (state.slaveProbes.isNotEmpty()) {
+            val targetPage = (state.selectedProbeIndex / probesPerPage).coerceIn(0, probePageCount - 1)
+            if (pagerState.currentPage != targetPage) {
+                pagerState.animateScrollToPage(targetPage)
+            }
         }
     }
 
     ProbePagerAutoScroll(
         enabled = autoScroll,
-        probeCount = state.slaveProbes.size,
+        probeCount = probePageCount,
         pagerState = pagerState,
         paused = state.statusBarExpanded,
     )
 
-    LaunchedEffect(autoScroll, state.messages) {
+    LaunchedEffect(autoScroll, state.messages, state.statusBarExpanded) {
         messageIndex = 0
-        if (!autoScroll || state.messages.size <= 1) return@LaunchedEffect
+        if (!autoScroll || state.statusBarExpanded || state.messages.size <= 1) return@LaunchedEffect
         while (true) {
-            delay(3_000L)
+            delay(ScreenSpec.MESSAGE_TICKER_ROTATE_INTERVAL_MS)
             messageIndex = (messageIndex + 1) % state.messages.size
         }
     }
@@ -284,9 +290,14 @@ fun HomeScreen(
                                     state = pagerState,
                                     modifier = Modifier.fillMaxSize(),
                                 ) { page ->
-                                    SlaveProbeCard(
-                                        probe = state.slaveProbes[page],
-                                        onDetailClick = { onProbeDetailClick(state.slaveProbes[page].id) },
+                                    HomeProbeGridPage(
+                                        slots = homeProbeGridSlots(
+                                            probes = state.slaveProbes,
+                                            page = page,
+                                            visiblePerPage = probesPerPage,
+                                        ),
+                                        visiblePerPage = probesPerPage,
+                                        onProbeDetailClick = onProbeDetailClick,
                                         modifier = Modifier.fillMaxSize(),
                                     )
                                 }
@@ -307,9 +318,9 @@ fun HomeScreen(
                             .weight(1f),
                         contentAlignment = Alignment.Center,
                     ) {
-                        if (state.slaveProbes.isNotEmpty()) {
+                        if (state.slaveProbes.isNotEmpty() && probePageCount > 1) {
                             ProbePageIndicator(
-                                pageCount = state.slaveProbes.size,
+                                pageCount = probePageCount,
                                 currentPage = pagerState.currentPage,
                             )
                         }
@@ -326,8 +337,13 @@ fun HomeScreen(
                                 modifier = Modifier.align(Alignment.CenterStart),
                             )
                             MessageTickerBar(
-                                previewText = state.messages.getOrNull(messageIndex)?.text ?: "暂无留言",
+                                messageIndex = messageIndex,
+                                messageTextAt = { idx ->
+                                    state.messages.getOrNull(idx)?.text ?: "暂无留言"
+                                },
                                 messageCount = state.messages.size,
+                                scrollEnabled = autoScroll,
+                                animateMessageChange = autoScroll && state.messages.size > 1,
                                 onClick = {
                                     if (state.messages.isNotEmpty()) {
                                         showMessageList = !showMessageList

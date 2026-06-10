@@ -359,6 +359,19 @@ private fun parseReadResp13(frame: ByteArray, addr: Int, crcOk: Boolean): Parsed
         return ParsedFsyFrame(addr, 0x13, crcOk, "0x13 设备时间: ${devTime.timeString}", deviceTime = devTime)
     }
 
+    // 实时环境：startReg=0x0001（转接板 0xEF 串口读/上传）
+    if (startReg == REG_REALTIME_UPLOAD && byteCount >= 8 && frame.size >= payloadStart + 8) {
+        val count = byteCount / 4
+        val values = (0 until count).map { u32le(frame, payloadStart + it * 4) }
+        return ParsedFsyFrame(
+            addr = addr,
+            func = 0x13,
+            crcOk = crcOk,
+            summary = "0x13 实时环境: ${values.size}项",
+            uploadValues = values,
+        )
+    }
+
     // 报警阈值：startReg=0x0040（完整 12×u32 或仅辐射前 2×u32）
     if (startReg == REG_THRESHOLD_READ && byteCount >= 8 && frame.size >= payloadStart + 8) {
         val count = minOf(12, byteCount / 4)

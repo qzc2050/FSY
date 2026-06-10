@@ -15,6 +15,10 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -22,6 +26,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.core.content.ContextCompat
+import com.raydose.netshield.data.DisplaySoundController
 import com.raydose.netshield.data.FileManagerRepository
 import com.raydose.netshield.data.HostSettingsRepository
 import com.raydose.netshield.data.ProbeDoseHistoryRepository
@@ -32,6 +37,7 @@ import com.raydose.netshield.model.MessageItem
 import com.raydose.netshield.model.SlaveProbeUi
 import com.raydose.netshield.ui.MainViewModel
 import com.raydose.netshield.ui.album.AlbumScreen
+import com.raydose.netshield.ui.components.appBrightnessDim
 import com.raydose.netshield.ui.components.SideDrawerDestination
 import com.raydose.netshield.ui.files.FileManagerScreen
 import com.raydose.netshield.ui.files.FileManagerViewModel
@@ -43,6 +49,7 @@ import com.raydose.netshield.ui.settings.SettingsScreen
 import com.raydose.netshield.ui.standby.StandbyIdleWatcher
 import com.raydose.netshield.ui.standby.StandbyScreen
 import com.raydose.netshield.ui.theme.NetShieldTheme
+import androidx.compose.ui.Modifier
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -82,6 +89,20 @@ class MainActivity : ComponentActivity() {
                 val fileManagerRepository = remember { FileManagerRepository(this) }
                 var usbGrantEpoch by remember { mutableStateOf(0) }
                 var displaySoundSettings by remember { mutableStateOf(hostSettingsRepository.loadDisplaySound()) }
+
+                DisposableEffect(Unit) {
+                    viewModel.bindWindowBrightnessApplier { fraction ->
+                        DisplaySoundController.applyWindowBrightness(window, fraction)
+                    }
+                    onDispose {
+                        viewModel.bindWindowBrightnessApplier(null)
+                    }
+                }
+
+                LaunchedEffect(displaySoundSettings.brightness) {
+                    viewModel.applyInitialWindowBrightness(displaySoundSettings.brightness)
+                }
+
                 var albumSettings by remember { mutableStateOf(hostSettingsRepository.loadAlbumSettings()) }
                 var albumMessages by remember { mutableStateOf(hostSettingsRepository.loadAlbumMessages()) }
                 var probeDetailOrgName by remember {
@@ -145,6 +166,17 @@ class MainActivity : ComponentActivity() {
                 val isHomeScreen = !showStandby && !showProbeDetail && !showSettings &&
                     !showMusic && !showAlbum && !showFiles
 
+                val effectiveBrightness = if (showSettings) {
+                    settingsState.displaySound.brightness
+                } else {
+                    displaySoundSettings.brightness
+                }
+
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .appBrightnessDim(effectiveBrightness),
+                ) {
                 StandbyIdleWatcher(
                     watchIdle = isHomeScreen,
                     standbyMinutes = displaySoundSettings.standbyMinutes,
@@ -215,8 +247,31 @@ class MainActivity : ComponentActivity() {
                         onDraftChange = viewModel::updateManageDraft,
                         onVolumeCommitted = viewModel::commitProbeVolume,
                         onDisplaySoundChange = viewModel::updateDisplaySound,
-                        onBrightnessCommitted = viewModel::commitDisplaySoundBrightness,
-                        onSystemVolumeCommitted = viewModel::commitDisplaySoundSystemVolume,
+                        onBrightnessPreview = viewModel::previewDisplaySoundBrightness,
+                        onBrightnessCommitted = {
+                            viewModel.commitDisplaySoundBrightness()
+                            displaySoundSettings = viewModel.settingsUiState.value.displaySound
+                        },
+                        onSystemVolumeCommitted = {
+                            viewModel.commitDisplaySoundSystemVolume()
+                            displaySoundSettings = viewModel.settingsUiState.value.displaySound
+                        },
+                        onHostAlarmVolumeCommitted = {
+                            viewModel.commitDisplaySoundHostAlarmVolume()
+                            displaySoundSettings = viewModel.settingsUiState.value.displaySound
+                        },
+                        onPromptVolumeCommitted = {
+                            viewModel.commitDisplaySoundPromptVolume()
+                            displaySoundSettings = viewModel.displaySoundSettings.value
+                        },
+                        onMuteCommitted = { mute ->
+                            viewModel.commitDisplaySoundMute(mute)
+                            displaySoundSettings = viewModel.displaySoundSettings.value
+                        },
+                        onPauseAlarmCommitted = { enabled ->
+                            viewModel.commitDisplaySoundPauseAlarm(enabled)
+                            displaySoundSettings = viewModel.displaySoundSettings.value
+                        },
                         onSaveDisplaySound = {
                             viewModel.saveDisplaySoundSettings()
                             displaySoundSettings = settingsState.displaySound
@@ -284,6 +339,7 @@ class MainActivity : ComponentActivity() {
                     HomeScreen(
                         state = homeState.copy(messages = desktopMessages),
                         probeCardMode = displaySoundSettings.probeCardMode,
+                        visibleProbeCards = displaySoundSettings.visibleProbeCards,
                         onStatusBarToggle = viewModel::toggleStatusBar,
                         onSideDrawerToggle = { viewModel.setSideDrawerOpen(true) },
                         onSideDrawerDismiss = { viewModel.setSideDrawerOpen(false) },
@@ -308,6 +364,7 @@ class MainActivity : ComponentActivity() {
                         },
                         onMessageBarClick = { },
                     )
+                }
                 }
             }
         }

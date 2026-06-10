@@ -41,7 +41,7 @@ fun LiveProbeTelemetry.applyRealtimeUpload(values: List<Long>): LiveProbeTelemet
         humidity = "${humidityPct}%",
         co2 = "%.1f ppm".format(co2ppm),
         pm25 = "%.1f".format(pm25),
-        hasAlarm = alarmBit != 0L,
+        hasAlarm = isRadiationDoseAlarmActive(alarmBit),
         alarmBit = alarmBit,
         externalAlarmConnected = isExternalAlarmConnected(alarmBit),
         doorOpen = doorOpen,

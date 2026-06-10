@@ -1,0 +1,129 @@
+package com.raydose.netshield.data
+
+import android.util.Log
+import com.raydose.netshield.model.HostAdapterSnapshot
+import com.raydose.netshield.model.parseHostAdapterUpload
+import com.raydose.netshield.net.FsySerialFrameCollector
+import com.raydose.netshield.net.buildReadRegsFrame
+import com.raydose.netshield.net.parseFsyTcpFrame
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+
+/**
+ * 本机环境：转接板串口地址 [HOST_ADAPTER_ADDR]（0xEF）。
+ *
+ * 优先解析固件每秒主动推送的 **0x23** 实时包；若长时间无数据则发 **0x03** 读 0x0001 兜底。
+ */
+class HostEnvSerialRepository(
+    private val devicePath: String = DEFAULT_DEVICE_PATH,
+    private val baudRate: Int = DEFAULT_BAUD_RATE,
+    private val deviceAddr: Int = HOST_ADAPTER_ADDR,
+) {
+    private val _snapshot = MutableStateFlow(HostAdapterSnapshot.empty())
+    val snapshot: StateFlow<HostAdapterSnapshot> = _snapshot.asStateFlow()
+
+    private val frameCollector = FsySerialFrameCollector()
+    private var client: SerialPortClient? = null
+    private var pollThread: Thread? = null
+    @Volatile
+    private var running = false
+
+    fun start() {
+        if (running) return
+        running = true
+        frameCollector.reset()
+        client = SerialPortClient(
+            devicePath = devicePath,
+            onReceive = ::onSerialBytes,
+            onError = ::onSerialError,
+        )
+        val opened = client?.open(baudRate) == true
+        if (opened) {
+            Log.i(TAG, "串口已打开 path=$devicePath baud=$baudRate addr=0x${deviceAddr.toString(16).uppercase()}")
+            requestRealtimeRead()
+            startPollLoop()
+        } else {
+            Log.w(TAG, "串口打开失败 path=$devicePath")
+        }
+    }
+
+    fun stop() {
+        running = false
+        pollThread?.interrupt()
+        pollThread = null
+        client?.close()
+        client = null
+        frameCollector.reset()
+    }
+
+    /** 0x03 读实时环境 reg 0x0001，count=0x0016（11×uint32） */
+    fun requestRealtimeRead() {
+        if (client == null) return
+        val frame = buildReadRegsFrame(
+            startReg = REG_REALTIME_START,
+            count = REG_REALTIME_COUNT,
+            deviceAddr = deviceAddr.toByte(),
+        )
+        client?.send(frame)
+    }
+
+    private fun startPollLoop() {
+        pollThread = Thread {
+            while (running) {
+                try {
+                    Thread.sleep(POLL_INTERVAL_MS)
+                } catch (_: InterruptedException) {
+                    break
+                }
+                if (!running) break
+                val last = _snapshot.value.lastUpdateMillis
+                if (last <= 0L || System.currentTimeMillis() - last >= STALE_MS) {
+                    requestRealtimeRead()
+                }
+            }
+        }.apply {
+            isDaemon = true
+            name = "host-env-serial-poll"
+            start()
+        }
+    }
+
+    private fun onSerialBytes(chunk: ByteArray) {
+        val frames = frameCollector.feed(chunk)
+        for (frame in frames) {
+            val parsed = parseFsyTcpFrame(frame) ?: continue
+            if (parsed.addr != deviceAddr) continue
+            if (!parsed.crcOk) {
+                Log.w(TAG, "CRC 错误: ${parsed.summary}")
+                continue
+            }
+            when (parsed.func) {
+                0x23 -> parsed.uploadValues?.let(::applyUploadValues)
+                0x13 -> parsed.uploadValues?.let(::applyUploadValues)
+            }
+        }
+    }
+
+    private fun applyUploadValues(values: List<Long>) {
+        val next = parseHostAdapterUpload(values) ?: return
+        _snapshot.value = next
+        Log.d(TAG, "本机环境已更新 ${next.envReadings.joinToString { "${it.label}=${it.value}" }}")
+    }
+
+    private fun onSerialError(message: String) {
+        Log.w(TAG, message)
+    }
+
+    companion object {
+        private const val TAG = "NetShield"
+        const val HOST_ADAPTER_ADDR = 0xEF
+        const val DEFAULT_DEVICE_PATH = "/dev/ttyS9"
+        const val DEFAULT_BAUD_RATE = 115200
+        private const val REG_REALTIME_START = 0x0001
+        /** 11 项 × 2 reg = 22 */
+        private const val REG_REALTIME_COUNT = 0x0016
+        private const val POLL_INTERVAL_MS = 3_000L
+        private const val STALE_MS = 5_000L
+    }
+}

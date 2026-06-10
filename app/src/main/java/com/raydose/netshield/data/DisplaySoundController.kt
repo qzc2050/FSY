@@ -7,6 +7,7 @@ import android.os.Handler
 import android.os.Looper
 import android.provider.Settings
 import android.util.Log
+import android.view.Window
 import kotlin.math.roundToInt
 
 /** 本机显示与声音：仅 Android 系统层，与从机协议无关。 */
@@ -26,8 +27,12 @@ class DisplaySoundController(context: Context) {
         systemVolume = readMusicVolumeFraction(),
     )
 
-    fun applyBrightness(fraction: Float): Boolean {
-        val value = (fraction.coerceIn(0f, 1f) * 255f).roundToInt().coerceIn(1, 255)
+    fun applyBrightness(fraction: Float): Boolean = applySystemBrightness(fraction)
+
+    /** 写入 Settings.System（需「修改系统设置」权限）。 */
+    fun applySystemBrightness(fraction: Float): Boolean {
+        val mapped = AppBrightness.windowLevel(fraction)
+        val value = (mapped * 255f).roundToInt().coerceIn(0, 255)
         return try {
             if (Settings.System.canWrite(appContext)) {
                 Settings.System.putInt(
@@ -68,12 +73,48 @@ class DisplaySoundController(context: Context) {
     /** 松手调节系统音量后播放短促提示音，便于听清当前音量（走 STREAM_MUSIC）。 */
     fun playSystemVolumePreview() {
         if (audioManager.getStreamVolume(AudioManager.STREAM_MUSIC) <= 0) return
+        playTonePreview(
+            streamType = AudioManager.STREAM_MUSIC,
+            toneType = ToneGenerator.TONE_PROP_BEEP2,
+            durationMs = 160,
+            volumeFraction = 0.85f,
+        )
+    }
+
+    /** 本机报警音量预览：较长、较 urgent（STREAM_ALARM）。 */
+    fun playHostAlarmPreview(volumeFraction: Float) {
+        playTonePreview(
+            streamType = AudioManager.STREAM_ALARM,
+            toneType = ToneGenerator.TONE_CDMA_ALERT_CALL_GUARD,
+            durationMs = 480,
+            volumeFraction = volumeFraction,
+        )
+    }
+
+    /** 提示音量预览：短促按键音（STREAM_NOTIFICATION）。 */
+    fun playPromptPreview(volumeFraction: Float) {
+        playTonePreview(
+            streamType = AudioManager.STREAM_NOTIFICATION,
+            toneType = ToneGenerator.TONE_PROP_BEEP,
+            durationMs = 140,
+            volumeFraction = volumeFraction,
+        )
+    }
+
+    private fun playTonePreview(
+        streamType: Int,
+        toneType: Int,
+        durationMs: Int,
+        volumeFraction: Float,
+    ) {
+        if (volumeFraction <= 0f) return
+        val vol = (volumeFraction.coerceIn(0f, 1f) * 100f).roundToInt().coerceIn(1, 100)
         try {
-            val tone = ToneGenerator(AudioManager.STREAM_MUSIC, 85)
-            tone.startTone(ToneGenerator.TONE_PROP_BEEP2, 160)
-            mainHandler.postDelayed({ tone.release() }, 200L)
+            val tone = ToneGenerator(streamType, vol)
+            tone.startTone(toneType, durationMs)
+            mainHandler.postDelayed({ tone.release() }, (durationMs + 80).toLong())
         } catch (e: Exception) {
-            Log.w(TAG, "音量预览音播放失败", e)
+            Log.w(TAG, "预览音播放失败 stream=$streamType", e)
         }
     }
 
@@ -104,5 +145,14 @@ class DisplaySoundController(context: Context) {
 
     companion object {
         private const val TAG = "NetShield"
+
+        /** 调节当前 Activity 窗口亮度，无需 WRITE_SETTINGS。 */
+        fun applyWindowBrightness(window: Window, sliderFraction: Float) {
+            val level = AppBrightness.windowLevel(sliderFraction)
+            window.attributes = window.attributes.apply {
+                screenBrightness = level
+            }
+            Log.i(TAG, "窗口亮度已写入 slider=$sliderFraction mapped=$level")
+        }
     }
 }

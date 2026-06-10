@@ -5,6 +5,7 @@ import com.raydose.netshield.model.AlbumMessage
 import com.raydose.netshield.model.AlbumSettings
 import com.raydose.netshield.model.AppLanguage
 import com.raydose.netshield.model.DisplaySoundSettings
+import com.raydose.netshield.model.withExpiredPauseCleared
 import com.raydose.netshield.model.HostNetworkSettings
 import com.raydose.netshield.model.NetworkWifiDefaults
 import com.raydose.netshield.model.ProbeCardDisplayMode
@@ -32,8 +33,8 @@ class HostSettingsRepository(context: Context) {
             promptVolume = o.optDouble("promptVolume", 0.7).toFloat(),
             visibleProbeCards = o.optInt("visibleProbeCards", 1).coerceIn(1, 4),
             mute = o.optBoolean("mute", false),
-            pauseAlarmFiveMinutes = o.optBoolean("pauseAlarmFiveMinutes", false),
-        )
+            pauseAlarmUntilMillis = o.optLong("pauseAlarmUntilMillis", 0L),
+        ).withExpiredPauseCleared()
     }
 
     fun saveDisplaySound(settings: DisplaySoundSettings) {
@@ -47,7 +48,7 @@ class HostSettingsRepository(context: Context) {
             put("promptVolume", settings.promptVolume.toDouble())
             put("visibleProbeCards", settings.visibleProbeCards)
             put("mute", settings.mute)
-            put("pauseAlarmFiveMinutes", settings.pauseAlarmFiveMinutes)
+            put("pauseAlarmUntilMillis", settings.pauseAlarmUntilMillis)
         }
         prefs.edit().putString(KEY_DISPLAY, o.toString()).apply()
     }

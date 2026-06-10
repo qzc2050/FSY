@@ -19,6 +19,17 @@ fun isExternalAlarmConnected(alarmBit: Long): Boolean {
     return !soundOffline || !lightOffline
 }
 
+/** alarm_bit bit0=辐射上限报警，bit1=辐射下限报警（与 0x52 使能位同序；1=正在报警） */
+private const val RADIATION_UPPER_ALARM_BIT = 0
+private const val RADIATION_LOWER_ALARM_BIT = 1
+
+/** 仅辐射剂量上/下阈值超限视为报警；温湿压、CO2、PM2.5、声光离线等 bit 忽略。 */
+fun isRadiationDoseAlarmActive(alarmBit: Long): Boolean {
+    val upper = (alarmBit shr RADIATION_UPPER_ALARM_BIT) and 1L != 0L
+    val lower = (alarmBit shr RADIATION_LOWER_ALARM_BIT) and 1L != 0L
+    return upper || lower
+}
+
 /** 0x52 bit0=禁止辐射上限报警，bit1=禁止下限；UI 开=未禁止 */
 fun isRadiationUpperAlarmEnabled(alarmEnable: Long): Boolean = (alarmEnable and 1L) == 0L
 

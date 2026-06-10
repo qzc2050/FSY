@@ -7,13 +7,18 @@ import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.raydose.netshield.data.DisplaySoundController
+import com.raydose.netshield.data.HostAlarmController
+import com.raydose.netshield.data.HostEnvSerialRepository
 import com.raydose.netshield.data.HostSettingsRepository
 import com.raydose.netshield.ui.home.HomeClockFormatter
 import com.raydose.netshield.data.ProbeConfigRepository
 import com.raydose.netshield.data.ProbeConnectionManager
 import com.raydose.netshield.data.ProbeDoseHistoryRepository
 import com.raydose.netshield.model.DisplaySoundSettings
+import com.raydose.netshield.model.PAUSE_ALARM_DURATION_MS
 import com.raydose.netshield.model.HostNetworkSettings
+import com.raydose.netshield.model.isHostAlarmSuppressed
+import com.raydose.netshield.model.withExpiredPauseCleared
 import com.raydose.netshield.model.SlaveNetworkCard
 import com.raydose.netshield.model.TimeSettings
 import com.raydose.netshield.net.listFsyNetworkOptions
@@ -23,6 +28,8 @@ import com.raydose.netshield.ui.theme.TabletFormFactor
 import com.raydose.netshield.model.AlertLogKind
 import com.raydose.netshield.model.DiscoveredDevice
 import com.raydose.netshield.model.DoorState
+import com.raydose.netshield.model.HostAdapterSnapshot
+import com.raydose.netshield.model.defaultHostEnvPlaceholders
 import com.raydose.netshield.model.HomeUiState
 import com.raydose.netshield.model.LiveProbeTelemetry
 import com.raydose.netshield.model.ProbeManageDraft
@@ -42,6 +49,7 @@ import com.raydose.netshield.model.toManageDraft
 import com.raydose.netshield.model.toSlaveProbeUi
 import com.raydose.netshield.ui.settings.SettingsTab
 import com.raydose.netshield.net.parseFsyBroadcast
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -80,6 +88,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val hostSettingsRepository = HostSettingsRepository(application)
     private val doseHistoryRepository = ProbeDoseHistoryRepository(application)
     private val displaySoundController = DisplaySoundController(application)
+    private val hostAlarmController = HostAlarmController(application)
+    private val hostEnvSerialRepository = HostEnvSerialRepository()
+    private var windowBrightnessApplier: ((Float) -> Unit)? = null
+    private var pauseAlarmExpiryJob: Job? = null
     private val discoveredMap = ConcurrentHashMap<String, DiscoveredDevice>()
     private var nextAlertLogId = 1L
 
@@ -91,6 +103,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _settings = MutableStateFlow(ProbeSettingsUiState())
     private val _hostNetwork = MutableStateFlow(hostSettingsRepository.loadHostNetwork())
     private val _alertLogs = MutableStateFlow<List<SystemAlertLog>>(emptyList())
+    private val _displaySoundSettings = MutableStateFlow(hostSettingsRepository.loadDisplaySound())
 
     private val connectionManager = ProbeConnectionManager(
         context = application,
@@ -120,7 +133,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _uiFlags,
         _alertLogs,
         _hostNetwork,
-    ) { clockInputs, flags, logs, hostNetwork ->
+        hostEnvSerialRepository.snapshot,
+    ) { clockInputs, flags, logs, hostNetwork, hostAdapter ->
         buildHomeState(
             clockInputs.saved,
             clockInputs.live,
@@ -129,6 +143,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             flags,
             logs,
             hostNetwork,
+            hostAdapter,
         )
     }.stateIn(
         viewModelScope,
@@ -141,10 +156,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             _uiFlags.value,
             _alertLogs.value,
             _hostNetwork.value,
+            hostEnvSerialRepository.snapshot.value,
         ),
     )
 
     val settingsUiState: StateFlow<ProbeSettingsUiState> = _settings.asStateFlow()
+
+    val displaySoundSettings: StateFlow<DisplaySoundSettings> = _displaySoundSettings.asStateFlow()
 
     private val _showSettings = MutableStateFlow(false)
     val settingsVisible: StateFlow<Boolean> = _showSettings.asStateFlow()
@@ -167,6 +185,23 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 _nowMillis.value = System.currentTimeMillis()
                 pruneStaleDiscovery()
                 delay(1000L)
+            }
+        }
+        schedulePauseAlarmExpiry(_displaySoundSettings.value.pauseAlarmUntilMillis)
+        hostEnvSerialRepository.start()
+        viewModelScope.launch {
+            combine(
+                homeUiState.map { state -> state.slaveProbes.any { it.isOnline && it.hasAlarm } },
+                _displaySoundSettings,
+                _nowMillis,
+            ) { alarming, sound, now ->
+                Triple(alarming, sound.withExpiredPauseCleared(now), now)
+            }.collect { (alarming, sound, now) ->
+                hostAlarmController.sync(
+                    shouldPlay = alarming,
+                    volumeFraction = sound.hostAlarmVolume,
+                    alarmSuppressed = sound.isHostAlarmSuppressed(now),
+                )
             }
         }
     }
@@ -199,60 +234,138 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun updateDisplaySound(settings: DisplaySoundSettings) {
+        _displaySoundSettings.value = settings
         _settings.update { it.copy(displaySound = settings, statusHint = null) }
     }
 
-    /** 松手：立即写入本机系统亮度（与从机无关） */
+    /** 静音：立即保存并停止本机报警音。 */
+    fun commitDisplaySoundMute(mute: Boolean) {
+        applyDisplaySound(_displaySoundSettings.value.copy(mute = mute))
+    }
+
+    /** 暂停报警 5 分钟：开启后计时，到期自动恢复。 */
+    fun commitDisplaySoundPauseAlarm(enabled: Boolean) {
+        val now = System.currentTimeMillis()
+        val until = if (enabled) now + PAUSE_ALARM_DURATION_MS else 0L
+        applyDisplaySound(_displaySoundSettings.value.copy(pauseAlarmUntilMillis = until))
+        schedulePauseAlarmExpiry(until)
+    }
+
+    private fun applyDisplaySound(settings: DisplaySoundSettings) {
+        val normalized = settings.withExpiredPauseCleared()
+        _displaySoundSettings.value = normalized
+        _settings.update { it.copy(displaySound = normalized, statusHint = null) }
+        hostSettingsRepository.saveDisplaySound(normalized)
+    }
+
+    private fun schedulePauseAlarmExpiry(untilMillis: Long) {
+        pauseAlarmExpiryJob?.cancel()
+        if (untilMillis <= System.currentTimeMillis()) return
+        val delayMs = untilMillis - System.currentTimeMillis()
+        pauseAlarmExpiryJob = viewModelScope.launch {
+            delay(delayMs)
+            val current = _displaySoundSettings.value
+            if (current.pauseAlarmUntilMillis > 0L) {
+                applyDisplaySound(current.copy(pauseAlarmUntilMillis = 0L))
+            }
+        }
+    }
+
+    fun bindWindowBrightnessApplier(applier: ((Float) -> Unit)?) {
+        windowBrightnessApplier = applier
+    }
+
+    fun applyInitialWindowBrightness(brightness: Float) {
+        windowBrightnessApplier?.invoke(brightness.coerceIn(0f, 1f))
+    }
+
+    /** 拖动亮度滑条时实时预览。 */
+    fun previewDisplaySoundBrightness(brightness: Float) {
+        windowBrightnessApplier?.invoke(brightness.coerceIn(0f, 1f))
+    }
+
+    private fun applyBrightnessToDevice(brightness: Float): Boolean {
+        val clamped = brightness.coerceIn(0f, 1f)
+        windowBrightnessApplier?.invoke(clamped)
+        return displaySoundController.applySystemBrightness(clamped)
+    }
+
+    /** 松手：写入亮度并保存到本机偏好。 */
     fun commitDisplaySoundBrightness() {
-        val brightness = _settings.value.displaySound.brightness
-        val ok = displaySoundController.applyBrightness(brightness)
+        val displaySound = _displaySoundSettings.value
+        val systemOk = applyBrightnessToDevice(displaySound.brightness)
+        persistDisplaySoundSettings()
         _settings.update {
             it.copy(
-                statusHint = if (ok) null else "无法调节系统亮度：请在系统设置中授予「修改系统设置」权限",
+                statusHint = if (systemOk) {
+                    null
+                } else {
+                    "已调节当前应用亮度；全局系统亮度需在系统设置中授予「修改系统设置」权限"
+                },
             )
         }
     }
 
-    /** 松手：立即写入本机媒体音量 */
+    /** 松手：写入系统音量并保存到本机偏好。 */
     fun commitDisplaySoundSystemVolume() {
-        val volume = _settings.value.displaySound.systemVolume
-        val ok = displaySoundController.applySystemVolume(volume)
+        val displaySound = _displaySoundSettings.value
+        val ok = displaySoundController.applySystemVolume(displaySound.systemVolume)
+        persistDisplaySoundSettings()
         if (!ok) {
             _settings.update { it.copy(statusHint = "系统音量调节失败") }
         } else {
             _settings.update { it.copy(statusHint = null) }
-            if (!_settings.value.displaySound.mute) {
+            if (!displaySound.mute) {
                 displaySoundController.playSystemVolumePreview()
             }
         }
     }
 
+    /** 松手：保存本机报警音量并播放报警预览音。 */
+    fun commitDisplaySoundHostAlarmVolume() {
+        val displaySound = _displaySoundSettings.value
+        applyDisplaySound(displaySound)
+        _settings.update { it.copy(statusHint = null) }
+        if (!displaySound.isHostAlarmSuppressed()) {
+            displaySoundController.playHostAlarmPreview(displaySound.hostAlarmVolume)
+        }
+    }
+
+    /** 松手：保存提示音量并播放提示预览音。 */
+    fun commitDisplaySoundPromptVolume() {
+        val displaySound = _displaySoundSettings.value
+        applyDisplaySound(displaySound)
+        _settings.update { it.copy(statusHint = null) }
+        if (!displaySound.mute) {
+            displaySoundController.playPromptPreview(displaySound.promptVolume)
+        }
+    }
+
     fun saveDisplaySoundSettings() {
-        val displaySound = _settings.value.displaySound
-        displaySoundController.applyBrightness(displaySound.brightness)
+        val displaySound = _displaySoundSettings.value
+        applyBrightnessToDevice(displaySound.brightness)
         displaySoundController.applySystemVolume(displaySound.systemVolume)
-        hostSettingsRepository.saveDisplaySound(displaySound)
+        persistDisplaySoundSettings()
         showSettingsSaveSuccess()
+        _settings.update { it.copy(statusHint = null) }
         Log.i(ProbeConnectionManager.TAG, "显示与声音本机设置已保存")
     }
 
+    private fun persistDisplaySoundSettings() {
+        hostSettingsRepository.saveDisplaySound(_displaySoundSettings.value)
+    }
+
     private fun loadDisplaySoundForUi(): DisplaySoundSettings {
-        val saved = hostSettingsRepository.loadDisplaySound()
-        val system = displaySoundController.readSystemLevels()
-        return saved.copy(
-            brightness = system.brightness,
-            systemVolume = system.systemVolume,
-        )
+        val saved = _displaySoundSettings.value.withExpiredPauseCleared()
+        val systemVolume = displaySoundController.readSystemLevels().systemVolume
+        return saved.copy(systemVolume = systemVolume)
     }
 
     private fun syncDisplaySoundLevelsFromSystem() {
-        val system = displaySoundController.readSystemLevels()
+        val systemVolume = displaySoundController.readSystemLevels().systemVolume
         _settings.update { state ->
             state.copy(
-                displaySound = state.displaySound.copy(
-                    brightness = system.brightness,
-                    systemVolume = system.systemVolume,
-                ),
+                displaySound = state.displaySound.copy(systemVolume = systemVolume),
                 statusHint = null,
             )
         }
@@ -478,6 +591,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun closeSettings() {
         _showSettings.value = false
         _settings.update { it.copy(showAddProbeDialog = false, showSaveSuccessDialog = false) }
+        val savedBrightness = hostSettingsRepository.loadDisplaySound().brightness
+        windowBrightnessApplier?.invoke(savedBrightness)
     }
 
     fun showAddProbeDialog() {
@@ -778,6 +893,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         flags: HomeUiFlags,
         logs: List<SystemAlertLog>,
         hostNetwork: HostNetworkSettings,
+        hostAdapter: HostAdapterSnapshot,
     ): HomeUiState {
         val clock = HomeClockFormatter.format(java.util.Date(nowMillis), timeDisplay)
         val probes: List<SlaveProbeUi> = if (saved.isEmpty()) {
@@ -798,9 +914,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             dateText = clock.first,
             timeText = clock.second,
             hostNetwork = hostNetwork,
-            hostEnvReadings = defaultHostEnvIfEmpty(),
+            hostEnvReadings = if (hostAdapter.hasData) {
+                hostAdapter.envReadings
+            } else {
+                defaultHostEnvPlaceholders()
+            },
             slaveProbes = probes,
-            doorState = deriveDoorState(live),
+            doorState = resolveDoorState(hostAdapter, live),
             alertLogs = logs,
             messages = emptyList(),
             statusBarExpanded = flags.statusBarExpanded,
@@ -808,15 +928,20 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         )
     }
 
-    private fun defaultHostEnvIfEmpty(): List<com.raydose.netshield.model.HostEnvReading> =
-        listOf(
-            com.raydose.netshield.model.HostEnvReading("温度", "---"),
-            com.raydose.netshield.model.HostEnvReading("湿度", "---"),
-            com.raydose.netshield.model.HostEnvReading("CO2", "---"),
-            com.raydose.netshield.model.HostEnvReading("气压", "---"),
-        )
+    private fun resolveDoorState(
+        hostAdapter: HostAdapterSnapshot,
+        live: Map<String, LiveProbeTelemetry>,
+    ): DoorState {
+        hostAdapter.doorOpen?.let { open ->
+            return if (open) DoorState.Open else DoorState.Closed
+        }
+        return deriveDoorState(live)
+    }
 
     override fun onCleared() {
+        pauseAlarmExpiryJob?.cancel()
+        hostEnvSerialRepository.stop()
+        hostAlarmController.release()
         connectionManager.stopDiscovery()
         connectionManager.disconnectAll()
         super.onCleared()

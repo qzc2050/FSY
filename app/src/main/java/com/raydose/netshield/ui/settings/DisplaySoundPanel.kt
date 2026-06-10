@@ -4,11 +4,18 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.sp
 import com.raydose.netshield.model.AppLanguage
 import com.raydose.netshield.model.DisplaySoundSettings
 import com.raydose.netshield.model.ProbeCardDisplayMode
+import com.raydose.netshield.model.isPauseAlarmActive
+import kotlinx.coroutines.delay
 
 private val StandbyOptions = listOf(
     3 to "3 分钟",
@@ -25,12 +32,25 @@ private val CardCountOptions = listOf(1, 2, 4)
 fun DisplaySoundPanel(
     settings: DisplaySoundSettings,
     onChange: (DisplaySoundSettings) -> Unit,
+    onBrightnessPreview: (Float) -> Unit,
     onBrightnessCommitted: () -> Unit,
     onSystemVolumeCommitted: () -> Unit,
+    onHostAlarmVolumeCommitted: () -> Unit,
+    onPromptVolumeCommitted: () -> Unit,
+    onMuteCommitted: (Boolean) -> Unit,
+    onPauseAlarmCommitted: (Boolean) -> Unit,
     onSaveClick: () -> Unit,
     onPreviewStandby: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    var nowMillis by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(settings.pauseAlarmUntilMillis) {
+        while (true) {
+            nowMillis = System.currentTimeMillis()
+            delay(1_000L)
+        }
+    }
+
     SettingsPanelScaffold(
         modifier = modifier.fillMaxSize(),
         onSaveClick = onSaveClick,
@@ -64,7 +84,10 @@ fun DisplaySoundPanel(
             label = "系统亮度",
             value = settings.brightness,
             sliderEndFraction = sliderEndAtCenter,
-            onValueChange = { onChange(settings.copy(brightness = it)) },
+            onValueChange = { value ->
+                onChange(settings.copy(brightness = value))
+                onBrightnessPreview(value)
+            },
             onValueChangeFinished = onBrightnessCommitted,
         )
         SettingsSliderRow(
@@ -79,12 +102,14 @@ fun DisplaySoundPanel(
             value = settings.hostAlarmVolume,
             sliderEndFraction = sliderEndAtCenter,
             onValueChange = { onChange(settings.copy(hostAlarmVolume = it)) },
+            onValueChangeFinished = onHostAlarmVolumeCommitted,
         )
         SettingsSliderRow(
             label = "提示音量",
             value = settings.promptVolume,
             sliderEndFraction = sliderEndAtCenter,
             onValueChange = { onChange(settings.copy(promptVolume = it)) },
+            onValueChangeFinished = onPromptVolumeCommitted,
         )
 
         val countIndex = CardCountOptions.indexOf(settings.visibleProbeCards).coerceAtLeast(0)
@@ -94,9 +119,9 @@ fun DisplaySoundPanel(
             options = CardCountOptions.map { "$it" },
         ) { index -> onChange(settings.copy(visibleProbeCards = CardCountOptions[index])) }
 
-        SettingsSwitchRow("静音", settings.mute) { onChange(settings.copy(mute = it)) }
-        SettingsSwitchRow("暂停报警 5 分钟", settings.pauseAlarmFiveMinutes) {
-            onChange(settings.copy(pauseAlarmFiveMinutes = it))
+        SettingsSwitchRow("静音", settings.mute) { onMuteCommitted(it) }
+        SettingsSwitchRow("暂停报警 5 分钟", settings.isPauseAlarmActive(nowMillis)) {
+            onPauseAlarmCommitted(it)
         }
     }
 }

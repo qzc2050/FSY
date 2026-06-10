@@ -93,6 +93,15 @@ object ScreenSpec {
     /** 监测组件「滚动」模式：多探头时每页停留时长（毫秒） */
     const val PROBE_CARD_AUTO_SCROLL_INTERVAL_MS = 5_000L
 
+    /** 主页留言栏：多条留言轮播间隔（毫秒） */
+    const val MESSAGE_TICKER_ROTATE_INTERVAL_MS = 3_000L
+
+    /** 主页留言栏：单条长文本跑马灯首尾停顿（毫秒） */
+    const val MESSAGE_TICKER_MARQUEE_DELAY_MS = 1_500
+
+    /** 主页留言栏：多条轮播纵向滚动时长（毫秒，LED 式上滚） */
+    const val MESSAGE_TICKER_SLIDE_MS = 500
+
     /** 主页卡片辐射量字号 */
     const val HOME_DOSE_SP = 228
 

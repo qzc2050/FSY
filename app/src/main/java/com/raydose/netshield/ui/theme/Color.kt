@@ -13,6 +13,8 @@ val NetShieldTextPrimary = Color(0xFFFFFFFF)
 val NetShieldTextSecondary = Color(0xFFB0B8D0)
 val NetShieldDoorOpen = Color(0xFFE53935)
 val NetShieldDoorClosed = Color(0xFF43A047)
+/** 探头卡片辐射报警铃铛 */
+val NetShieldAlarmActive = Color(0xFFFF5252)
 val NetShieldMessageBar = Color(0xFF1E3A5F)
 /** 待机页留言条目：极淡蓝底 */
 val NetShieldStandbyMessageBg = Color(0x3358B4F8)

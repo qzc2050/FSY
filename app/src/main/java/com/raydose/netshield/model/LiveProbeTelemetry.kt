@@ -10,6 +10,7 @@ data class LiveProbeTelemetry(
     val humidity: String = "---",
     val co2: String = "---",
     val pm25: String = "---",
+    /** 辐射剂量上/下阈值报警（alarm_bit bit0/bit1）；不含其它环境或声光 bit */
     val hasAlarm: Boolean = false,
     val doorOpen: Boolean? = null,
     /** 0x23 第 7 项 alarm_bit */

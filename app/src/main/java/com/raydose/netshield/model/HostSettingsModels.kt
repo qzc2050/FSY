@@ -11,8 +11,26 @@ data class DisplaySoundSettings(
     val promptVolume: Float = 0.7f,
     val visibleProbeCards: Int = 1,
     val mute: Boolean = false,
-    val pauseAlarmFiveMinutes: Boolean = false,
+    /** 暂停本机报警截止时间（毫秒）；0 表示未暂停。 */
+    val pauseAlarmUntilMillis: Long = 0L,
 )
+
+/** 清除已过期暂停；UI 开关状态 = [pauseAlarmUntilMillis] > now。 */
+fun DisplaySoundSettings.withExpiredPauseCleared(
+    nowMillis: Long = System.currentTimeMillis(),
+): DisplaySoundSettings {
+    if (pauseAlarmUntilMillis <= 0L || pauseAlarmUntilMillis > nowMillis) return this
+    return copy(pauseAlarmUntilMillis = 0L)
+}
+
+fun DisplaySoundSettings.isPauseAlarmActive(nowMillis: Long = System.currentTimeMillis()): Boolean =
+    pauseAlarmUntilMillis > nowMillis
+
+fun DisplaySoundSettings.isHostAlarmSuppressed(nowMillis: Long = System.currentTimeMillis()): Boolean =
+    mute || isPauseAlarmActive(nowMillis)
+
+/** 暂停本机报警 5 分钟 */
+const val PAUSE_ALARM_DURATION_MS = 5 * 60 * 1000L
 
 enum class AppLanguage(val label: String) {
     Zh("中文"),
