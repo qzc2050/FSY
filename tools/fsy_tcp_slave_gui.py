@@ -24,6 +24,8 @@ from fsy_tcp_slave_simulator import (  # noqa: E402
     DEFAULT_TCP_PORT,
     DEFAULT_UPLOAD_VALUES,
     DEFAULT_THRESHOLDS,
+    DEFAULT_ALARM_ENABLE,
+    DEFAULT_VOLUME,
     infer_local_ipv4,
     SN,
     TcpSlave,
@@ -48,6 +50,8 @@ class SlaveGui:
         self._thr_q: queue.Queue[list[int]] = queue.Queue()
         self._status_q: queue.Queue[tuple[int, int]] = queue.Queue()
         self._serial_q: queue.Queue[str] = queue.Queue()
+        self._alarm_enable_q: queue.Queue[int] = queue.Queue()
+        self._volume_q: queue.Queue[int] = queue.Queue()
         self._poll_scheduled = False
 
         self._build()
@@ -164,9 +168,58 @@ class SlaveGui:
         )
         self.btn_send_5min.grid(row=0, column=2, columnspan=2, padx=8, pady=4)
 
+        # 探头管理：报警使能 0x52、音量 0x7A、屏/光使能（status bit13/14）
+        cfg_box = ttk.LabelFrame(
+            frm,
+            text="探头管理配置（0x52 使能 / 0x7A 音量；屏光写入 0x23 设备状态 bit13/14）",
+        )
+        cfg_box.grid(row=7, column=0, columnspan=4, sticky=tk.EW, padx=8, pady=4)
+        cfg_box.columnconfigure(1, weight=1)
+
+        self.var_rad_alarm_on = tk.BooleanVar(value=True)
+        ttk.Checkbutton(
+            cfg_box,
+            text="辐射报警使能（0x52 bit0/1=0 启用，对应安卓「报警」开关）",
+            variable=self.var_rad_alarm_on,
+        ).grid(row=0, column=0, columnspan=3, sticky=tk.W, **pad)
+
+        ttk.Label(cfg_box, text="报警音量(0~100):").grid(row=1, column=0, sticky=tk.W, **pad)
+        self.var_volume = tk.IntVar(value=DEFAULT_VOLUME)
+        self.scale_volume = ttk.Scale(
+            cfg_box,
+            from_=0,
+            to=100,
+            orient=tk.HORIZONTAL,
+            variable=self.var_volume,
+            command=self._on_volume_scale,
+        )
+        self.scale_volume.grid(row=1, column=1, sticky=tk.EW, **pad)
+        self.lbl_volume = ttk.Label(cfg_box, text=str(DEFAULT_VOLUME))
+        self.lbl_volume.grid(row=1, column=2, sticky=tk.W, **pad)
+
+        self.var_screen_on = tk.BooleanVar(value=True)
+        self.var_light_on = tk.BooleanVar(value=True)
+        ttk.Checkbutton(cfg_box, text="从机屏幕(bit14)", variable=self.var_screen_on).grid(
+            row=2, column=0, sticky=tk.W, **pad
+        )
+        ttk.Checkbutton(cfg_box, text="报警灯光(bit13)", variable=self.var_light_on).grid(
+            row=2, column=1, sticky=tk.W, **pad
+        )
+
+        self.btn_apply_cfg = ttk.Button(
+            cfg_box,
+            text="应用使能/音量",
+            command=self._on_apply_probe_cfg,
+            state=tk.DISABLED,
+        )
+        self.btn_apply_cfg.grid(row=2, column=2, sticky=tk.E, **pad)
+
+        self._sync_enable_flags_from_value(DEFAULT_ALARM_ENABLE)
+        self._sync_screen_light_from_status(DEFAULT_UPLOAD_VALUES[7])
+
         # 报警阈值编辑区（对应寄存器 0x0040，12 个 u32）
         thr_box = ttk.LabelFrame(frm, text="报警阈值编辑（改完点应用，寄存器 0x0040）")
-        thr_box.grid(row=7, column=0, columnspan=4, sticky=tk.EW, padx=8, pady=4)
+        thr_box.grid(row=8, column=0, columnspan=4, sticky=tk.EW, padx=8, pady=4)
         for c in range(4):
             thr_box.columnconfigure(c, weight=1)
 
@@ -200,20 +253,46 @@ class SlaveGui:
         self.btn_apply_thr.grid(row=len(sensor_rows), column=0, columnspan=4, pady=4)
 
         row_btns = ttk.Frame(frm)
-        row_btns.grid(row=8, column=0, columnspan=4, pady=10)
+        row_btns.grid(row=9, column=0, columnspan=4, pady=10)
         self.btn_start = ttk.Button(row_btns, text="启动模拟从机", command=self._on_start)
         self.btn_start.pack(side=tk.LEFT, padx=4)
         self.btn_stop = ttk.Button(row_btns, text="停止", command=self._on_stop, state=tk.DISABLED)
         self.btn_stop.pack(side=tk.LEFT, padx=4)
+        ttk.Button(row_btns, text="清空日志", command=self._on_clear_log).pack(side=tk.LEFT, padx=4)
 
-        ttk.Label(frm, text="日志:").grid(row=9, column=0, sticky=tk.NW, **pad)
+        ttk.Label(frm, text="日志:").grid(row=10, column=0, sticky=tk.NW, **pad)
         self.txt = scrolledtext.ScrolledText(frm, height=12, font=("Consolas", 9), state=tk.DISABLED)
-        self.txt.grid(row=10, column=0, columnspan=4, sticky=tk.NSEW, **pad)
-        frm.rowconfigure(10, weight=1)
+        self.txt.grid(row=11, column=0, columnspan=4, sticky=tk.NSEW, **pad)
+        frm.rowconfigure(11, weight=1)
         frm.columnconfigure(1, weight=1)
 
         hint = "会自动组播/广播发现信息；TCP 请连接 本机IP:TCP端口。"
-        ttk.Label(frm, text=hint, foreground="#555").grid(row=11, column=0, columnspan=4, sticky=tk.W, **pad)
+        ttk.Label(frm, text=hint, foreground="#555").grid(row=12, column=0, columnspan=4, sticky=tk.W, **pad)
+
+    def _on_volume_scale(self, _value: str) -> None:
+        self.lbl_volume.configure(text=str(int(float(_value))))
+
+    def _sync_enable_flags_from_value(self, enable: int) -> None:
+        # bit0/1=1 表示禁止辐射上下限报警
+        on = (enable & 0b11) == 0
+        self.var_rad_alarm_on.set(on)
+
+    def _alarm_enable_from_ui(self) -> int:
+        if self.var_rad_alarm_on.get():
+            return 0
+        return 0b11
+
+    def _sync_screen_light_from_status(self, status: int) -> None:
+        self.var_light_on.set(((status >> 13) & 1) != 0)
+        self.var_screen_on.set(((status >> 14) & 1) != 0)
+
+    def _apply_screen_light_to_status(self, status: int) -> int:
+        status &= ~((1 << 13) | (1 << 14))
+        if self.var_light_on.get():
+            status |= 1 << 13
+        if self.var_screen_on.get():
+            status |= 1 << 14
+        return status & 0xFFFFFFFF
 
     @staticmethod
     def _parse_u32(raw: str, field: str) -> int:
@@ -287,7 +366,9 @@ class SlaveGui:
             co2 = max(0, int(round(float(self.entry_co2.get().strip()) * 10)))
             pm25 = max(0, int(round(float(self.entry_pm25.get().strip()) * 10)))
             alarm = self._parse_u32(self.entry_alarm.get(), "报警状态")
-            status = self._parse_u32(self.entry_status.get(), "设备状态")
+            status = self._apply_screen_light_to_status(
+                self._parse_u32(self.entry_status.get(), "设备状态")
+            )
             r1 = self._parse_u32(self.entry_r1.get(), "预留1")
             r2 = self._parse_u32(self.entry_r2.get(), "预留2")
             r3 = self._parse_u32(self.entry_r3.get(), "预留3")
@@ -300,6 +381,17 @@ class SlaveGui:
         self.txt.configure(state=tk.NORMAL)
         self.txt.insert(tk.END, line + "\n")
         self.txt.see(tk.END)
+        self.txt.configure(state=tk.DISABLED)
+
+    def _on_clear_log(self) -> None:
+        """清空日志文本框，并丢弃队列中尚未显示的条目。"""
+        while True:
+            try:
+                self._log_q.get_nowait()
+            except queue.Empty:
+                break
+        self.txt.configure(state=tk.NORMAL)
+        self.txt.delete("1.0", tk.END)
         self.txt.configure(state=tk.DISABLED)
 
     def _poll_log(self) -> None:
@@ -321,6 +413,7 @@ class SlaveGui:
                 status_bit, control_bit2 = self._status_q.get_nowait()
                 self.entry_status.delete(0, tk.END)
                 self.entry_status.insert(0, f"0x{status_bit:X}")
+                self._sync_screen_light_from_status(status_bit)
                 self._append_log(
                     f"[系统] controlbit2 已由远端写入，status15=0x{status_bit:X} controlbit2=0x{control_bit2:X}"
                 )
@@ -332,6 +425,21 @@ class SlaveGui:
                 self.entry_serial.delete(0, tk.END)
                 self.entry_serial.insert(0, serial)
                 self._append_log(f"[系统] 序列号已由远端写入，界面已自动刷新: {serial}")
+        except queue.Empty:
+            pass
+        try:
+            while True:
+                enable = self._alarm_enable_q.get_nowait()
+                self._sync_enable_flags_from_value(enable)
+                self._append_log(f"[系统] 报警使能已由远端写入: 0x{enable:08X}")
+        except queue.Empty:
+            pass
+        try:
+            while True:
+                vol = self._volume_q.get_nowait()
+                self.var_volume.set(vol)
+                self.lbl_volume.configure(text=str(vol))
+                self._append_log(f"[系统] 音量已由远端写入: {vol}")
         except queue.Empty:
             pass
         self.root.after(120, self._poll_log)
@@ -381,6 +489,12 @@ class SlaveGui:
         def on_serial_updated(serial_number: str) -> None:
             self._serial_q.put(serial_number)
 
+        def on_alarm_enable_updated(value: int) -> None:
+            self._alarm_enable_q.put(value)
+
+        def on_volume_updated(value: int) -> None:
+            self._volume_q.put(value)
+
         self._slave = TcpSlave(
             device_addr=dev,
             tcp_port=tcp_port,
@@ -395,8 +509,16 @@ class SlaveGui:
             thresholds_updated_callback=on_thresholds_updated,
             status_updated_callback=on_status_updated,
             serial_updated_callback=on_serial_updated,
+            alarm_enable_updated_callback=on_alarm_enable_updated,
+            volume_updated_callback=on_volume_updated,
+            alarm_enable=self._alarm_enable_from_ui(),
+            volume=int(self.var_volume.get()),
         )
         self.var_local.set(self._slave.local_ip)
+        try:
+            self._slave.set_thresholds(self._build_thresholds_from_fields())
+        except Exception:
+            self._slave.set_thresholds(list(DEFAULT_THRESHOLDS))
 
         def run_slave() -> None:
             assert self._slave is not None
@@ -412,6 +534,7 @@ class SlaveGui:
         self.btn_stop.configure(state=tk.NORMAL)
         self.btn_send_5min.configure(state=tk.NORMAL)
         self.btn_apply_thr.configure(state=tk.NORMAL)
+        self.btn_apply_cfg.configure(state=tk.NORMAL)
         self._append_log("[系统] 已启动（组播 + TCP 监听）")
 
     def _on_stop(self) -> None:
@@ -423,7 +546,25 @@ class SlaveGui:
         self.btn_stop.configure(state=tk.DISABLED)
         self.btn_send_5min.configure(state=tk.DISABLED)
         self.btn_apply_thr.configure(state=tk.DISABLED)
+        self.btn_apply_cfg.configure(state=tk.DISABLED)
         self._append_log("[系统] 已请求停止")
+
+    def _on_apply_probe_cfg(self) -> None:
+        if self._slave is None:
+            return
+        try:
+            self._slave.set_alarm_enable(self._alarm_enable_from_ui())
+            self._slave.set_volume(int(self.var_volume.get()))
+            vals = self._build_upload_values_from_fields()
+            self._slave.set_upload_values(vals)
+            self.entry_status.delete(0, tk.END)
+            self.entry_status.insert(0, f"0x{vals[7]:X}")
+            self._append_log(
+                f"[系统] 已应用使能/音量/屏光: enable=0x{self._alarm_enable_from_ui():X} "
+                f"vol={int(self.var_volume.get())} status=0x{vals[7]:X}"
+            )
+        except Exception as e:
+            messagebox.showerror("错误", f"应用配置失败: {e}")
 
     def _on_apply_thresholds(self) -> None:
         if self._slave is None:

@@ -98,19 +98,262 @@ DEFAULT_THRESHOLDS: List[int] = [
     1500,   0,       # PM2.5 上限 150.0 ug/m3  / 下限 0.0 ug/m3
 ]
 
+# 报警使能默认：bit0/bit1=0 表示辐射上下限报警均启用（与安卓 UI 一致）
+DEFAULT_ALARM_ENABLE = 0
+DEFAULT_VOLUME = 50  # 寄存器 0x7A，0~100
+
 # 寄存器地址定义
 REG_REALTIME    = 0x0001  # 实时上传数据（11×u32）
 REG_STATUS_BIT  = 0x000F  # 状态位图（2 regs = 1×u32）
 REG_FIVE_MIN    = 0x001E  # 五分钟值（表地址 30）
 REG_DEVICE_TIME = 0x0020  # 设备 RTC 时间（4 regs = 8 bytes）
+REG_RAD_UPPER   = 0x0032  # 辐射报警上阈值（2 regs = 1×u32）
+REG_RAD_LOWER   = 0x0034  # 辐射报警下阈值（2 regs = 1×u32）
 REG_THRESHOLDS  = 0x0040  # 报警阈值（24 regs = 48 bytes = 12×u32）
+REG_ALARM_ENABLE = 0x0052  # 报警使能（2 regs = 1×u32，bit=1 禁止）
 REG_SERIALNUM   = 0x0056  # 序列号（8 regs = 16 bytes ASCII）
 REG_VERSION     = 0x0062  # 固件版本字符串（10 regs = 20 bytes）
-REG_ALARM_ENABLE = 0x0052  # 报警使能（2 regs = 1×u32）
-REG_CONTROL_VOL  = 0x007A  # controlbit1 音量（1 reg = uint16）
+REG_CONTROL_VOL  = 0x007A  # controlbit1 音量（1 reg = uint16 0~100）
 REG_CONTROL_BIT2 = 0x007B # controlbit2（2 regs = 1×u32）
 
 CONTROL_BIT2_MASK = 0x7FFE  # bit1..bit14，可控制；bit0 门状态不允许控制
+
+# 报警使能 0x52：bit=1 表示禁止该项报警
+_ALARM_ENABLE_BIT_NAMES = (
+    "辐射上阈值", "辐射下阈值", "辐射离线",
+    "保留3", "温度上阈值", "温度下阈值", "温度离线",
+    "保留7", "气压上阈值", "气压下阈值", "气压离线",
+    "保留11", "湿度上阈值", "湿度下阈值", "湿度离线",
+    "保留15", "CO2上阈值", "CO2下阈值", "CO2离线",
+    "保留19", "PM2.5上阈值", "PM2.5下阈值", "PM2.5离线",
+    "保留23", "声报警损坏", "保留25", "声报警离线",
+    "保留27", "光报警损坏", "保留29", "光报警离线",
+    "保留31",
+)
+
+_CTRL_REG_NAMES = {
+    0x0058: "声报警",
+    0x0059: "光报警",
+    0x005A: "风扇",
+}
+
+_REG_READ_NAMES = {
+    REG_REALTIME: "实时数据(0x0001)",
+    REG_STATUS_BIT: "设备状态位(0x000F)",
+    REG_DEVICE_TIME: "设备时间(0x0020)",
+    REG_RAD_UPPER: "辐射报警上阈值(0x0032)",
+    REG_RAD_LOWER: "辐射报警下阈值(0x0034)",
+    REG_THRESHOLDS: "报警阈值块(0x0040)",
+    REG_ALARM_ENABLE: "报警使能(0x0052)",
+    REG_SERIALNUM: "序列号(0x0056)",
+    REG_VERSION: "固件版本(0x0062)",
+    REG_CONTROL_VOL: "报警音量(0x007A)",
+    REG_CONTROL_BIT2: "controlbit2(0x007B)",
+}
+
+
+def _u32_list_from_bytes(data: bytes, n: int) -> List[int]:
+    return [struct.unpack_from("<I", data, i * 4)[0] for i in range(n) if i * 4 + 4 <= len(data)]
+
+
+# 报警阈值 0x40 起 12 项 u32（每项占 2 个 16 位寄存器）
+_THR_ITEM_FMT: List[tuple] = [
+    ("辐射上限", 100.0, "uSv/h", 2),
+    ("辐射下限", 100.0, "uSv/h", 2),
+    ("温度上限", 10.0, "℃", 1),
+    ("温度下限", 10.0, "℃", 1),
+    ("气压上限", 1.0, "Pa", 0),
+    ("气压下限", 1.0, "Pa", 0),
+    ("湿度上限", 1.0, "%", 0),
+    ("湿度下限", 1.0, "%", 0),
+    ("CO2上限", 10.0, "ppm", 1),
+    ("CO2下限", 10.0, "ppm", 1),
+    ("PM2.5上限", 10.0, "ug/m3", 1),
+    ("PM2.5下限", 10.0, "ug/m3", 1),
+]
+
+
+def _format_thr_item(idx: int, raw: int) -> str:
+    if idx < 0 or idx >= len(_THR_ITEM_FMT):
+        return f"[{idx}]={raw}"
+    name, scale, unit, prec = _THR_ITEM_FMT[idx]
+    val = raw / scale
+    if prec == 0:
+        sval = str(int(val))
+    elif prec == 1:
+        sval = f"{val:.1f}"
+    else:
+        sval = f"{val:.2f}"
+    return f"{name} {sval} {unit}"
+
+
+def _format_thr_values(values: List[int], base_index: int = 0) -> str:
+    return ", ".join(_format_thr_item(base_index + i, v) for i, v in enumerate(values))
+
+
+def _format_thresholds_brief(thr: List[int]) -> str:
+    if not thr:
+        return "(空)"
+    if len(thr) >= 12:
+        return _format_thr_values(thr[:12], 0)
+    return _format_thr_values(thr, 0)
+
+
+def _format_controlbit2(v: int) -> str:
+    v &= 0xFFFFFFFF
+    hints: List[str] = []
+    hints.append("门关" if (v & 1) else "门开")
+    if (v >> 7) & 1:
+        hints.append("风扇开")
+    if (v >> 8) & 1:
+        hints.append("USB4程序口")
+    if (v >> 12) & 1:
+        hints.append("声报警启用")
+    if (v >> 13) & 1:
+        hints.append("光报警启用")
+    if (v >> 14) & 1:
+        hints.append("屏幕启用")
+    return f"0x{v:08X} ({', '.join(hints)})"
+
+
+def _format_alarm_enable_mask(mask: int) -> str:
+    mask &= 0xFFFFFFFF
+    if mask == 0:
+        return "全部启用(bit全0)"
+    disabled = [
+        name
+        for bit, name in enumerate(_ALARM_ENABLE_BIT_NAMES)
+        if bit < 32 and (mask >> bit) & 1 and not name.startswith("保留")
+    ]
+    return f"禁止: {', '.join(disabled) if disabled else '无'} (raw=0x{mask:08X})"
+
+
+def _reg_operation_name(start: int) -> str:
+    return _REG_READ_NAMES.get(start, f"寄存器0x{start:04X}")
+
+
+def describe_host_request(req: bytes) -> str:
+    """解析上位机发来的读/写请求，生成可读说明。"""
+    if len(req) < 6:
+        return f"请求过短 len={len(req)} hex={req.hex(' ')}"
+    fc = req[1]
+    start = struct.unpack_from("<H", req, 2)[0]
+    op = _reg_operation_name(start)
+
+    if fc == 0x03:
+        count = struct.unpack_from("<H", req, 4)[0] if len(req) >= 6 else 0
+        extra = ""
+        if start == REG_THRESHOLDS and count > 0:
+            extra = f"，约 {count // 2} 项阈值"
+        return f"读 {op} count={count}{extra} | {req.hex(' ').upper()}"
+
+    if fc == 0x06 and len(req) >= 6:
+        val = struct.unpack_from("<H", req, 4)[0]
+        if start == REG_CONTROL_VOL:
+            return f"写 报警音量(0x7A)={val} | {req.hex(' ').upper()}"
+        ctrl = _CTRL_REG_NAMES.get(start)
+        if ctrl:
+            return f"写 {ctrl} {'开' if val else '关'} (reg=0x{start:04X}) | {req.hex(' ').upper()}"
+        return f"写单寄存器 {op} val=0x{val:04X} | {req.hex(' ').upper()}"
+
+    if fc == 0x10 and len(req) >= 7:
+        count = struct.unpack_from("<H", req, 4)[0]
+        bc = req[6]
+        data = req[7:7 + bc] if len(req) >= 7 + bc else b""
+
+        if start == REG_DEVICE_TIME and bc >= 6:
+            y, mo, d, h, mi, s = data[0], data[1], data[2], data[3], data[4], data[5]
+            return (
+                f"写 设备时间 → 20{y:02d}-{mo:02d}-{d:02d} {h:02d}:{mi:02d}:{s:02d} | "
+                f"{req.hex(' ').upper()}"
+            )
+
+        if start in (REG_RAD_UPPER, REG_RAD_LOWER) and bc >= 4:
+            v = struct.unpack_from("<I", data, 0)[0]
+            which = "上" if start == REG_RAD_UPPER else "下"
+            return f"写 辐射报警{which}限 = {v / 100:.2f} uSv/h (raw={v}) | {req.hex(' ').upper()}"
+
+        if start == REG_THRESHOLDS and bc >= 4:
+            n = min(bc // 4, 12)
+            thr = _u32_list_from_bytes(data, n)
+            return f"写 报警阈值(0x40) {n}项: {_format_thresholds_brief(thr)} | {req.hex(' ').upper()}"
+
+        if start == REG_ALARM_ENABLE and bc >= 4:
+            v = struct.unpack_from("<I", data, 0)[0]
+            return f"写 报警使能(0x52) {_format_alarm_enable_mask(v)} | {req.hex(' ').upper()}"
+
+        if start == REG_SERIALNUM and bc >= 1:
+            serial = data[: min(16, bc)].decode("ascii", errors="ignore").rstrip("\x00").strip()
+            return f"写 序列号 = {serial!r} | {req.hex(' ').upper()}"
+
+        if start == REG_CONTROL_BIT2 and bc >= 4:
+            v = struct.unpack_from("<I", data, 0)[0]
+            return f"写 controlbit2(0x7B) raw=0x{v:08X} | {req.hex(' ').upper()}"
+
+        return f"写多寄存器 {op} count={count} bc={bc} | {req.hex(' ').upper()}"
+
+    return f"未知功能码 0x{fc:02X} | {req.hex(' ').upper()}"
+
+
+def describe_host_response(req: bytes, rsp: bytes) -> str:
+    """解析对上位机的应答（侧重读 0x13 返回的数据含义）。"""
+    if len(req) < 4 or len(rsp) < 7:
+        return rsp.hex(" ").upper()
+    fc_req = req[1]
+    start = struct.unpack_from("<H", req, 2)[0]
+
+    if fc_req == 0x03 and len(rsp) >= 7 and rsp[1] == 0x13:
+        bc = rsp[2]
+        payload = rsp[5:5 + bc] if len(rsp) >= 5 + bc else b""
+        reg_count = struct.unpack_from("<H", req, 4)[0] if len(req) >= 6 else 0
+
+        if start == REG_THRESHOLDS and len(payload) >= 4:
+            n_u32 = min(len(payload) // 4, max(1, reg_count // 2))
+            thr = _u32_list_from_bytes(payload, n_u32)
+            return f"读应答 阈值({n_u32}项): {_format_thr_values(thr, 0)}"
+
+        if start == REG_ALARM_ENABLE and len(payload) >= 4:
+            v = struct.unpack_from("<I", payload, 0)[0]
+            return f"读应答 报警使能: {_format_alarm_enable_mask(v)}"
+
+        if start in (REG_RAD_UPPER, REG_RAD_LOWER) and len(payload) >= 4:
+            v = struct.unpack_from("<I", payload, 0)[0]
+            which = "上" if start == REG_RAD_UPPER else "下"
+            return f"读应答 辐射{which}限 = {v / 100:.2f} uSv/h"
+
+        if start == REG_VERSION and payload:
+            ver = payload.decode("ascii", errors="replace").rstrip("\x00").strip()
+            return f"读应答 固件版本: {ver!r}"
+
+        if start == REG_SERIALNUM and payload:
+            serial = payload.decode("ascii", errors="replace").rstrip("\x00").strip()
+            return f"读应答 序列号: {serial!r}"
+
+        if start == REG_DEVICE_TIME and len(payload) >= 6:
+            y, mo, d, h, mi, s = payload[0], payload[1], payload[2], payload[3], payload[4], payload[5]
+            return f"读应答 设备时间: 20{y:02d}-{mo:02d}-{d:02d} {h:02d}:{mi:02d}:{s:02d}"
+
+        if start == REG_STATUS_BIT and len(payload) >= 4:
+            v = struct.unpack_from("<I", payload, 0)[0]
+            return f"读应答 状态位 status_bit=0x{v:08X}"
+
+        if start == REG_CONTROL_VOL and len(payload) >= 2:
+            v = struct.unpack_from("<H", payload, 0)[0]
+            return f"读应答 音量 = {v}"
+
+        if start == REG_CONTROL_BIT2 and len(payload) >= 4:
+            v = struct.unpack_from("<I", payload, 0)[0]
+            return f"读应答 controlbit2 {_format_controlbit2(v)}"
+
+        return f"读应答 {_reg_operation_name(start)} {len(payload)}B data={payload.hex(' ')}"
+
+    if fc_req in (0x06, 0x10) and len(rsp) >= 6:
+        fc_rsp = rsp[1]
+        if fc_rsp in (0x16, 0x20):
+            rstart = struct.unpack_from("<H", rsp, 2)[0] if len(rsp) >= 4 else 0
+            return f"写应答 OK reg=0x{rstart:04X}"
+
+    return rsp.hex(" ").upper()
 
 
 def build_upload_frame(device_addr: int, values: Optional[List[int]] = None) -> bytes:
@@ -327,6 +570,10 @@ class TcpSlave:
         thresholds_updated_callback: Optional[Callable[[List[int]], None]] = None,
         status_updated_callback: Optional[Callable[[int, int], None]] = None,
         serial_updated_callback: Optional[Callable[[str], None]] = None,
+        alarm_enable_updated_callback: Optional[Callable[[int], None]] = None,
+        volume_updated_callback: Optional[Callable[[int], None]] = None,
+        alarm_enable: int = DEFAULT_ALARM_ENABLE,
+        volume: int = DEFAULT_VOLUME,
     ) -> None:
         self.device_addr = device_addr
         self.tcp_port = tcp_port
@@ -346,11 +593,16 @@ class TcpSlave:
         # 可选：由 GUI 提供实时值。若提供，则每次 0x23 发送前都会重新读取。
         self._upload_values_provider = upload_values_provider
         self._thresholds: List[int] = list(DEFAULT_THRESHOLDS)
+        self._alarm_enable: int = int(alarm_enable) & 0xFFFFFFFF
+        self._volume: int = max(0, min(100, int(volume)))
         self._thresholds_updated_callback = thresholds_updated_callback
         self._status_updated_callback = status_updated_callback
         self._serial_updated_callback = serial_updated_callback
+        self._alarm_enable_updated_callback = alarm_enable_updated_callback
+        self._volume_updated_callback = volume_updated_callback
         self._status_bit: int = self._upload_values[7] if len(self._upload_values) > 7 else 0
         self._control_bit2: int = self._status_bit & CONTROL_BIT2_MASK
+        self._push_send_count = 0  # 0x23 推送计数，用于降低日志频率
         # 存储被写入的设备时间（year%100, month, day, hour, min, sec），None 表示用实时时钟
         self._device_time: Optional[tuple] = None
 
@@ -405,6 +657,26 @@ class TcpSlave:
         with self._lock:
             return list(self._thresholds)
 
+    def set_alarm_enable(self, value: int) -> None:
+        with self._lock:
+            self._alarm_enable = int(value) & 0xFFFFFFFF
+        self._emit_alarm_enable_updated(self._alarm_enable)
+
+    def get_alarm_enable(self) -> int:
+        with self._lock:
+            return self._alarm_enable
+
+    def set_volume(self, value: int) -> None:
+        v = max(0, min(100, int(value)))
+        with self._lock:
+            self._volume = v
+        self._emit_volume_updated(v)
+        self._log(f"[CFG] 音量 0x7A = {v}")
+
+    def get_volume(self) -> int:
+        with self._lock:
+            return self._volume
+
     def _emit_thresholds_updated(self, values: List[int]) -> None:
         cb = self._thresholds_updated_callback
         if cb is None:
@@ -413,6 +685,24 @@ class TcpSlave:
             cb(list(values))
         except Exception as e:
             self._log(f"[THR CALLBACK] 回调异常: {e}")
+
+    def _emit_alarm_enable_updated(self, value: int) -> None:
+        cb = self._alarm_enable_updated_callback
+        if cb is None:
+            return
+        try:
+            cb(int(value) & 0xFFFFFFFF)
+        except Exception as e:
+            self._log(f"[CFG CALLBACK] 报警使能回调异常: {e}")
+
+    def _emit_volume_updated(self, value: int) -> None:
+        cb = self._volume_updated_callback
+        if cb is None:
+            return
+        try:
+            cb(max(0, min(100, int(value))))
+        except Exception as e:
+            self._log(f"[CFG CALLBACK] 音量回调异常: {e}")
 
     def _emit_status_updated(self, status_bit: int, control_bit2: int) -> None:
         cb = self._status_updated_callback
@@ -502,13 +792,13 @@ class TcpSlave:
 
         elif start == REG_ALARM_ENABLE:
             with self._lock:
-                enable = int(getattr(self, "_alarm_enable", 0))
+                enable = self._alarm_enable
             payload = u32le(enable)
             data.extend(payload[:reg_bytes].ljust(reg_bytes, b"\x00"))
 
         elif start == REG_CONTROL_VOL:
             with self._lock:
-                vol = int(getattr(self, "_volume", 50))
+                vol = self._volume
             data.extend(struct.pack("<H", vol & 0xFFFF)[:reg_bytes].ljust(reg_bytes, b"\x00"))
 
         elif start == REG_CONTROL_BIT2:
@@ -537,46 +827,50 @@ class TcpSlave:
         if start == REG_DEVICE_TIME and bc >= 8:
             y, mo, d, h, mi, s = data[0], data[1], data[2], data[3], data[4], data[5]
             self._device_time = (y, mo, d, h, mi, s)
-            self._log(f"[TCP WRITE TIME] 已同步设备时间: 20{y:02d}-{mo:02d}-{d:02d} {h:02d}:{mi:02d}:{s:02d}")
 
-        elif start == REG_THRESHOLDS and bc >= 48:
-            thr = [struct.unpack_from("<I", data, i * 4)[0] for i in range(12)]
+        elif start in (REG_RAD_UPPER, REG_RAD_LOWER) and bc >= 4:
+            value = struct.unpack_from("<I", data, 0)[0]
+            idx = 0 if start == REG_RAD_UPPER else 1
+            with self._lock:
+                thr = list(self._thresholds)
+                thr[idx] = value
+                self._thresholds = thr
+            self._emit_thresholds_updated(thr)
+
+        elif start == REG_THRESHOLDS and bc >= 4:
+            n = min(bc // 4, 12)
+            with self._lock:
+                thr = list(self._thresholds)
+            for i in range(n):
+                thr[i] = struct.unpack_from("<I", data, i * 4)[0]
             with self._lock:
                 self._thresholds = thr
             self._emit_thresholds_updated(thr)
-            self._log(f"[TCP WRITE THR] 已更新报警阈值: {thr}")
+
+        elif start == REG_ALARM_ENABLE and bc >= 4:
+            enable = struct.unpack_from("<I", data, 0)[0]
+            self.set_alarm_enable(enable)
 
         elif start == REG_SERIALNUM and bc >= 16:
             serial = data[:16].decode("ascii", errors="ignore").rstrip("\x00").strip()
             self.serial_number = serial
             self._emit_serial_updated(self.serial_number)
-            self._log(f"[TCP WRITE SERIAL] 已更新序列号: {self.serial_number}")
 
         elif start == REG_CONTROL_BIT2 and bc >= 4:
             raw_value = struct.unpack_from("<I", data, 0)[0]
-            status_bit, control_bit2 = self._apply_control_bit2(raw_value)
-            self._log(
-                "[TCP WRITE CTRLBIT2] "
-                f"raw=0x{raw_value:08X} effective=0x{control_bit2:08X} status15=0x{status_bit:08X}"
-            )
-
-    _CTRL_NAMES = {
-        0x0058: "声报警",
-        0x0059: "光报警",
-        0x005A: "风扇",
-    }
+            self._apply_control_bit2(raw_value)
 
     def _handle_write_single(self, req: bytes) -> None:
-        """处理 0x06 写单寄存器请求：记录控制操作日志。"""
+        """处理 0x06 写单寄存器请求。"""
         if len(req) < 8:
             return
         reg = struct.unpack_from("<H", req, 2)[0]
         val = struct.unpack_from("<H", req, 4)[0]
-        name = self._CTRL_NAMES.get(reg)
-        if name:
-            self._log(f"[TCP CTRL] {name} {'开' if val else '关'} (reg=0x{reg:04X} val={val})")
-        else:
-            self._log(f"[TCP WRITE06] reg=0x{reg:04X} val={val}")
+        if reg == REG_CONTROL_VOL:
+            self.set_volume(val)
+            return
+        if _CTRL_REG_NAMES.get(reg):
+            return
 
     def push_five_minute_value(self, dose_rate_x100: int) -> bool:
         """
@@ -627,7 +921,12 @@ class TcpSlave:
             try:
                 with self._write_lock:
                     c.sendall(frame)
-                self._log(f"[TCP PUSH 0x23] {frame.hex(' ').upper()}")
+                self._push_send_count += 1
+                if self._push_send_count % 10 == 0:
+                    self._log(
+                        f"[TCP PUSH 0x23] 第{self._push_send_count}次 "
+                        f"{frame.hex(' ').upper()}"
+                    )
             except OSError as e:
                 self._log(f"[TCP PUSH 失败] {e}")
                 with self._lock:
@@ -641,7 +940,6 @@ class TcpSlave:
                 if not chunk:
                     self._log("[TCP] 对端关闭")
                     break
-                self._log(f"[TCP RAW RX] {chunk.hex(' ').upper()}")
                 buf.extend(chunk)
                 while True:
                     req = _try_take_one_request(buf, self.device_addr)
@@ -657,10 +955,18 @@ class TcpSlave:
                     elif fc == 0x10:
                         rsp = reply_write_multi(self.device_addr, req)
                         self._handle_write_multi(req)
+                    else:
+                        self._log(
+                            f"[TCP 上位机] 未处理功能码 0x{fc:02X} | {describe_host_request(req)}"
+                        )
+                        continue
                     if rsp:
                         with self._write_lock:
                             conn.sendall(rsp)
-                        self._log(f"[TCP RX] {req.hex(' ').upper()} -> TX {rsp.hex(' ').upper()}")
+                        self._log(f"[TCP 上位机←] {describe_host_request(req)}")
+                        rsp_desc = describe_host_response(req, rsp)
+                        if rsp_desc:
+                            self._log(f"[TCP 下位机→] {rsp_desc}")
         except Exception as e:
             self._log(f"[TCP] 会话异常: {type(e).__name__}: {e}")
         finally:
