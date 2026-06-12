@@ -19,18 +19,19 @@ import com.raydose.netshield.ui.theme.NetShieldTextSecondary
 import com.raydose.netshield.ui.theme.ScreenSpec
 import kotlinx.coroutines.delay
 
-/** 多探头 + 滚动模式：每 [ScreenSpec.PROBE_CARD_AUTO_SCROLL_INTERVAL_MS] 自动翻页。 */
+/** 多探头自动翻页；[intervalMs] 默认主页 5s，待机页可传 2s。 */
 @Composable
 fun ProbePagerAutoScroll(
     enabled: Boolean,
     probeCount: Int,
     pagerState: PagerState,
     paused: Boolean = false,
+    intervalMs: Long = ScreenSpec.PROBE_CARD_AUTO_SCROLL_INTERVAL_MS,
 ) {
-    LaunchedEffect(enabled, probeCount, paused) {
+    LaunchedEffect(enabled, probeCount, paused, intervalMs) {
         if (!enabled || paused || probeCount <= 1) return@LaunchedEffect
         while (true) {
-            delay(ScreenSpec.PROBE_CARD_AUTO_SCROLL_INTERVAL_MS)
+            delay(intervalMs)
             pagerState.animateScrollToPage((pagerState.currentPage + 1) % probeCount)
         }
     }

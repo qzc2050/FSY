@@ -32,6 +32,8 @@ import com.raydose.netshield.ui.theme.ScreenSpec
 @Composable
 fun HomeThumbnailContent(
     state: HomeUiState,
+    displayProbes: List<SlaveProbeUi>,
+    probesPerPage: Int,
     pagerState: PagerState,
     screenWidth: Dp,
     screenHeight: Dp,
@@ -73,7 +75,7 @@ fun HomeThumbnailContent(
                     .width(x(ScreenSpec.HOME_CARD_WIDTH_FRACTION))
                     .fillMaxHeight(),
             ) {
-                if (state.slaveProbes.isEmpty()) {
+                if (displayProbes.isEmpty()) {
                     SlaveProbeCard(
                         probe = SlaveProbeUi(id = "0", name = "暂无探头", isOnline = false),
                         onDetailClick = {},
@@ -85,11 +87,24 @@ fun HomeThumbnailContent(
                         modifier = Modifier.fillMaxSize(),
                         userScrollEnabled = false,
                     ) { page ->
-                        SlaveProbeCard(
-                            probe = state.slaveProbes[page],
-                            onDetailClick = {},
-                            modifier = Modifier.fillMaxSize(),
-                        )
+                        if (probesPerPage == 1) {
+                            SlaveProbeCard(
+                                probe = displayProbes[page],
+                                onDetailClick = {},
+                                modifier = Modifier.fillMaxSize(),
+                            )
+                        } else {
+                            HomeProbeGridPage(
+                                slots = homeProbeGridSlots(
+                                    probes = displayProbes,
+                                    page = page,
+                                    visiblePerPage = probesPerPage,
+                                ),
+                                visiblePerPage = probesPerPage,
+                                onProbeDetailClick = {},
+                                modifier = Modifier.fillMaxSize(),
+                            )
+                        }
                     }
                 }
             }

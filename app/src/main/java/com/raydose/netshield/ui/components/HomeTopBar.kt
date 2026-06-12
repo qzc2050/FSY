@@ -14,11 +14,10 @@ import com.raydose.netshield.ui.theme.NetShieldTextPrimary
 import com.raydose.netshield.ui.theme.NetShieldTextSecondary
 import com.raydose.netshield.ui.theme.ScreenSpec
 
-/** 第一行：NetShield 标题 + 下拉箭头 + WiFi/蓝牙/网络图标 */
+/** 第一行：NetShield 标题 + 连通状态图标（下拉箭头由 [StatusBarWithGesture] 浮层提供） */
 @Composable
 fun HomeTopBar(
     systemName: String,
-    onPullDownClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Box(
@@ -33,12 +32,9 @@ fun HomeTopBar(
             fontWeight = FontWeight.SemiBold,
             modifier = Modifier.align(Alignment.CenterStart),
         )
-        PullDownHint(
-            onClick = onPullDownClick,
-            modifier = Modifier.align(Alignment.TopCenter),
-        )
         ConnectivityStatusIconsRow(
             modifier = Modifier.align(Alignment.CenterEnd),
+            showPullIndicator = false,
         )
     }
 }

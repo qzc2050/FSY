@@ -45,13 +45,10 @@ object ScreenSpec {
     /** 主页探头卡片：高度占屏高比例（1920 原型约 49.8%） */
     const val HOME_CARD_HEIGHT_FRACTION = 0.498f
 
-    /** 待机页：下区（探头+留言）占屏高比例 */
-    const val STANDBY_BOTTOM_SECTION_FRACTION = 0.5f
+    /** 待机页：下区（探头+留言）占屏高比例（门状态已并入顶区） */
+    const val STANDBY_BOTTOM_SECTION_FRACTION = 0.75f
 
-    /** 待机页：门状态区占屏高比例 */
-    const val STANDBY_DOOR_SECTION_FRACTION = 0.25f
-
-    /** 待机页：顶区（顶栏+日期时间环境）占屏高比例 */
+    /** 待机页：顶区（顶栏+日期时间+门状态+本机环境）占屏高比例 */
     const val STANDBY_HEADER_SECTION_FRACTION = 0.25f
 
     /** 待机页探头列宽占下区 Row 比例（留言 1/3） */
@@ -93,14 +90,23 @@ object ScreenSpec {
     /** 监测组件「滚动」模式：多探头时每页停留时长（毫秒） */
     const val PROBE_CARD_AUTO_SCROLL_INTERVAL_MS = 5_000L
 
-    /** 主页留言栏：多条留言轮播间隔（毫秒） */
-    const val MESSAGE_TICKER_ROTATE_INTERVAL_MS = 3_000L
+    /** 待机页：多探头自动翻页停留时长（毫秒） */
+    const val STANDBY_PROBE_AUTO_SCROLL_INTERVAL_MS = 2_000L
 
-    /** 主页留言栏：单条长文本跑马灯首尾停顿（毫秒） */
-    const val MESSAGE_TICKER_MARQUEE_DELAY_MS = 1_500
+    /** 主页留言栏：按每行填充比例分档的停留时长（毫秒）；多行总时长 = 各行之和 */
+    const val MESSAGE_TICKER_DWELL_MS_SHORT = 3_000L   // 该行 < 单行 1/4
+    const val MESSAGE_TICKER_DWELL_MS_MEDIUM = 5_000L  // 该行 < 单行 1/2
+    const val MESSAGE_TICKER_DWELL_MS_LONG = 7_000L    // 该行 < 单行 3/4
+    const val MESSAGE_TICKER_DWELL_MS_FULL = 10_000L   // 该行 ≥ 单行 3/4（满行）
 
-    /** 主页留言栏：多条轮播纵向滚动时长（毫秒，LED 式上滚） */
+    /** 主页留言栏：多条轮播切换动画时长（毫秒，LED 式上滚） */
     const val MESSAGE_TICKER_SLIDE_MS = 500
+
+    /** 主页留言栏：回收态可见行数（长留言逐行切换，每次仅 1 行） */
+    const val MESSAGE_TICKER_VISIBLE_LINES = 1
+
+    /** 主页留言栏：正文行高（sp） */
+    const val MESSAGE_TICKER_LINE_HEIGHT_SP = 22
 
     /** 主页卡片辐射量字号 */
     const val HOME_DOSE_SP = 228
@@ -159,6 +165,28 @@ object ScreenSpec {
 
     /** 顶部下拉手势触发区高度 */
     val statusBarGestureZoneHeight = 96.dp
+
+    /** 顶栏下拉箭头点击热区（不可见，小于 [statusBarGestureZoneHeight] 的全宽下拉带） */
+    val homePullDownHintTapWidth = 88.dp
+    val homePullDownHintTapHeight = 56.dp
+
+    /** 右侧侧滑箭头点击热区（不可见，小于卡片区侧滑带） */
+    val homeSideSwipeHintTapWidth = 56.dp
+    val homeSideSwipeHintTapHeight = 96.dp
+
+    /** 原型：扁宽线条 chevron 可视尺寸（无按钮底） */
+    val homePullDownHintVisualWidth = 64.dp
+    val homePullDownHintVisualHeight = 16.dp
+    val homeSideSwipeHintVisualWidth = 16.dp
+    val homeSideSwipeHintVisualHeight = 64.dp
+
+    /**
+     * 主页引导箭头距屏幕对应边缘的内边距。
+     * 下拉 chevron 在 [statusBarGestureZoneHeight] 内垂直居中时的顶距 = 侧滑 chevron 的右距。
+     */
+    val homeHintEdgeInset: Dp
+        get() = (statusBarGestureZoneHeight - homePullDownHintTapHeight) / 2 +
+            (homePullDownHintTapHeight - homePullDownHintVisualHeight) / 2
 
     /** 下拉面板：WiFi/蓝牙标签字号 */
     fun statusBarInfoLabelSp(formFactor: TabletFormFactor): Int = when (formFactor) {

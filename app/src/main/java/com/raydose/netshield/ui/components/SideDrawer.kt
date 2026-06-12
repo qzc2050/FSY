@@ -115,29 +115,50 @@ fun SideDrawerWithGesture(
         }
 
         if (!panelState.isOpen) {
+            val scope = rememberCoroutineScope()
+            val hintPulseScale = remember { Animatable(1f) }
+            val swipeProgress = (-panelState.dragOffset / openThresholdPx).coerceIn(0f, 1f)
+            val hintTapWidthPx = with(density) { ScreenSpec.homeSideSwipeHintTapWidth.toPx() }
+            val hintTapHeightPx = with(density) { ScreenSpec.homeSideSwipeHintTapHeight.toPx() }
+            val hintEndPaddingPx = with(density) { ScreenSpec.homeHintEdgeInset.toPx() }
+            val onHintTap: () -> Unit = {
+                scope.launch {
+                    hintPulseScale.snapTo(1f)
+                    hintPulseScale.animateTo(1.38f, tween(100))
+                    hintPulseScale.animateTo(1f, tween(180))
+                }
+                panelState.isOpen = true
+                onOpenChanged(true)
+            }
             Box(
                 modifier = Modifier
                     .align(Alignment.TopEnd)
                     .offset(y = layout.panelTop)
                     .width(layout.panelWidth)
                     .height(layout.panelHeight)
-                    .pointerInput(Unit) {
-                        detectHorizontalDragGestures(
-                            onDragEnd = {
-                                if (panelState.dragOffset < -openThresholdPx) {
-                                    panelState.markOpenedFromDrag()
-                                    panelState.isOpen = true
-                                    onOpenChanged(true)
-                                }
-                                panelState.clearDragOffset()
-                            },
-                            onHorizontalDrag = { _, dragAmount ->
-                                panelState.dragOffset = (panelState.dragOffset + dragAmount)
-                                    .coerceIn(-panelWidthPx, 0f)
-                            },
-                        )
-                    },
-            )
+                    .homeSideSwipeGestureZone(
+                        panelState = panelState,
+                        drawerPanelWidthPx = panelWidthPx,
+                        openThresholdPx = openThresholdPx,
+                        hintTapWidthPx = hintTapWidthPx,
+                        hintTapHeightPx = hintTapHeightPx,
+                        hintEndPaddingPx = hintEndPaddingPx,
+                        onOpen = {
+                            panelState.isOpen = true
+                            panelState.markOpenedFromDrag()
+                            onOpenChanged(true)
+                        },
+                        onHintTap = onHintTap,
+                    ),
+            ) {
+                SideSwipeHint(
+                    swipeProgress = swipeProgress,
+                    clickPulseScale = hintPulseScale.value,
+                    modifier = Modifier
+                        .align(Alignment.CenterEnd)
+                        .padding(end = ScreenSpec.homeHintEdgeInset),
+                )
+            }
         }
 
         if (showPanel) {

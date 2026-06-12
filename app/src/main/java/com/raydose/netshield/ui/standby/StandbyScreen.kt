@@ -34,7 +34,6 @@ import androidx.compose.ui.unit.sp
 import com.raydose.netshield.model.AlbumMessage
 import com.raydose.netshield.model.AlbumSettings
 import com.raydose.netshield.model.HomeUiState
-import com.raydose.netshield.model.ProbeCardDisplayMode
 import com.raydose.netshield.model.SlaveProbeUi
 import com.raydose.netshield.model.TimeSettings
 import com.raydose.netshield.ui.components.DoorStatusChip
@@ -44,6 +43,8 @@ import com.raydose.netshield.ui.components.ProbePageIndicator
 import com.raydose.netshield.ui.components.SlaveProbeCard
 import com.raydose.netshield.ui.home.HomeClockFormatter
 import com.raydose.netshield.ui.home.HomePreviewData
+import com.raydose.netshield.ui.home.probeDisplayListKey
+import com.raydose.netshield.ui.home.resolveStandbyProbePagerConfig
 import com.raydose.netshield.ui.theme.NetShieldStandbyMessageBg
 import com.raydose.netshield.ui.theme.NetShieldTextPrimary
 import com.raydose.netshield.ui.theme.NetShieldTextSecondary
@@ -58,12 +59,17 @@ fun StandbyScreen(
     albumSettings: AlbumSettings,
     messages: List<AlbumMessage>,
     timeSettings: TimeSettings,
-    probeCardMode: ProbeCardDisplayMode = ProbeCardDisplayMode.Fixed,
     onExit: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val pagerState = rememberPagerState(pageCount = { state.slaveProbes.size.coerceAtLeast(1) })
-    val autoScroll = probeCardMode == ProbeCardDisplayMode.Scroll
+    val pagerConfig = remember(state.slaveProbes) {
+        resolveStandbyProbePagerConfig(state.slaveProbes)
+    }
+    val displayProbes = pagerConfig.displayProbes
+    val autoScroll = pagerConfig.autoScroll
+    val displayListKey = remember(displayProbes) { probeDisplayListKey(displayProbes) }
+    val pagerState = rememberPagerState(pageCount = { pagerConfig.pageCount.coerceAtLeast(1) })
+    val showStandbyMessages = albumSettings.showStandbyMessages
     val latestMessages = remember(messages) {
         messages.sortedByDescending { it.createdAtMillis }.take(3)
     }
@@ -76,10 +82,17 @@ fun StandbyScreen(
         )
     }
 
+    LaunchedEffect(displayListKey) {
+        if (pagerState.currentPage != 0) {
+            pagerState.scrollToPage(0)
+        }
+    }
+
     ProbePagerAutoScroll(
         enabled = autoScroll,
-        probeCount = state.slaveProbes.size,
+        probeCount = pagerConfig.pageCount,
         pagerState = pagerState,
+        intervalMs = ScreenSpec.STANDBY_PROBE_AUTO_SCROLL_INTERVAL_MS,
     )
 
     Box(
@@ -92,11 +105,9 @@ fun StandbyScreen(
         StandbyBackground(albumSettings = albumSettings)
 
         BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
-            val screenWidth = maxWidth
             val screenHeight = maxHeight
 
             Column(modifier = Modifier.fillMaxSize()) {
-                // 上 1/4：顶栏 + 日期农历 + 时间 + 本机环境（均居中）
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -104,7 +115,6 @@ fun StandbyScreen(
                 ) {
                     HomeTopBar(
                         systemName = state.systemName,
-                        onPullDownClick = {},
                     )
                     Column(
                         modifier = Modifier
@@ -120,14 +130,26 @@ fun StandbyScreen(
                             fontWeight = FontWeight.Light,
                             textAlign = TextAlign.Center,
                         )
-                        Text(
-                            text = clockLines.timeLine.ifBlank { "—" },
-                            color = NetShieldTextPrimary,
-                            fontSize = ScreenSpec.HOME_TIME_SP.sp,
-                            fontWeight = FontWeight.Light,
-                            textAlign = TextAlign.Center,
-                            modifier = Modifier.padding(top = 6.dp),
-                        )
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(top = 6.dp),
+                        ) {
+                            Text(
+                                text = clockLines.timeLine.ifBlank { "—" },
+                                color = NetShieldTextPrimary,
+                                fontSize = ScreenSpec.HOME_TIME_SP.sp,
+                                fontWeight = FontWeight.Light,
+                                textAlign = TextAlign.Center,
+                                modifier = Modifier.align(Alignment.Center),
+                            )
+                            DoorStatusChip(
+                                doorState = state.doorState,
+                                modifier = Modifier
+                                    .align(Alignment.CenterEnd)
+                                    .padding(end = ScreenSpec.homeHorizontalPadding),
+                            )
+                        }
                         StandbyHostEnvRow(
                             readings = state.hostEnvReadings.map { it.label to it.value },
                             modifier = Modifier.padding(top = 10.dp),
@@ -135,24 +157,6 @@ fun StandbyScreen(
                     }
                 }
 
-                // 次 1/4：右侧 1/4 区域居中显示门状态
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .fillMaxHeight(ScreenSpec.STANDBY_DOOR_SECTION_FRACTION),
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .align(Alignment.CenterEnd)
-                            .fillMaxWidth(0.25f)
-                            .fillMaxHeight(),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        DoorStatusChip(doorState = state.doorState)
-                    }
-                }
-
-                // 下 1/2：探头卡片 2/3 + 留言 1/3 并列（卡片尽量接近主页高度）
                 val bottomSectionHeight = screenHeight * ScreenSpec.STANDBY_BOTTOM_SECTION_FRACTION
                 val probeCardHeight = minOf(
                     screenHeight * ScreenSpec.HOME_CARD_HEIGHT_FRACTION,
@@ -168,7 +172,7 @@ fun StandbyScreen(
                 ) {
                     Box(
                         modifier = Modifier
-                            .weight(ScreenSpec.STANDBY_PROBE_COLUMN_WEIGHT)
+                            .weight(if (showStandbyMessages) ScreenSpec.STANDBY_PROBE_COLUMN_WEIGHT else 1f)
                             .fillMaxHeight(),
                         contentAlignment = Alignment.Center,
                     ) {
@@ -190,16 +194,16 @@ fun StandbyScreen(
                                     modifier = Modifier.fillMaxSize(),
                                 ) { page ->
                                     SlaveProbeCard(
-                                        probe = state.slaveProbes[page],
+                                        probe = displayProbes[page],
                                         onDetailClick = {},
                                         standbyFrosted = true,
                                         modifier = Modifier.fillMaxSize(),
                                     )
                                 }
                             }
-                            if (state.slaveProbes.isNotEmpty()) {
+                            if (displayProbes.size > 1) {
                                 ProbePageIndicator(
-                                    pageCount = state.slaveProbes.size,
+                                    pageCount = displayProbes.size,
                                     currentPage = pagerState.currentPage,
                                     modifier = Modifier
                                         .align(Alignment.BottomCenter)
@@ -209,20 +213,22 @@ fun StandbyScreen(
                         }
                     }
 
-                    Box(
-                        modifier = Modifier
-                            .weight(ScreenSpec.STANDBY_MESSAGE_COLUMN_WEIGHT)
-                            .fillMaxHeight(),
-                        contentAlignment = Alignment.TopStart,
-                    ) {
-                        StandbyMessageList(
-                            messages = latestMessages,
+                    if (showStandbyMessages) {
+                        Box(
                             modifier = Modifier
-                                .fillMaxWidth(0.92f)
-                                .fillMaxHeight()
-                                .padding(top = messageListTopInset)
-                                .verticalScroll(rememberScrollState()),
-                        )
+                                .weight(ScreenSpec.STANDBY_MESSAGE_COLUMN_WEIGHT)
+                                .fillMaxHeight(),
+                            contentAlignment = Alignment.TopStart,
+                        ) {
+                            StandbyMessageList(
+                                messages = latestMessages,
+                                modifier = Modifier
+                                    .fillMaxWidth(0.92f)
+                                    .fillMaxHeight()
+                                    .padding(top = messageListTopInset)
+                                    .verticalScroll(rememberScrollState()),
+                            )
+                        }
                     }
                 }
             }
@@ -252,7 +258,7 @@ private fun StandbyHostEnvRow(
     }
 }
 
-/** 下 1/2 右侧 1/3：标题「留言」+ 最新三条正文，每条淡背景、自动换行。 */
+/** 下区右侧：标题「留言」+ 最新三条正文，每条淡背景、自动换行。 */
 @Composable
 private fun StandbyMessageList(
     messages: List<AlbumMessage>,
@@ -320,7 +326,6 @@ private fun StandbyScreenPreview() {
                 AlbumMessage(id = 3L, text = "123456", createdAtMillis = 1L),
             ),
             timeSettings = TimeSettings(),
-            probeCardMode = ProbeCardDisplayMode.Fixed,
             onExit = {},
         )
     }

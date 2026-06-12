@@ -192,7 +192,6 @@ class MainActivity : ComponentActivity() {
                         albumSettings = albumSettings,
                         messages = albumMessages,
                         timeSettings = settingsState.timeSettings,
-                        probeCardMode = displaySoundSettings.probeCardMode,
                         onExit = { showStandby = false },
                     )
                 } else if (showProbeDetail) {
@@ -329,7 +328,7 @@ class MainActivity : ComponentActivity() {
                         onBack = { showFiles = false },
                     )
                 } else {
-                    val desktopMessages = if (albumSettings.applyMessageDesktop) {
+                    val desktopMessages = if (albumSettings.showHomeMessages) {
                         albumMessages
                             .sortedByDescending { it.createdAtMillis }
                             .map { message -> MessageItem(message.id, message.text) }
@@ -363,6 +362,14 @@ class MainActivity : ComponentActivity() {
                             showProbeDetail = true
                         },
                         onMessageBarClick = { },
+                        onAddMessage = { text ->
+                            val newMessage = AlbumMessage(
+                                id = (albumMessages.maxOfOrNull { it.id } ?: 0L) + 1L,
+                                text = text,
+                                createdAtMillis = System.currentTimeMillis(),
+                            )
+                            saveAlbumMessages(listOf(newMessage) + albumMessages)
+                        },
                     )
                 }
                 }

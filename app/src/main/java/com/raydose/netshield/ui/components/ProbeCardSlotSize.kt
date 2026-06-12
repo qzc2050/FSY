@@ -175,51 +175,29 @@ internal fun probeCardSlotSpec(
 
 
     if (standbyFrosted) {
-
+        val envItems = fullEnvItems()
         return ProbeCardSlotSpec(
-
             nameSp = nameSp,
-
             alarmSp = alarmSp,
-
             detailSp = detailSp,
-
             doseSp = doseSp,
-
             doseUnitSp = doseUnitSp,
-
             doseUnitGapDp = doseUnitGapDp,
-
             doseOffsetDp = doseOffsetDp,
-
             envSp = spFromHeight(h, ProbeCardMetrics.ENV_H, 14f, ScreenSpec.HOME_CARD_ENV_SP.toFloat()),
-
             offlineSp = offlineSp,
-
             cornerDp = cornerDp,
-
             contentPaddingH = contentPaddingH,
-
             contentPaddingV = contentPaddingV,
-
             envPaddingH = envPaddingH,
-
             envPaddingV = envPaddingV,
-
             envRowGapDp = envRowGapDp,
-
             envWeight = 0.26f,
-
-            showEnvBar = false,
-
+            showEnvBar = true,
             envLayout = EnvLayout.SingleRow,
-
             envItemsPerRow = 5,
-
-            envItems = emptyList(),
-
+            envItems = envItems,
         )
-
     }
 
 

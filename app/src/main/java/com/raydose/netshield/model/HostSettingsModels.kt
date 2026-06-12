@@ -79,12 +79,15 @@ data class TimeSettings(
     val showHoliday: Boolean = false,
 )
 
-/** 电子相册首版设置：图片选择与应用开关。 */
+/** 电子相册：图片与留言展示设置。 */
 data class AlbumSettings(
     val selectedImageUri: String = "",
+    /** 所选图片作为待机页全屏背景 */
     val applyStandby: Boolean = false,
-    val applyDesktop: Boolean = false,
-    val applyMessageDesktop: Boolean = true,
+    /** 主页底部留言栏是否显示 */
+    val showHomeMessages: Boolean = true,
+    /** 待机页右侧留言区是否显示 */
+    val showStandbyMessages: Boolean = true,
 )
 
 data class AlbumMessage(

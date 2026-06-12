@@ -56,6 +56,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.DialogProperties
 import com.raydose.netshield.R
+import com.raydose.netshield.ui.components.MessageEditDialog
 import com.raydose.netshield.model.AlbumMessage
 import com.raydose.netshield.model.AlbumSettings
 import com.raydose.netshield.model.SlaveProbeUi
@@ -140,22 +141,22 @@ private fun AlbumContent(
             AlbumPreviewPanel(
                 selectedImageUri = settings.selectedImageUri,
                 applyStandby = settings.applyStandby,
-                applyDesktop = settings.applyDesktop,
                 onPickImage = onPickImage,
                 onApplyStandbyChange = { onSettingsChange(settings.copy(applyStandby = it)) },
-                onApplyDesktopChange = { onSettingsChange(settings.copy(applyDesktop = it)) },
                 modifier = Modifier
                     .weight(0.38f)
                     .fillMaxHeight(),
             )
             MessagePanel(
                 messages = messages,
-                applyDesktop = settings.applyMessageDesktop,
+                showHomeMessages = settings.showHomeMessages,
+                showStandbyMessages = settings.showStandbyMessages,
                 searchQuery = searchQuery,
                 manageMode = manageMode,
                 selectedMessageIds = selectedMessageIds,
                 scrollToLatestRequest = scrollToLatestRequest,
-                onApplyDesktopChange = { onSettingsChange(settings.copy(applyMessageDesktop = it)) },
+                onShowHomeMessagesChange = { onSettingsChange(settings.copy(showHomeMessages = it)) },
+                onShowStandbyMessagesChange = { onSettingsChange(settings.copy(showStandbyMessages = it)) },
                 onSearchQueryChange = { searchQuery = it },
                 onManageModeChange = { enabled ->
                     manageMode = enabled
@@ -291,10 +292,8 @@ private fun AlbumWindowBar(
 private fun AlbumPreviewPanel(
     selectedImageUri: String,
     applyStandby: Boolean,
-    applyDesktop: Boolean,
     onPickImage: () -> Unit,
     onApplyStandbyChange: (Boolean) -> Unit,
-    onApplyDesktopChange: (Boolean) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Column(
@@ -313,7 +312,6 @@ private fun AlbumPreviewPanel(
         }
         Spacer(modifier = Modifier.height(16.dp))
         AlbumSwitchRow("应用于待机画面", applyStandby, onApplyStandbyChange)
-        AlbumSwitchRow("应用于桌面", applyDesktop, onApplyDesktopChange)
     }
 }
 
@@ -360,12 +358,14 @@ private fun AlbumPreviewImage(selectedImageUri: String) {
 @Composable
 private fun MessagePanel(
     messages: List<AlbumMessage>,
-    applyDesktop: Boolean,
+    showHomeMessages: Boolean,
+    showStandbyMessages: Boolean,
     searchQuery: String,
     manageMode: Boolean,
     selectedMessageIds: Set<Long>,
     scrollToLatestRequest: Int,
-    onApplyDesktopChange: (Boolean) -> Unit,
+    onShowHomeMessagesChange: (Boolean) -> Unit,
+    onShowStandbyMessagesChange: (Boolean) -> Unit,
     onSearchQueryChange: (String) -> Unit,
     onManageModeChange: (Boolean) -> Unit,
     onAddMessage: () -> Unit,
@@ -475,8 +475,12 @@ private fun MessagePanel(
             }
         }
         Spacer(modifier = Modifier.height(14.dp))
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            AlbumSwitchRow("主页显示留言", showHomeMessages, onShowHomeMessagesChange)
+            AlbumSwitchRow("待机页显示留言", showStandbyMessages, onShowStandbyMessagesChange)
+        }
+        Spacer(modifier = Modifier.height(12.dp))
         Row(verticalAlignment = Alignment.CenterVertically) {
-            AlbumSwitchRow("应用于桌面", applyDesktop, onApplyDesktopChange)
             Spacer(modifier = Modifier.weight(1f))
             if (manageMode) {
                 Text(
@@ -582,70 +586,6 @@ private fun MessageRow(
             }
         }
     }
-}
-
-@Composable
-private fun MessageEditDialog(
-    initialText: String,
-    isNew: Boolean,
-    onDismiss: () -> Unit,
-    onConfirm: (String) -> Unit,
-) {
-    var text by remember(initialText) { mutableStateOf(initialText) }
-    val dialogBackground = Color(0xFF3946A1)
-    val dialogAccent = Color(0xFF8EA2FF)
-    val inputBackground = Color(0xFF4452B8)
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = {
-            Text(
-                text = if (isNew) "新增留言" else "编辑留言",
-                color = NetShieldTextPrimary,
-                fontSize = 28.sp,
-                fontWeight = FontWeight.SemiBold,
-            )
-        },
-        text = {
-            OutlinedTextField(
-                value = text,
-                onValueChange = { text = it },
-                minLines = 3,
-                maxLines = 5,
-                label = { Text("留言内容", fontSize = 20.sp) },
-                textStyle = androidx.compose.ui.text.TextStyle(
-                    color = NetShieldTextPrimary,
-                    fontSize = 22.sp,
-                ),
-                colors = OutlinedTextFieldDefaults.colors(
-                    focusedTextColor = NetShieldTextPrimary,
-                    unfocusedTextColor = NetShieldTextPrimary,
-                    focusedContainerColor = inputBackground,
-                    unfocusedContainerColor = inputBackground,
-                    cursorColor = dialogAccent,
-                    focusedBorderColor = dialogAccent,
-                    unfocusedBorderColor = Color(0xFF6F7CE0),
-                    focusedLabelColor = dialogAccent,
-                    unfocusedLabelColor = Color(0xFFD6DCFF),
-                ),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .defaultMinSize(minHeight = 160.dp),
-            )
-        },
-        confirmButton = {
-            TextButton(onClick = { onConfirm(text) }) {
-                Text("保存", fontSize = 22.sp)
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text("取消", color = Color(0xFFD6DCFF), fontSize = 22.sp)
-            }
-        },
-        containerColor = dialogBackground,
-        modifier = Modifier.fillMaxWidth(0.66f),
-        properties = DialogProperties(usePlatformDefaultWidth = false),
-    )
 }
 
 @Composable

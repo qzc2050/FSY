@@ -54,13 +54,13 @@ import com.raydose.netshield.ui.components.GradientBackground
 import com.raydose.netshield.ui.components.HomeTopBar
 import com.raydose.netshield.ui.components.HostEnvScrollPanel
 import com.raydose.netshield.ui.components.MessageTickerBar
+import com.raydose.netshield.ui.components.MessageEditDialog
 import com.raydose.netshield.ui.components.ProbePagerAutoScroll
 import com.raydose.netshield.ui.components.ProbePageIndicator
 import com.raydose.netshield.ui.components.SideDrawerDestination
 import com.raydose.netshield.ui.components.SideDrawerLayout
 import com.raydose.netshield.ui.components.SideDrawerWithGesture
 import com.raydose.netshield.ui.components.rememberSideDrawerPanelState
-import com.raydose.netshield.ui.components.SideSwipeHint
 import com.raydose.netshield.ui.components.SlaveProbeCard
 import com.raydose.netshield.ui.components.StatusBarWithGesture
 import com.raydose.netshield.ui.components.rememberStatusBarPanelState
@@ -131,17 +131,24 @@ fun HomeScreen(
     onStatusBarDismiss: () -> Unit,
     onProbeDetailClick: (String) -> Unit,
     onMessageBarClick: () -> Unit,
+    onAddMessage: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val probesPerPage = visibleProbeCards.coerceIn(1, 4)
-    val probePageCount = homeProbePageCount(state.slaveProbes.size, probesPerPage)
-    val pagerState = rememberPagerState(pageCount = { probePageCount })
+    val pagerConfig = remember(state.slaveProbes, visibleProbeCards, probeCardMode) {
+        resolveHomeProbePagerConfig(state.slaveProbes, visibleProbeCards, probeCardMode)
+    }
+    val displayProbes = pagerConfig.displayProbes
+    val probesPerPage = pagerConfig.probesPerPage
+    val probePageCount = pagerConfig.pageCount
+    val autoScroll = pagerConfig.autoScroll
+    val displayListKey = remember(displayProbes) { probeDisplayListKey(displayProbes) }
+    val pagerState = rememberPagerState(pageCount = { probePageCount.coerceAtLeast(1) })
     val drawerPanelState = rememberSideDrawerPanelState()
     val statusBarPanelState = rememberStatusBarPanelState()
     val density = LocalDensity.current
-    val autoScroll = probeCardMode == ProbeCardDisplayMode.Scroll
-    var messageIndex by remember { mutableStateOf(0) }
+    var messageTickerResetKey by remember { mutableStateOf(0) }
     var showMessageList by remember { mutableStateOf(false) }
+    var showAddMessageDialog by remember { mutableStateOf(false) }
 
     LaunchedEffect(state.sideDrawerOpen) {
         drawerPanelState.isOpen = state.sideDrawerOpen
@@ -153,12 +160,22 @@ fun HomeScreen(
         if (!state.statusBarExpanded) statusBarPanelState.reset()
     }
 
-    LaunchedEffect(state.selectedProbeIndex, probesPerPage) {
-        if (state.slaveProbes.isNotEmpty()) {
-            val targetPage = (state.selectedProbeIndex / probesPerPage).coerceIn(0, probePageCount - 1)
-            if (pagerState.currentPage != targetPage) {
-                pagerState.animateScrollToPage(targetPage)
-            }
+    LaunchedEffect(displayListKey) {
+        if (pagerState.currentPage != 0) {
+            pagerState.scrollToPage(0)
+        }
+    }
+
+    LaunchedEffect(state.selectedProbeIndex, probesPerPage, pagerConfig.alarmPriorityActive) {
+        if (displayProbes.isEmpty()) return@LaunchedEffect
+        val targetPage = if (pagerConfig.alarmPriorityActive) {
+            val probe = state.slaveProbes.getOrNull(state.selectedProbeIndex) ?: return@LaunchedEffect
+            displayProbes.indexOfFirst { it.id == probe.id }.takeIf { it >= 0 } ?: 0
+        } else {
+            (state.selectedProbeIndex / probesPerPage).coerceIn(0, probePageCount - 1)
+        }
+        if (pagerState.currentPage != targetPage) {
+            pagerState.animateScrollToPage(targetPage)
         }
     }
 
@@ -169,17 +186,12 @@ fun HomeScreen(
         paused = state.statusBarExpanded,
     )
 
-    LaunchedEffect(autoScroll, state.messages, state.statusBarExpanded) {
-        messageIndex = 0
-        if (!autoScroll || state.statusBarExpanded || state.messages.size <= 1) return@LaunchedEffect
-        while (true) {
-            delay(ScreenSpec.MESSAGE_TICKER_ROTATE_INTERVAL_MS)
-            messageIndex = (messageIndex + 1) % state.messages.size
-        }
-    }
-
     LaunchedEffect(state.statusBarExpanded, state.messages) {
         if (state.statusBarExpanded || state.messages.isEmpty()) showMessageList = false
+    }
+
+    LaunchedEffect(state.messages.size) {
+        messageTickerResetKey++
     }
 
     Box(modifier = modifier.fillMaxSize()) {
@@ -210,7 +222,6 @@ fun HomeScreen(
             Column(modifier = Modifier.fillMaxSize()) {
                 HomeTopBar(
                     systemName = state.systemName,
-                    onPullDownClick = onStatusBarToggle,
                 )
 
                 if (!state.statusBarExpanded) {
@@ -292,7 +303,7 @@ fun HomeScreen(
                                 ) { page ->
                                     HomeProbeGridPage(
                                         slots = homeProbeGridSlots(
-                                            probes = state.slaveProbes,
+                                            probes = displayProbes,
                                             page = page,
                                             visiblePerPage = probesPerPage,
                                         ),
@@ -303,13 +314,6 @@ fun HomeScreen(
                                 }
                             }
                         }
-
-                        SideSwipeHint(
-                            onClick = onSideDrawerToggle,
-                            modifier = Modifier
-                                .align(Alignment.CenterEnd)
-                                .padding(end = x(0.012f)),
-                        )
                     }
 
                     Box(
@@ -318,7 +322,7 @@ fun HomeScreen(
                             .weight(1f),
                         contentAlignment = Alignment.Center,
                     ) {
-                        if (state.slaveProbes.isNotEmpty() && probePageCount > 1) {
+                        if (displayProbes.isNotEmpty() && probePageCount > 1) {
                             ProbePageIndicator(
                                 pageCount = probePageCount,
                                 currentPage = pagerState.currentPage,
@@ -337,13 +341,13 @@ fun HomeScreen(
                                 modifier = Modifier.align(Alignment.CenterStart),
                             )
                             MessageTickerBar(
-                                messageIndex = messageIndex,
                                 messageTextAt = { idx ->
                                     state.messages.getOrNull(idx)?.text ?: "暂无留言"
                                 },
                                 messageCount = state.messages.size,
-                                scrollEnabled = autoScroll,
                                 animateMessageChange = autoScroll && state.messages.size > 1,
+                                resetKey = messageTickerResetKey,
+                                onAddMessageClick = { showAddMessageDialog = true },
                                 onClick = {
                                     if (state.messages.isNotEmpty()) {
                                         showMessageList = !showMessageList
@@ -389,6 +393,8 @@ fun HomeScreen(
                 thumbnailContent = {
                     HomeThumbnailContent(
                         state = state,
+                        displayProbes = displayProbes,
+                        probesPerPage = probesPerPage,
                         pagerState = pagerState,
                         screenWidth = screenWidth,
                         screenHeight = screenHeight,
@@ -410,6 +416,22 @@ fun HomeScreen(
                             .padding(bottom = footerBottomInset + 66.dp),
                     )
                 }
+            }
+
+            if (showAddMessageDialog) {
+                MessageEditDialog(
+                    initialText = "",
+                    isNew = true,
+                    onDismiss = { showAddMessageDialog = false },
+                    onConfirm = { text ->
+                        val trimmed = text.trim()
+                        if (trimmed.isNotEmpty()) {
+                            onAddMessage(trimmed)
+                            messageTickerResetKey++
+                        }
+                        showAddMessageDialog = false
+                    },
+                )
             }
         }
     }

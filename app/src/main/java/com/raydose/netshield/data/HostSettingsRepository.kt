@@ -132,11 +132,23 @@ class HostSettingsRepository(context: Context) {
     fun loadAlbumSettings(): AlbumSettings {
         val o = prefs.getString(KEY_ALBUM, null)?.let { runCatching { JSONObject(it) }.getOrNull() }
             ?: return AlbumSettings()
+        val legacyHomeMessages = when {
+            o.has("showHomeMessages") -> o.optBoolean("showHomeMessages", true)
+            else -> o.optBoolean("applyMessageDesktop", true)
+        }
+        val legacyStandbyMessages = when {
+            o.has("showStandbyMessages") -> o.optBoolean("showStandbyMessages", true)
+            else -> {
+                val displayJson = prefs.getString(KEY_DISPLAY, null)
+                    ?.let { runCatching { JSONObject(it) }.getOrNull() }
+                displayJson?.optBoolean("showStandbyMessages", true) ?: true
+            }
+        }
         return AlbumSettings(
             selectedImageUri = o.optString("selectedImageUri", ""),
             applyStandby = o.optBoolean("applyStandby", false),
-            applyDesktop = o.optBoolean("applyDesktop", false),
-            applyMessageDesktop = o.optBoolean("applyMessageDesktop", true),
+            showHomeMessages = legacyHomeMessages,
+            showStandbyMessages = legacyStandbyMessages,
         )
     }
 
@@ -144,8 +156,8 @@ class HostSettingsRepository(context: Context) {
         val o = JSONObject().apply {
             put("selectedImageUri", settings.selectedImageUri)
             put("applyStandby", settings.applyStandby)
-            put("applyDesktop", settings.applyDesktop)
-            put("applyMessageDesktop", settings.applyMessageDesktop)
+            put("showHomeMessages", settings.showHomeMessages)
+            put("showStandbyMessages", settings.showStandbyMessages)
         }
         prefs.edit().putString(KEY_ALBUM, o.toString()).apply()
     }

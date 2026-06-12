@@ -99,9 +99,7 @@ fun ProbeDetailScreen(
             listOf(selected) + validProbes.filter { it.id != selected.id }
         }
     }
-    val columns = remember(orderedProbes) {
-        List(4) { index -> orderedProbes.getOrNull(index) }
-    }
+    val displayProbes = remember(orderedProbes) { orderedProbes.take(4) }
 
     val nameDrafts = remember(validProbes) { mutableStateMapOf<String, String>() }
     val locationDrafts = remember(validProbes) { mutableStateMapOf<String, String>() }
@@ -168,17 +166,23 @@ fun ProbeDetailScreen(
                 },
             )
 
-            Row(
+            BoxWithConstraints(
                 modifier = Modifier
                     .fillMaxWidth()
                     .weight(1f)
                     .padding(horizontal = 14.dp, vertical = 10.dp),
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
             ) {
-                columns.forEach { probe ->
-                    if (probe == null) {
-                        EmptyProbeColumn(modifier = Modifier.weight(1f))
-                    } else {
+                val columnWidth = maxWidth * 0.25f
+                val columnGap = 10.dp
+                Row(
+                    modifier = Modifier.fillMaxSize(),
+                    horizontalArrangement = Arrangement.Center,
+                    verticalAlignment = Alignment.Top,
+                ) {
+                    displayProbes.forEachIndexed { index, probe ->
+                        if (index > 0) {
+                            Spacer(modifier = Modifier.width(columnGap))
+                        }
                         val name = nameDrafts[probe.id].orEmpty()
                         val location = locationDrafts[probe.id].orEmpty()
                         val baseRate = probe.doseRateText.toDoubleOrNull() ?: 0.0
@@ -202,7 +206,9 @@ fun ProbeDetailScreen(
                             onExportToPath = { storage, directoryPath ->
                                 columnHints[probe.id] = onExportToPath(probe.id, storage, directoryPath)
                             },
-                            modifier = Modifier.weight(1f),
+                            modifier = Modifier
+                                .width(columnWidth)
+                                .fillMaxHeight(),
                         )
                     }
                 }
@@ -539,18 +545,5 @@ private fun ProbeIdentityEditDialog(
         modifier = Modifier.fillMaxWidth(0.42f),
         properties = DialogProperties(usePlatformDefaultWidth = false),
     )
-}
-
-@Composable
-private fun EmptyProbeColumn(modifier: Modifier = Modifier) {
-    Box(
-        modifier = modifier
-            .fillMaxHeight()
-            .clip(RoundedCornerShape(10.dp))
-            .background(NetShieldAtmospherePlayerOverlay.copy(alpha = 0.55f)),
-        contentAlignment = Alignment.Center,
-    ) {
-        Text(text = "空位", color = NetShieldTextSecondary, fontSize = 22.sp)
-    }
 }
 

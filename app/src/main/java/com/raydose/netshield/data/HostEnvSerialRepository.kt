@@ -107,8 +107,11 @@ class HostEnvSerialRepository(
 
     private fun applyUploadValues(values: List<Long>) {
         val next = parseHostAdapterUpload(values) ?: return
+        val prev = _snapshot.value
+        if (prev.hasData && prev.envReadings == next.envReadings && prev.doorOpen == next.doorOpen) {
+            return
+        }
         _snapshot.value = next
-        Log.d(TAG, "本机环境已更新 ${next.envReadings.joinToString { "${it.label}=${it.value}" }}")
     }
 
     private fun onSerialError(message: String) {
