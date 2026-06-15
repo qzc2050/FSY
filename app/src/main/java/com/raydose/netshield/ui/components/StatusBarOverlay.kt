@@ -197,18 +197,12 @@ fun StatusBarWithGesture(
 
     BoxWithConstraints(modifier = modifier.fillMaxSize()) {
         val screenHeight = maxHeight
-        val thumbnailMaxHeight = screenHeight * ScreenSpec.statusBarThumbnailHeightFraction()
         val currentPanelHeight = when {
             panelState.isOpen -> panelHeight
             panelState.dragOffset > 0f -> with(density) { panelState.dragOffset.toDp() }
             else -> 0.dp
         }
         val thumbnailAreaHeight = (screenHeight - currentPanelHeight).coerceAtLeast(0.dp)
-        val thumbnailScale = if (screenHeight > 0.dp) {
-            (thumbnailAreaHeight.value / screenHeight.value).coerceIn(0.01f, 1f)
-        } else {
-            1f
-        }
 
         if (panelState.isOpen) {
             Box(
@@ -266,16 +260,7 @@ fun StatusBarWithGesture(
                         },
                     ),
             ) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(screenHeight)
-                        .graphicsLayer {
-                            scaleX = thumbnailScale
-                            scaleY = thumbnailScale
-                            transformOrigin = TransformOrigin(0.5f, 0f)
-                        },
-                ) {
+                Box(modifier = Modifier.fillMaxSize()) {
                     thumbnailContent()
                 }
             }

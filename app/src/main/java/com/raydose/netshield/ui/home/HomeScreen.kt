@@ -147,6 +147,7 @@ fun HomeScreen(
     val statusBarPanelState = rememberStatusBarPanelState()
     val density = LocalDensity.current
     var messageTickerResetKey by remember { mutableStateOf(0) }
+    var tickerDisplayLine by remember { mutableStateOf("") }
     var showMessageList by remember { mutableStateOf(false) }
     var showAddMessageDialog by remember { mutableStateOf(false) }
 
@@ -185,6 +186,11 @@ fun HomeScreen(
         pagerState = pagerState,
         paused = state.statusBarExpanded,
     )
+
+    LaunchedEffect(state.messages) {
+        tickerDisplayLine = state.messages.firstOrNull()?.text?.lineSequence()?.firstOrNull().orEmpty()
+            .ifBlank { if (state.messages.isEmpty()) "暂无留言" else "" }
+    }
 
     LaunchedEffect(state.statusBarExpanded, state.messages) {
         if (state.statusBarExpanded || state.messages.isEmpty()) showMessageList = false
@@ -347,6 +353,9 @@ fun HomeScreen(
                                 messageCount = state.messages.size,
                                 animateMessageChange = autoScroll && state.messages.size > 1,
                                 resetKey = messageTickerResetKey,
+                                onDisplayLineChange = { _, line ->
+                                    tickerDisplayLine = line
+                                },
                                 onAddMessageClick = { showAddMessageDialog = true },
                                 onClick = {
                                     if (state.messages.isNotEmpty()) {
@@ -396,8 +405,7 @@ fun HomeScreen(
                         displayProbes = displayProbes,
                         probesPerPage = probesPerPage,
                         pagerState = pagerState,
-                        screenWidth = screenWidth,
-                        screenHeight = screenHeight,
+                        currentMessageLine = tickerDisplayLine,
                     )
                 },
                 modifier = Modifier.fillMaxSize(),

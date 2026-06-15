@@ -163,6 +163,44 @@ object ScreenSpec {
     /** 下拉展开时下半屏主页缩略区域占屏高比例 */
     fun statusBarThumbnailHeightFraction(): Float = 1f - STATUS_BAR_PANEL_HEIGHT_FRACTION
 
+    /** 下拉缩略区三行：顶栏 / 主内容 / 底留白 */
+    const val STATUS_BAR_THUMBNAIL_ROW1_FRACTION = 0.10f
+    const val STATUS_BAR_THUMBNAIL_ROW2_FRACTION = 0.85f
+    const val STATUS_BAR_THUMBNAIL_ROW3_FRACTION = 0.05f
+
+    /** 缩略区各行内容整体下移占该行高度比例 */
+    const val STATUS_BAR_THUMBNAIL_ROW_TOP_INSET_FRACTION = 0.05f
+
+    /** 第二行内容（日期+探头）整体下移（同 [STATUS_BAR_THUMBNAIL_ROW_TOP_INSET_FRACTION]） */
+    const val STATUS_BAR_THUMBNAIL_ROW2_TOP_INSET_FRACTION = STATUS_BAR_THUMBNAIL_ROW_TOP_INSET_FRACTION
+
+    /** 下拉缩略顶栏：门 / 留言 / 图标 横向占比 */
+    const val STATUS_BAR_THUMBNAIL_DOOR_FRACTION = 0.25f
+    const val STATUS_BAR_THUMBNAIL_MESSAGE_FRACTION = 0.50f
+    const val STATUS_BAR_THUMBNAIL_ICONS_FRACTION = 0.25f
+
+    /** 下拉缩略主内容：环境信息 / 探头卡片 */
+    const val STATUS_BAR_THUMBNAIL_ENV_FRACTION = 1f / 3f
+    const val STATUS_BAR_THUMBNAIL_PROBE_FRACTION = 2f / 3f
+
+    /** 下拉缩略探头区高度（占第二行可用高度） */
+    const val STATUS_BAR_THUMBNAIL_PROBE_HEIGHT_FRACTION = 1f
+
+    /** 下拉缩略区字号（按缩略视口直接排版，不再整页缩放） */
+    const val STATUS_BAR_THUMBNAIL_DATE_SP = 24
+    const val STATUS_BAR_THUMBNAIL_TIME_SP = 32
+    const val STATUS_BAR_THUMBNAIL_ENV_SP = 28
+    const val STATUS_BAR_THUMBNAIL_MESSAGE_SP = 14
+
+    /** 与探头卡片 Full 布局底部环境栏 [envWeight] 一致，左列气压行与之对齐 */
+    const val STATUS_BAR_THUMBNAIL_PROBE_ENV_WEIGHT = 0.26f
+
+    /** 下拉缩略环境列：环境参数行间距 */
+    val statusBarThumbnailEnvLineSpacing = 10.dp
+
+    /** 下拉缩略主内容：左环境信息 / 右探头卡片 */
+    const val STATUS_BAR_THUMBNAIL_LEFT_FRACTION = STATUS_BAR_THUMBNAIL_ENV_FRACTION
+
     /** 顶部下拉手势触发区高度 */
     val statusBarGestureZoneHeight = 96.dp
 

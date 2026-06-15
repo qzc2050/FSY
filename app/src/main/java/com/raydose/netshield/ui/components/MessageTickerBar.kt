@@ -53,6 +53,7 @@ fun MessageTickerBar(
     widthFraction: Float = 0.54f,
     animateMessageChange: Boolean = false,
     resetKey: Int = 0,
+    onDisplayLineChange: ((messageIndex: Int, lineText: String) -> Unit)? = null,
 ) {
     val density = LocalDensity.current
     val textViewportHeight = with(density) {
@@ -106,6 +107,9 @@ fun MessageTickerBar(
                     MessageTickerLineCycleText(
                         text = messageTextAt(index),
                         repeatCycle = false,
+                        onDisplayLineChange = { line ->
+                            onDisplayLineChange?.invoke(index, line)
+                        },
                         onCycleComplete = {
                             currentMessageIndex = (currentMessageIndex + 1) % messageCount
                         },
@@ -117,6 +121,9 @@ fun MessageTickerBar(
                 MessageTickerLineCycleText(
                     text = messageTextAt(index),
                     repeatCycle = true,
+                    onDisplayLineChange = { line ->
+                        onDisplayLineChange?.invoke(index, line)
+                    },
                     modifier = Modifier.fillMaxWidth(),
                 )
             }
@@ -136,6 +143,7 @@ private fun MessageTickerLineCycleText(
     repeatCycle: Boolean,
     modifier: Modifier = Modifier,
     onCycleComplete: (() -> Unit)? = null,
+    onDisplayLineChange: ((lineText: String) -> Unit)? = null,
 ) {
     val textStyle = TextStyle(
         fontSize = 18.sp,
@@ -178,6 +186,10 @@ private fun MessageTickerLineCycleText(
                 layoutResult.getLineStart(line),
                 layoutResult.getLineEnd(line),
             ).trimEnd()
+        }
+
+        LaunchedEffect(displayText) {
+            onDisplayLineChange?.invoke(displayText)
         }
 
         Text(
