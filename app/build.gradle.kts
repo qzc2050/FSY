@@ -15,8 +15,8 @@ android {
         applicationId = "com.raydose.netshield"
         minSdk = 30
         targetSdk = 36
-        versionCode = 2
-        versionName = "1.0.1"
+        versionCode = 5
+        versionName = "1.0.4"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }

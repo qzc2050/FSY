@@ -1,4 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <paths xmlns:android="http://schemas.android.com/apk/res/android">
-    <cache-path name="apk_update" path="apk_update/" />
+    <!-- 安装包优先走 external-files，部分 ROM 的 packageinstaller 读不了 cache-path -->
+    <external-files-path name="apk_update" path="apk_update/" />
+    <files-path name="apk_update_internal" path="apk_update/" />
+    <cache-path name="apk_update_cache" path="apk_update/" />
 </paths>

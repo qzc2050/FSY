@@ -13,8 +13,10 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import android.widget.Toast
 import com.raydose.netshield.data.FileManagerRepository
 import com.raydose.netshield.ui.theme.NetShieldAccentBlue
 import com.raydose.netshield.ui.theme.NetShieldTextPrimary
@@ -48,6 +50,14 @@ fun AboutPanel(
     var isInstalling by remember { mutableStateOf(false) }
     var updateHint by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
+    val context = LocalContext.current
+
+    fun showInstallMessage(message: String, toast: Boolean = true) {
+        updateHint = message
+        if (toast) {
+            Toast.makeText(context.applicationContext, message, Toast.LENGTH_LONG).show()
+        }
+    }
 
     SettingsScrollContent(modifier = modifier.fillMaxSize()) {
         updateHint?.let { hint ->
@@ -91,14 +101,17 @@ fun AboutPanel(
                         onInstallApk(apkFile).fold(
                             onSuccess = {
                                 showUpdateDialog = false
-                                updateHint = "已调起系统安装，请按提示完成更新"
+                                showInstallMessage(
+                                    message = "已调起系统安装。确认后可能短暂看到系统桌面，安装完成将自动返回本应用。",
+                                    toast = false,
+                                )
                             },
                             onFailure = { error ->
-                                updateHint = error.message ?: "调起安装失败"
+                                showInstallMessage(error.message ?: "调起安装失败")
                             },
                         )
                     }.onFailure { error ->
-                        updateHint = error.message ?: "准备安装包失败"
+                        showInstallMessage(error.message ?: "准备安装包失败")
                     }
                 }
             },
