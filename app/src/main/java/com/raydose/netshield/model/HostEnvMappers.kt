@@ -3,7 +3,7 @@ package com.raydose.netshield.model
 /**
  * 转接板 0xEF 实时上传（0x23 start=0x0001）→ 主页本机环境。
  *
- * indices: 0 辐射(忽略) 1 温度 2 气压 3 湿度 4 CO2 5 PM2.5 6 alarm 7 status(门 bit0)
+ * indices: 0 辐射(忽略) 1 温度 2 气压(Pa) 3 湿度 4 CO2 5 PM2.5 6 alarm 7 status(门 bit0)
  */
 data class HostAdapterSnapshot(
     val envReadings: List<HostEnvReading> = emptyList(),
@@ -34,7 +34,7 @@ fun parseHostAdapterUpload(values: List<Long>, nowMillis: Long = System.currentT
             HostEnvReading("温度", formatHostTemp(values[1])),
             HostEnvReading("湿度", "${values[3]}%"),
             HostEnvReading("CO2", formatHostCo2(values[4])),
-            HostEnvReading("气压", formatHostPressure(values[2])),
+            HostEnvReading("气压", formatHostPressureKpa(values[2])),
             HostEnvReading("PM2.5", formatHostPm25(values[5])),
         ),
         doorOpen = doorOpen,
@@ -44,15 +44,6 @@ fun parseHostAdapterUpload(values: List<Long>, nowMillis: Long = System.currentT
 
 private fun formatHostTemp(raw: Long): String = "%.1f°C".format(raw / 10.0)
 
-private fun formatHostCo2(raw: Long): String = "%.1f ppm".format(raw / 10.0)
+private fun formatHostCo2(raw: Long): String = "${raw} ppm"
 
-private fun formatHostPm25(raw: Long): String = "%.1f".format(raw / 10.0)
-
-private fun formatHostPressure(pressurePa: Long): String {
-    val kpa = pressurePa / 1000.0
-    return if (kpa >= 50) {
-        "%.2f kPa".format(kpa)
-    } else {
-        "${pressurePa} Pa"
-    }
-}
+private fun formatHostPm25(raw: Long): String = "%.1f μg/m³".format(raw / 10.0)

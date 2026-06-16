@@ -17,19 +17,23 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.Replay
+import androidx.compose.material.icons.filled.Repeat
+import androidx.compose.material.icons.filled.RepeatOne
+import androidx.compose.material.icons.filled.Shuffle
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.SkipPrevious
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -39,6 +43,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
@@ -47,6 +52,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.Image
 import com.raydose.netshield.R
+import com.raydose.netshield.data.FileManagerRepository
+import com.raydose.netshield.model.MusicPlayMode
 import com.raydose.netshield.model.MusicTrack
 import com.raydose.netshield.model.MusicUiState
 import com.raydose.netshield.model.SlaveProbeUi
@@ -63,9 +70,12 @@ import com.raydose.netshield.ui.theme.ScreenSpec
 @Composable
 fun MusicScreen(
     viewModel: MusicViewModel,
+    fileManagerRepository: FileManagerRepository,
+    usbGrantEpoch: Int,
     hasAudioPermission: Boolean,
     probes: List<SlaveProbeUi>,
     onRequestPermission: () -> Unit,
+    onRequestUsbAccess: () -> Unit,
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -73,6 +83,19 @@ fun MusicScreen(
 
     LaunchedEffect(hasAudioPermission) {
         viewModel.loadTracks(hasAudioPermission)
+    }
+
+    if (state.showImportDialog) {
+        MusicImportDialog(
+            repository = fileManagerRepository,
+            usbGrantEpoch = usbGrantEpoch,
+            isImporting = state.isImporting,
+            onDismiss = viewModel::dismissImportDialog,
+            onRequestUsbAccess = onRequestUsbAccess,
+            onImport = { selections ->
+                viewModel.importMusicFiles(selections, fileManagerRepository)
+            },
+        )
     }
 
     BoxWithConstraints(modifier = modifier.fillMaxSize()) {
@@ -104,8 +127,10 @@ fun MusicScreen(
                 } else {
                     MusicContent(
                         state = state,
-                        onTrackClick = viewModel::playTrack,
-                        onReplay = { viewModel.seekToFraction(0f) },
+                        onSearchQueryChange = viewModel::updateSearchQuery,
+                        onImportClick = viewModel::showImportDialog,
+                        onTrackClick = viewModel::playTrackById,
+                        onCyclePlayMode = viewModel::cyclePlayMode,
                         onPrevious = viewModel::playPrevious,
                         onToggle = viewModel::togglePlayPause,
                         onNext = viewModel::playNext,
@@ -158,8 +183,10 @@ private fun PermissionPanel(
 @Composable
 private fun MusicContent(
     state: MusicUiState,
-    onTrackClick: (Int) -> Unit,
-    onReplay: () -> Unit,
+    onSearchQueryChange: (String) -> Unit,
+    onImportClick: () -> Unit,
+    onTrackClick: (String) -> Unit,
+    onCyclePlayMode: () -> Unit,
     onPrevious: () -> Unit,
     onToggle: () -> Unit,
     onNext: () -> Unit,
@@ -179,6 +206,8 @@ private fun MusicContent(
             Row(modifier = Modifier.weight(1f)) {
                 TrackListPanel(
                     state = state,
+                    onSearchQueryChange = onSearchQueryChange,
+                    onImportClick = onImportClick,
                     onTrackClick = onTrackClick,
                     modifier = Modifier
                         .weight(0.2f)
@@ -186,7 +215,7 @@ private fun MusicContent(
                 )
                 PlayerPanel(
                     state = state,
-                    onReplay = onReplay,
+                    onCyclePlayMode = onCyclePlayMode,
                     onPrevious = onPrevious,
                     onToggle = onToggle,
                     onNext = onNext,
@@ -253,9 +282,12 @@ private fun MusicWindowBar(
 @Composable
 private fun TrackListPanel(
     state: MusicUiState,
-    onTrackClick: (Int) -> Unit,
+    onSearchQueryChange: (String) -> Unit,
+    onImportClick: () -> Unit,
+    onTrackClick: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val displayTracks = state.displayTracks
     Column(
         modifier = modifier
             .background(NetShieldAtmosphereListPanelBg)
@@ -275,8 +307,41 @@ private fun TrackListPanel(
             maxLines = 2,
             overflow = TextOverflow.Ellipsis,
         )
-        Spacer(modifier = Modifier.height(16.dp))
-        if (state.tracks.isEmpty()) {
+        Spacer(modifier = Modifier.height(12.dp))
+        OutlinedTextField(
+            value = state.searchQuery,
+            onValueChange = onSearchQueryChange,
+            placeholder = { Text("搜索歌曲", fontSize = 14.sp) },
+            singleLine = true,
+            colors = OutlinedTextFieldDefaults.colors(
+                focusedTextColor = NetShieldTextPrimary,
+                unfocusedTextColor = NetShieldTextPrimary,
+                focusedPlaceholderColor = NetShieldTextSecondary,
+                unfocusedPlaceholderColor = NetShieldTextSecondary,
+                focusedBorderColor = NetShieldAccentBlue,
+                unfocusedBorderColor = NetShieldTextSecondary,
+            ),
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Spacer(modifier = Modifier.height(10.dp))
+        Button(
+            onClick = onImportClick,
+            enabled = !state.isImporting,
+            colors = ButtonDefaults.buttonColors(containerColor = NetShieldAccentBlue),
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Text(
+                text = if (state.isImporting) "导入中…" else "导入",
+                color = NetShieldTextPrimary,
+                fontSize = 16.sp,
+            )
+        }
+        Spacer(modifier = Modifier.height(12.dp))
+        if (state.isLoading) {
+            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Text(text = "扫描中…", color = NetShieldTextSecondary, fontSize = 16.sp)
+            }
+        } else if (displayTracks.isEmpty()) {
             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 Text(
                     text = state.message ?: "未找到音乐文件",
@@ -286,11 +351,12 @@ private fun TrackListPanel(
             }
         } else {
             LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                itemsIndexed(state.tracks, key = { _, track -> track.id }) { index, track ->
+                items(displayTracks, key = { it.id }) { track ->
                     TrackRow(
                         track = track,
-                        selected = index == state.currentIndex,
-                        onClick = { onTrackClick(index) },
+                        selected = track.id == state.currentTrack?.id,
+                        searchPinned = state.isSearchMatch(track),
+                        onClick = { onTrackClick(track.id) },
                     )
                 }
             }
@@ -302,9 +368,14 @@ private fun TrackListPanel(
 private fun TrackRow(
     track: MusicTrack,
     selected: Boolean,
+    searchPinned: Boolean,
     onClick: () -> Unit,
 ) {
-    val bg = if (selected) NetShieldAccentBlue.copy(alpha = 0.28f) else NetShieldSettingsEditorPanel.copy(alpha = 0.82f)
+    val bg = when {
+        selected -> NetShieldAccentBlue.copy(alpha = 0.28f)
+        searchPinned -> NetShieldAccentBlue.copy(alpha = 0.14f)
+        else -> NetShieldSettingsEditorPanel.copy(alpha = 0.82f)
+    }
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -341,7 +412,7 @@ private fun TrackRow(
 @Composable
 private fun PlayerPanel(
     state: MusicUiState,
-    onReplay: () -> Unit,
+    onCyclePlayMode: () -> Unit,
     onPrevious: () -> Unit,
     onToggle: () -> Unit,
     onNext: () -> Unit,
@@ -382,9 +453,11 @@ private fun PlayerPanel(
         }
         Spacer(modifier = Modifier.height(38.dp))
         Row(verticalAlignment = Alignment.CenterVertically) {
-            PlayerIconButton(onClick = onReplay, enabled = state.currentTrack != null) {
-                Icon(Icons.Filled.Replay, contentDescription = "重播")
-            }
+            PlayModeButton(
+                playMode = state.playMode,
+                onClick = onCyclePlayMode,
+                enabled = state.tracks.isNotEmpty(),
+            )
             Spacer(modifier = Modifier.width(58.dp))
             PlayerIconButton(onClick = onPrevious, enabled = state.tracks.isNotEmpty()) {
                 Icon(Icons.Filled.SkipPrevious, contentDescription = "上一首")
@@ -419,6 +492,34 @@ private fun PlayerPanel(
             )
         }
     }
+}
+
+@Composable
+private fun PlayModeButton(
+    playMode: MusicPlayMode,
+    onClick: () -> Unit,
+    enabled: Boolean,
+) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        PlayerIconButton(onClick = onClick, enabled = enabled) {
+            Icon(
+                imageVector = playMode.icon(),
+                contentDescription = playMode.label,
+            )
+        }
+        Text(
+            text = playMode.label,
+            color = if (enabled) NetShieldTextSecondary else NetShieldTextSecondary.copy(alpha = 0.5f),
+            fontSize = 12.sp,
+            modifier = Modifier.padding(top = 4.dp),
+        )
+    }
+}
+
+private fun MusicPlayMode.icon(): ImageVector = when (this) {
+    MusicPlayMode.LIST_LOOP -> Icons.Filled.Repeat
+    MusicPlayMode.SINGLE_LOOP -> Icons.Filled.RepeatOne
+    MusicPlayMode.SHUFFLE -> Icons.Filled.Shuffle
 }
 
 @Composable

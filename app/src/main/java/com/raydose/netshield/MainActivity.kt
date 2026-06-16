@@ -8,6 +8,7 @@ import android.os.Bundle
 import android.content.pm.PackageManager
 import android.view.WindowInsets
 import android.view.WindowInsetsController
+import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.SystemBarStyle
@@ -26,6 +27,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.core.content.ContextCompat
+import com.raydose.netshield.data.ApkInstallHelper
 import com.raydose.netshield.data.DisplaySoundController
 import com.raydose.netshield.data.FileManagerRepository
 import com.raydose.netshield.data.HostSettingsRepository
@@ -53,6 +55,7 @@ import androidx.compose.ui.Modifier
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import java.io.File
 
 class MainActivity : ComponentActivity() {
     private val viewModel: MainViewModel by viewModels()
@@ -116,17 +119,30 @@ class MainActivity : ComponentActivity() {
                     albumMessages = messages
                     hostSettingsRepository.saveAlbumMessages(messages)
                 }
-                val imagePickerLauncher = rememberLauncherForActivityResult(
-                    contract = ActivityResultContracts.OpenDocument(),
-                ) { uri ->
-                    if (uri != null) {
-                        runCatching {
-                            contentResolver.takePersistableUriPermission(
-                                uri,
-                                Intent.FLAG_GRANT_READ_URI_PERMISSION,
-                            )
+                var pendingApkFile by remember { mutableStateOf<File?>(null) }
+                val installPermissionLauncher = rememberLauncherForActivityResult(
+                    contract = ActivityResultContracts.StartActivityForResult(),
+                ) {
+                    pendingApkFile?.let { apk ->
+                        if (ApkInstallHelper.canInstallPackages(this)) {
+                            ApkInstallHelper.installApk(this, apk).onFailure { error ->
+                                Toast.makeText(this, error.message ?: "调起安装失败", Toast.LENGTH_LONG).show()
+                            }
                         }
-                        saveAlbumSettings(albumSettings.copy(selectedImageUri = uri.toString()))
+                    }
+                    pendingApkFile = null
+                }
+                val installSelectedApk: (File) -> Result<Unit> = { apk ->
+                    if (ApkInstallHelper.canInstallPackages(this)) {
+                        ApkInstallHelper.installApk(this, apk)
+                    } else {
+                        pendingApkFile = apk
+                        installPermissionLauncher.launch(
+                            ApkInstallHelper.unknownSourcesSettingsIntent(this),
+                        )
+                        Result.failure(
+                            IllegalStateException("请允许本应用「安装未知应用」，授权后请再次点击安装"),
+                        )
                     }
                 }
                 val usbTreeLauncher = rememberLauncherForActivityResult(
@@ -267,8 +283,8 @@ class MainActivity : ComponentActivity() {
                             viewModel.commitDisplaySoundMute(mute)
                             displaySoundSettings = viewModel.displaySoundSettings.value
                         },
-                        onPauseAlarmCommitted = { enabled ->
-                            viewModel.commitDisplaySoundPauseAlarm(enabled)
+                        onPauseAlarmClick = {
+                            viewModel.triggerDisplaySoundPauseAlarm()
                             displaySoundSettings = viewModel.displaySoundSettings.value
                         },
                         onSaveDisplaySound = {
@@ -279,17 +295,14 @@ class MainActivity : ComponentActivity() {
                             viewModel.closeSettings()
                             showStandby = true
                         },
-                        onHostNetworkChange = viewModel::updateHostNetwork,
-                        onSlaveNetworkChange = viewModel::updateSlaveNetworkCard,
-                        onSaveHostNetwork = viewModel::saveHostNetworkSection,
-                        onSaveSlaveNetwork = viewModel::saveSlaveNetworkSection,
+                        onCommitHostNetwork = viewModel::commitHostNetwork,
+                        onCommitSlaveNetwork = viewModel::commitSlaveNetwork,
                         onTimeSettingsChange = viewModel::updateTimeSettings,
                         onSyncTimeToDevice = viewModel::syncTimeToDevice,
                         onAddClick = viewModel::showAddProbeDialog,
                         onSaveClick = viewModel::saveProbeSettings,
                         onDismissAddDialog = viewModel::dismissAddProbeDialog,
                         onAddDevice = viewModel::addProbeFromDiscovery,
-                        onDetailClick = { },
                         onDataDetailClick = { index ->
                             detailProbeId = settingsState.manageDrafts.getOrNull(index)?.id
                             if (detailProbeId != null) {
@@ -301,13 +314,20 @@ class MainActivity : ComponentActivity() {
                         onDismissDeleteConfirm = viewModel::dismissRemoveProbeConfirm,
                         onConfirmDeleteProbe = viewModel::confirmRemoveProbe,
                         onDismissSaveSuccess = viewModel::dismissSaveSuccessDialog,
+                        fileManagerRepository = fileManagerRepository,
+                        usbGrantEpoch = usbGrantEpoch,
+                        onRequestUsbAccess = { usbTreeLauncher.launch(null) },
+                        onInstallApk = installSelectedApk,
                     )
                 } else if (showMusic) {
                     MusicScreen(
                         viewModel = musicViewModel,
+                        fileManagerRepository = fileManagerRepository,
+                        usbGrantEpoch = usbGrantEpoch,
                         hasAudioPermission = hasAudioPermission,
                         probes = homeState.slaveProbes,
                         onRequestPermission = requestAudioPermission,
+                        onRequestUsbAccess = { usbTreeLauncher.launch(null) },
                         onBack = { showMusic = false },
                     )
                 } else if (showAlbum) {
@@ -315,9 +335,11 @@ class MainActivity : ComponentActivity() {
                         probes = homeState.slaveProbes,
                         settings = albumSettings,
                         messages = albumMessages,
+                        fileManagerRepository = fileManagerRepository,
+                        usbGrantEpoch = usbGrantEpoch,
                         onSettingsChange = saveAlbumSettings,
                         onMessagesChange = saveAlbumMessages,
-                        onPickImage = { imagePickerLauncher.launch(arrayOf("image/*")) },
+                        onRequestUsbAccess = { usbTreeLauncher.launch(null) },
                         onBack = { showAlbum = false },
                     )
                 } else if (showFiles) {

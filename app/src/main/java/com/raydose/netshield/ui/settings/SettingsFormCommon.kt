@@ -1,7 +1,14 @@
 package com.raydose.netshield.ui.settings
 
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -16,6 +23,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.outlined.Visibility
 import androidx.compose.material.icons.outlined.VisibilityOff
 import androidx.compose.material3.Icon
@@ -44,8 +52,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.TextUnit
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.Dp
@@ -63,6 +75,105 @@ internal val SettingsFieldAreaFraction = 0.5f
 /** 网络表单右侧「保存」列宽，无保存的行也占位以保证输入框对齐 */
 private val SettingsSaveSlotWidth = 88.dp
 private val FieldTextColor = Color(0xFF1E2433)
+internal val SettingsCompactActionMinWidth = 140.dp
+internal val SettingsCompactActionMinHeight = 48.dp
+/** 下拉弹层：半透明灰色 */
+private val SettingsDropdownMenuBg = Color(0xCC505860)
+private val SettingsDropdownBorderColor = Color(0x809098A8)
+
+@Composable
+internal fun SettingsDropdownControl(
+    value: String,
+    options: List<String>,
+    onSelected: (Int) -> Unit,
+    modifier: Modifier = Modifier,
+    valueFontSize: TextUnit = 17.sp,
+    menuFontSize: TextUnit = 16.sp,
+    fillWidth: Boolean = false,
+) {
+    var expanded by remember { mutableStateOf(false) }
+    var triggerWidth by remember { mutableStateOf(SettingsCompactActionMinWidth) }
+    val density = LocalDensity.current
+
+    Box(modifier = modifier) {
+        Button(
+            onClick = { expanded = true },
+            modifier = Modifier
+                .onSizeChanged { size ->
+                    triggerWidth = with(density) {
+                        maxOf(size.width.toDp(), SettingsCompactActionMinWidth)
+                    }
+                }
+                .defaultMinSize(
+                    minWidth = SettingsCompactActionMinWidth,
+                    minHeight = SettingsCompactActionMinHeight,
+                )
+                .then(if (fillWidth) Modifier.fillMaxWidth() else Modifier),
+            colors = ButtonDefaults.buttonColors(containerColor = NetShieldAccentBlue),
+            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp),
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.Center,
+            ) {
+                Text(
+                    text = value,
+                    color = NetShieldTextPrimary,
+                    fontSize = valueFontSize,
+                    maxLines = 1,
+                    softWrap = false,
+                    textAlign = TextAlign.Center,
+                )
+                Icon(
+                    imageVector = Icons.Filled.ArrowDropDown,
+                    contentDescription = null,
+                    tint = NetShieldTextPrimary,
+                    modifier = Modifier
+                        .size(22.dp)
+                        .graphicsLayer(rotationZ = if (expanded) 180f else 0f),
+                )
+            }
+        }
+        DropdownMenu(
+            expanded = expanded,
+            onDismissRequest = { expanded = false },
+            modifier = Modifier.width(triggerWidth),
+            shape = RoundedCornerShape(6.dp),
+            containerColor = SettingsDropdownMenuBg,
+            tonalElevation = 0.dp,
+            shadowElevation = 2.dp,
+            border = BorderStroke(1.dp, SettingsDropdownBorderColor),
+        ) {
+            options.forEachIndexed { index, option ->
+                Box(
+                    modifier = Modifier
+                        .width(triggerWidth)
+                        .height(SettingsCompactActionMinHeight)
+                        .clickable {
+                            expanded = false
+                            onSelected(index)
+                        },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        text = option,
+                        color = NetShieldTextPrimary,
+                        fontSize = menuFontSize,
+                        textAlign = TextAlign.Center,
+                        maxLines = 1,
+                        softWrap = false,
+                    )
+                }
+                if (index < options.lastIndex) {
+                    HorizontalDivider(
+                        color = SettingsDropdownBorderColor,
+                        thickness = 0.5.dp,
+                    )
+                }
+            }
+        }
+    }
+}
 
 @Composable
 private fun SettingsNetworkFieldRow(
@@ -221,10 +332,48 @@ internal fun SettingsSectionTitle(text: String) {
 }
 
 @Composable
+internal fun SettingsSectionHeaderRow(
+    title: String,
+    titleFontSize: TextUnit = 20.sp,
+    onActionClick: (() -> Unit)? = null,
+    actionText: String = "编辑",
+    actionFontSize: TextUnit = 17.sp,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 8.dp, bottom = 4.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = title,
+            color = NetShieldTextPrimary,
+            fontSize = titleFontSize,
+            fontWeight = FontWeight.SemiBold,
+        )
+        if (onActionClick != null) {
+            SettingsInlineActionButton(
+                text = actionText,
+                onClick = onActionClick,
+                filled = true,
+                modifier = Modifier.defaultMinSize(minWidth = 88.dp, minHeight = 44.dp),
+            )
+        }
+    }
+}
+
+@Composable
 internal fun SettingsDropdownRow(
     label: String,
     value: String,
     options: List<String>,
+    labelFontSize: TextUnit = 17.sp,
+    valueFontSize: TextUnit = 17.sp,
+    menuFontSize: TextUnit = 16.sp,
+    showDropdownHint: Boolean = true,
+    labelWidth: Dp = SettingsFormLabelWidth,
+    labelSingleLine: Boolean = false,
     onSelected: (Int) -> Unit,
 ) {
     var expanded by remember { mutableStateOf(false) }
@@ -232,20 +381,36 @@ internal fun SettingsDropdownRow(
         modifier = Modifier.fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        SettingsFormLabel(label)
-        Box {
-            TextButton(onClick = { expanded = true }) {
-                Text(value, color = NetShieldTextPrimary, fontSize = 17.sp)
-            }
-            DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
-                options.forEachIndexed { index, option ->
-                    DropdownMenuItem(
-                        text = { Text(option, fontSize = 16.sp) },
-                        onClick = {
-                            expanded = false
-                            onSelected(index)
-                        },
-                    )
+        SettingsFormLabel(
+            text = label,
+            width = labelWidth,
+            fontSize = labelFontSize,
+            maxLines = if (labelSingleLine) 1 else Int.MAX_VALUE,
+            softWrap = !labelSingleLine,
+        )
+        if (showDropdownHint) {
+            SettingsDropdownControl(
+                value = value,
+                options = options,
+                onSelected = onSelected,
+                valueFontSize = valueFontSize,
+                menuFontSize = menuFontSize,
+            )
+        } else {
+            Box {
+                TextButton(onClick = { expanded = true }) {
+                    Text(value, color = NetShieldTextPrimary, fontSize = valueFontSize)
+                }
+                DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+                    options.forEachIndexed { index, option ->
+                        DropdownMenuItem(
+                            text = { Text(option, fontSize = menuFontSize) },
+                            onClick = {
+                                expanded = false
+                                onSelected(index)
+                            },
+                        )
+                    }
                 }
             }
         }
@@ -265,16 +430,26 @@ internal fun SettingsSliderRow(
     sliderEndFraction: Float = 1f,
     onValueChange: (Float) -> Unit,
     onValueChangeFinished: (() -> Unit)? = null,
+    labelFontSize: TextUnit = 17.sp,
+    percentFontSize: TextUnit = 15.sp,
+    labelWidth: Dp = SettingsFormLabelWidth,
+    labelSingleLine: Boolean = false,
 ) {
     val endFraction = sliderEndFraction.coerceIn(0.35f, 1f)
     BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
-        val sliderTrackWidth = (maxWidth * endFraction - SettingsFormLabelWidth - SettingsSliderPercentReserve)
+        val sliderTrackWidth = (maxWidth * endFraction - labelWidth - SettingsSliderPercentReserve)
             .coerceAtLeast(120.dp)
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            SettingsFormLabel(label)
+            SettingsFormLabel(
+                text = label,
+                width = labelWidth,
+                fontSize = labelFontSize,
+                maxLines = if (labelSingleLine) 1 else Int.MAX_VALUE,
+                softWrap = !labelSingleLine,
+            )
             NetShieldSlider(
                 value = value,
                 onValueChange = onValueChange,
@@ -284,7 +459,7 @@ internal fun SettingsSliderRow(
             Text(
                 text = "${(value * 100).toInt()}%",
                 color = NetShieldTextSecondary,
-                fontSize = 15.sp,
+                fontSize = percentFontSize,
                 modifier = Modifier.padding(start = 8.dp),
             )
             if (endFraction < 1f) {
@@ -298,23 +473,90 @@ internal fun SettingsSliderRow(
 internal fun SettingsSwitchRow(
     label: String,
     checked: Boolean,
+    labelFontSize: TextUnit = 17.sp,
+    enlargedSwitch: Boolean = false,
+    labelWidth: Dp = SettingsFormLabelWidth,
+    labelSingleLine: Boolean = false,
     onCheckedChange: (Boolean) -> Unit,
+) {
+    val switchInteraction = remember { MutableInteractionSource() }
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        SettingsFormLabel(
+            text = label,
+            width = labelWidth,
+            fontSize = labelFontSize,
+            maxLines = if (labelSingleLine) 1 else Int.MAX_VALUE,
+            softWrap = !labelSingleLine,
+        )
+        Box(
+            modifier = if (enlargedSwitch) {
+                Modifier
+                    .defaultMinSize(minWidth = 80.dp, minHeight = 52.dp)
+                    .clickable(
+                        interactionSource = switchInteraction,
+                        indication = null,
+                        onClick = { onCheckedChange(!checked) },
+                    )
+            } else {
+                Modifier
+            },
+            contentAlignment = Alignment.CenterStart,
+        ) {
+            Switch(
+                checked = checked,
+                onCheckedChange = onCheckedChange,
+                modifier = if (enlargedSwitch) {
+                    Modifier.graphicsLayer(scaleX = 1.35f, scaleY = 1.35f)
+                } else {
+                    Modifier
+                },
+                colors = SwitchDefaults.colors(
+                    checkedThumbColor = NetShieldTextPrimary,
+                    checkedTrackColor = NetShieldAccentBlue,
+                    uncheckedThumbColor = NetShieldTextSecondary,
+                    uncheckedTrackColor = Color(0xFF4A4A5A),
+                ),
+            )
+        }
+    }
+}
+
+@Composable
+internal fun SettingsLabeledButtonRow(
+    label: String,
+    buttonText: String,
+    onClick: () -> Unit,
+    labelFontSize: TextUnit = 17.sp,
+    buttonFontSize: TextUnit = 17.sp,
+    enabled: Boolean = true,
+    labelWidth: Dp = SettingsFormLabelWidth,
+    labelSingleLine: Boolean = false,
 ) {
     Row(
         modifier = Modifier.fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        SettingsFormLabel(label)
-        Switch(
-            checked = checked,
-            onCheckedChange = onCheckedChange,
-            colors = SwitchDefaults.colors(
-                checkedThumbColor = NetShieldTextPrimary,
-                checkedTrackColor = NetShieldAccentBlue,
-                uncheckedThumbColor = NetShieldTextSecondary,
-                uncheckedTrackColor = Color(0xFF4A4A5A),
-            ),
+        SettingsFormLabel(
+            text = label,
+            width = labelWidth,
+            fontSize = labelFontSize,
+            maxLines = if (labelSingleLine) 1 else Int.MAX_VALUE,
+            softWrap = !labelSingleLine,
         )
+        Button(
+            onClick = onClick,
+            enabled = enabled,
+            modifier = Modifier.defaultMinSize(
+                minWidth = SettingsCompactActionMinWidth,
+                minHeight = SettingsCompactActionMinHeight,
+            ),
+            colors = ButtonDefaults.buttonColors(containerColor = NetShieldAccentBlue),
+        ) {
+            Text(buttonText, fontSize = buttonFontSize, color = NetShieldTextPrimary)
+        }
     }
 }
 
@@ -345,17 +587,27 @@ internal fun SettingsReadOnlyHalfRow(
     value: String,
     fieldAreaFraction: Float = SettingsFieldAreaFraction,
     alignSaveColumn: Boolean = false,
+    labelFontSize: TextUnit = 17.sp,
+    valueFontSize: TextUnit = 17.sp,
+    labelWidth: Dp = SettingsFormLabelWidth,
+    labelSingleLine: Boolean = false,
 ) {
     if (!alignSaveColumn) {
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            SettingsFormLabel(label)
+            SettingsFormLabel(
+                text = label,
+                width = labelWidth,
+                fontSize = labelFontSize,
+                maxLines = if (labelSingleLine) 1 else Int.MAX_VALUE,
+                softWrap = !labelSingleLine,
+            )
             Text(
                 text = value.ifBlank { "—" },
                 color = NetShieldTextPrimary,
-                fontSize = 17.sp,
+                fontSize = valueFontSize,
                 modifier = Modifier.fillMaxWidth(fieldAreaFraction),
             )
         }
@@ -370,7 +622,7 @@ internal fun SettingsReadOnlyHalfRow(
         Text(
             text = value.ifBlank { "—" },
             color = NetShieldTextPrimary,
-            fontSize = 17.sp,
+            fontSize = valueFontSize,
             modifier = mod.padding(vertical = 9.dp),
         )
     }
@@ -467,24 +719,13 @@ internal fun SettingsDropdownHalfRow(
     fieldAreaFraction: Float = SettingsFieldAreaFraction,
     alignSaveColumn: Boolean = false,
 ) {
-    var expanded by remember { mutableStateOf(false) }
     val dropdown: @Composable BoxScope.(Modifier) -> Unit = { mod ->
-        Box(modifier = mod) {
-            TextButton(onClick = { expanded = true }) {
-                Text(value, color = NetShieldTextPrimary, fontSize = 17.sp)
-            }
-            DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
-                options.forEachIndexed { index, option ->
-                    DropdownMenuItem(
-                        text = { Text(option, fontSize = 16.sp) },
-                        onClick = {
-                            expanded = false
-                            onSelected(index)
-                        },
-                    )
-                }
-            }
-        }
+        SettingsDropdownControl(
+            modifier = mod,
+            value = value,
+            options = options,
+            onSelected = onSelected,
+        )
     }
     if (!alignSaveColumn) {
         Row(
@@ -508,11 +749,19 @@ internal fun SettingsDropdownHalfRow(
 }
 
 @Composable
-internal fun SettingsFormLabel(text: String, width: Dp = SettingsFormLabelWidth) {
+internal fun SettingsFormLabel(
+    text: String,
+    width: Dp = SettingsFormLabelWidth,
+    fontSize: TextUnit = 17.sp,
+    maxLines: Int = Int.MAX_VALUE,
+    softWrap: Boolean = true,
+) {
     Text(
         text = text,
         color = NetShieldTextSecondary,
-        fontSize = 17.sp,
+        fontSize = fontSize,
+        maxLines = maxLines,
+        softWrap = softWrap,
         modifier = Modifier
             .width(width)
             .padding(end = 12.dp),

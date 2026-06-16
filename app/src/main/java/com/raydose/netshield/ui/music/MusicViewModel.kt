@@ -8,7 +8,10 @@ import android.media.MediaPlayer
 import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.raydose.netshield.data.FileManagerRepository
 import com.raydose.netshield.data.MusicRepository
+import com.raydose.netshield.model.FileStorageLocation
+import com.raydose.netshield.model.MusicPlayMode
 import com.raydose.netshield.model.MusicTrack
 import com.raydose.netshield.model.MusicUiState
 import kotlinx.coroutines.Dispatchers
@@ -25,6 +28,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     private val audioManager = application.getSystemService(Context.AUDIO_SERVICE) as AudioManager
     private var player: MediaPlayer? = null
     private var hasLoadedOnce = false
+    private var hasAudioPermission = false
 
     private val _uiState = MutableStateFlow(MusicUiState(volume = readSystemVolume()))
     val uiState: StateFlow<MusicUiState> = _uiState.asStateFlow()
@@ -49,6 +53,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun loadTracks(hasAudioPermission: Boolean, force: Boolean = false) {
+        this.hasAudioPermission = hasAudioPermission
         if (!hasAudioPermission) {
             _uiState.update {
                 it.copy(
@@ -62,13 +67,17 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         hasLoadedOnce = true
         _uiState.update { it.copy(isLoading = true, message = null) }
         viewModelScope.launch {
+            val currentTrackId = _uiState.value.currentTrack?.id
             val tracks = withContext(Dispatchers.IO) {
                 repository.loadTracks()
             }
+            val restoredIndex = currentTrackId?.let { id ->
+                tracks.indexOfFirst { it.id == id }.takeIf { it >= 0 }
+            } ?: _uiState.value.currentIndex.coerceInOrDefault(tracks.indices, 0)
             _uiState.update {
                 it.copy(
                     tracks = tracks,
-                    currentIndex = if (tracks.isEmpty()) -1 else it.currentIndex.coerceInOrDefault(tracks.indices, 0),
+                    currentIndex = if (tracks.isEmpty()) -1 else restoredIndex,
                     isLoading = false,
                     message = if (tracks.isEmpty()) "未找到音乐文件，请将音频放入 Music 目录或插入 U 盘" else null,
                     volume = readSystemVolume(),
@@ -77,9 +86,80 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun updateSearchQuery(query: String) {
+        _uiState.update { it.copy(searchQuery = query) }
+    }
+
+    fun showImportDialog() {
+        _uiState.update { it.copy(showImportDialog = true, message = null) }
+    }
+
+    fun dismissImportDialog() {
+        if (_uiState.value.isImporting) return
+        _uiState.update { it.copy(showImportDialog = false) }
+    }
+
+    fun importMusicFiles(
+        selections: List<Pair<FileStorageLocation, String>>,
+        fileManagerRepository: FileManagerRepository,
+    ) {
+        if (selections.isEmpty()) return
+        viewModelScope.launch {
+            _uiState.update { it.copy(isImporting = true, message = null) }
+            val currentTrackId = _uiState.value.currentTrack?.id
+            val previousIndex = _uiState.value.currentIndex
+            val importResult = withContext(Dispatchers.IO) {
+                val musicDir = repository.musicImportDirectory().absolutePath
+                var successCount = 0
+                var failedCount = 0
+                selections.forEach { (location, path) ->
+                    fileManagerRepository.copyItem(
+                        sourceLocation = location,
+                        sourcePath = path,
+                        targetLocation = FileStorageLocation.Local,
+                        targetDirectoryPath = musicDir,
+                    ).onSuccess { successCount++ }
+                        .onFailure {
+                            failedCount++
+                            Log.w(TAG, "导入音乐失败 path=$path", it)
+                        }
+                }
+                val tracks = repository.loadTracks()
+                val restoredIndex = currentTrackId?.let { id ->
+                    tracks.indexOfFirst { it.id == id }.takeIf { it >= 0 }
+                } ?: previousIndex.coerceInOrDefault(tracks.indices, 0)
+                ImportResult(successCount, failedCount, tracks, restoredIndex)
+            }
+            hasLoadedOnce = true
+            _uiState.update {
+                it.copy(
+                    tracks = importResult.tracks,
+                    currentIndex = if (importResult.tracks.isEmpty()) -1 else importResult.restoredIndex,
+                    isLoading = false,
+                    isImporting = false,
+                    showImportDialog = false,
+                    message = when {
+                        importResult.failedCount == 0 -> "已导入 ${importResult.successCount} 首歌曲到 Music 文件夹"
+                        importResult.successCount == 0 -> "导入失败，请检查文件是否可读"
+                        else -> "成功 ${importResult.successCount} 首，失败 ${importResult.failedCount} 首"
+                    },
+                )
+            }
+        }
+    }
+
+    fun cyclePlayMode() {
+        _uiState.update { it.copy(playMode = it.playMode.next()) }
+    }
+
     fun playTrack(index: Int) {
         val track = _uiState.value.tracks.getOrNull(index) ?: return
         prepareAndPlay(track, index)
+    }
+
+    fun playTrackById(trackId: String) {
+        val index = _uiState.value.tracks.indexOfFirst { it.id == trackId }
+        if (index >= 0) playTrack(index)
     }
 
     fun togglePlayPause() {
@@ -109,12 +189,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     fun playNext() {
         val tracks = _uiState.value.tracks
         if (tracks.isEmpty()) return
-        val index = if (_uiState.value.currentIndex !in tracks.indices || _uiState.value.currentIndex == tracks.lastIndex) {
-            0
-        } else {
-            _uiState.value.currentIndex + 1
-        }
-        playTrack(index)
+        playTrack(resolveNextIndex(tracks, _uiState.value.currentIndex, _uiState.value.playMode))
     }
 
     fun seekToFraction(fraction: Float) {
@@ -178,10 +253,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                 }
             }
             setOnCompletionListener {
-                _uiState.update { state ->
-                    state.copy(isPlaying = false, positionMillis = state.durationMillis)
-                }
-                playNext()
+                handleTrackCompletion()
             }
             setOnErrorListener { _, what, extra ->
                 _uiState.update { it.copy(isPlaying = false, message = "音乐播放失败：$what/$extra") }
@@ -202,6 +274,52 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                 state.copy(isPlaying = false, message = "无法播放：${track.title}")
             }
             Log.w(TAG, "准备播放失败 uri=${track.uri}", it)
+        }
+    }
+
+    private fun handleTrackCompletion() {
+        when (_uiState.value.playMode) {
+            MusicPlayMode.SINGLE_LOOP -> {
+                val mediaPlayer = player ?: return
+                runCatching {
+                    mediaPlayer.seekTo(0)
+                    mediaPlayer.start()
+                    _uiState.update { it.copy(isPlaying = true, positionMillis = 0L) }
+                }.onFailure {
+                    replayCurrentTrack()
+                }
+            }
+            MusicPlayMode.LIST_LOOP, MusicPlayMode.SHUFFLE -> {
+                _uiState.update { state ->
+                    state.copy(isPlaying = false, positionMillis = state.durationMillis)
+                }
+                playNext()
+            }
+        }
+    }
+
+    private fun replayCurrentTrack() {
+        val index = _uiState.value.currentIndex
+        if (index in _uiState.value.tracks.indices) {
+            playTrack(index)
+        }
+    }
+
+    private fun resolveNextIndex(
+        tracks: List<MusicTrack>,
+        currentIndex: Int,
+        playMode: MusicPlayMode,
+    ): Int {
+        if (tracks.size == 1) return 0
+        return when (playMode) {
+            MusicPlayMode.SHUFFLE -> {
+                generateSequence { tracks.indices.random() }
+                    .first { it != currentIndex }
+            }
+            MusicPlayMode.LIST_LOOP, MusicPlayMode.SINGLE_LOOP -> {
+                if (currentIndex !in tracks.indices || currentIndex == tracks.lastIndex) 0
+                else currentIndex + 1
+            }
         }
     }
 
@@ -233,3 +351,10 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         const val TAG = "NetShieldMusic"
     }
 }
+
+private data class ImportResult(
+    val successCount: Int,
+    val failedCount: Int,
+    val tracks: List<MusicTrack>,
+    val restoredIndex: Int,
+)

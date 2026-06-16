@@ -98,7 +98,7 @@ fun buildWriteTimeFrame(
 /**
  * 报警阈值写入帧 (0x10 → reg=0x0040, count=24, byte_count=48)
  * thresholds 12 项 u32 小端序：辐射上/下(×100 uSv/h)、温度上/下(×10 ℃)、气压上/下(Pa)、
- * 湿度上/下(%)、CO2上/下(×10 ppm)、PM2.5上/下(×10 ug/m3)
+ * 湿度上/下(%)、CO2上/下(ppm)、PM2.5上/下(×10 ug/m3)
  */
 fun buildWriteThresholdsFrame(thresholds: List<Long>, deviceAddr: Byte = 0x01): ByteArray {
     require(thresholds.size == 12) { "需要 12 项阈值" }
@@ -275,7 +275,7 @@ private fun parseUpload23(frame: ByteArray, addr: Int, crcOk: Boolean): ParsedFs
             append("温度=${"%.1f".format(values[1] / 10.0)} ℃ ")
             append("气压=${values[2]} Pa ")
             append("湿度=${values[3]}% ")
-            append("CO2=${"%.1f".format(values[4] / 10.0)} ppm ")
+            append("CO2=${values[4]} ppm ")
             append("PM2.5=${"%.1f".format(values[5] / 10.0)} ug/m3 ")
             append("alarm=0x${values[6].toString(16).uppercase()} ")
             append("status=0x${values[7].toString(16).uppercase()}")

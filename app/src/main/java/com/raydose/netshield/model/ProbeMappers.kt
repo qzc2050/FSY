@@ -27,7 +27,7 @@ fun LiveProbeTelemetry.applyRealtimeUpload(values: List<Long>): LiveProbeTelemet
     val temp = values[1] / 10.0
     val pressurePa = values[2]
     val humidityPct = values[3]
-    val co2ppm = values[4] / 10.0
+    val co2ppm = values[4]
     val pm25 = values[5] / 10.0
     val alarmBit = values[6]
     val statusBit = values[7]
@@ -37,10 +37,10 @@ fun LiveProbeTelemetry.applyRealtimeUpload(values: List<Long>): LiveProbeTelemet
         isOnline = true,
         doseRateText = "%.2f".format(dose),
         temperature = "%.1f°C".format(temp),
-        pressure = formatPressure(pressurePa),
+        pressure = formatProbePressureKpa(pressurePa),
         humidity = "${humidityPct}%",
-        co2 = "%.1f ppm".format(co2ppm),
-        pm25 = "%.1f".format(pm25),
+        co2 = "${co2ppm} ppm",
+        pm25 = "%.1f μg/m³".format(pm25),
         hasAlarm = isRadiationDoseAlarmActive(alarmBit),
         alarmBit = alarmBit,
         externalAlarmConnected = isExternalAlarmConnected(alarmBit),
@@ -126,15 +126,6 @@ fun ProbeManageDraft.mergeConfigFromTelemetry(telemetry: LiveProbeTelemetry?): P
 
 fun ProbeManageDraft.mergeFromTelemetry(telemetry: LiveProbeTelemetry?): ProbeManageDraft =
     mergeConfigFromTelemetry(telemetry)
-
-private fun formatPressure(pressurePa: Long): String {
-    val kpa = pressurePa / 1000.0
-    return if (kpa >= 50) {
-        "%.2f kPa".format(kpa)
-    } else {
-        "${pressurePa} Pa"
-    }
-}
 
 fun deriveDoorState(telemetryMap: Map<String, LiveProbeTelemetry>): DoorState {
     val doors = telemetryMap.values.mapNotNull { it.doorOpen }

@@ -2,6 +2,8 @@ package com.raydose.netshield.ui.files
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -13,11 +15,14 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.CheckBox
+import androidx.compose.material.icons.filled.CheckBoxOutlineBlank
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.KeyboardArrowUp
@@ -70,6 +75,7 @@ fun FileManagerScreen(
     var createFolderName by remember { mutableStateOf<String?>(null) }
     var renameTarget by remember { mutableStateOf<FileListItem?>(null) }
     var renameInput by remember { mutableStateOf("") }
+    var deleteSelectedPending by remember { mutableStateOf(false) }
 
     LaunchedEffect(renameTarget?.path) {
         renameInput = renameTarget?.name.orEmpty()
@@ -101,24 +107,39 @@ fun FileManagerScreen(
                     currentPath = state.currentPathLabel,
                     pendingTransfer = state.pendingTransfer,
                     requiresUsbAccess = state.requiresUsbAccess,
+                    selectionMode = state.selectionMode,
+                    selectedCount = state.selectedCount,
+                    allVisibleSelected = state.allVisibleSelected,
                     onStorageChange = viewModel::switchStorage,
                     onSearchQueryChange = viewModel::updateSearchQuery,
                     onCreateFolderClick = { createFolderName = "" },
                     onPasteClick = viewModel::pastePendingTransfer,
                     onClearClipboardClick = viewModel::clearPendingTransfer,
                     onRequestUsbAccess = onRequestUsbAccess,
+                    onSelectAll = viewModel::selectAllVisible,
+                    onClearSelection = viewModel::clearSelection,
+                    onExitSelection = viewModel::exitSelectionMode,
+                    onCopySelected = viewModel::stageCopySelected,
+                    onMoveSelected = viewModel::stageMoveSelected,
+                    onDeleteSelected = {
+                        if (state.selectedCount > 0) deleteSelectedPending = true
+                    },
                     onClose = onBack,
                 )
                 FileListPanel(
                     items = state.items,
                     isLoading = state.isLoading,
                     canGoUp = state.currentPath.isNotBlank() && state.currentPath != state.rootPath,
+                    selectionMode = state.selectionMode,
+                    selectedPaths = state.selectedPaths,
                     onNavigateUp = viewModel::navigateUp,
                     onOpenDirectory = viewModel::openDirectory,
                     onCopy = viewModel::stageCopy,
                     onMove = viewModel::stageMove,
                     onRename = { item -> renameTarget = item },
                     onDelete = { item -> deleteTarget = item },
+                    onLongPressItem = viewModel::beginSelection,
+                    onToggleSelection = viewModel::toggleItemSelection,
                     modifier = Modifier
                         .padding(horizontal = 18.dp, vertical = 14.dp)
                         .fillMaxWidth()
@@ -230,8 +251,36 @@ fun FileManagerScreen(
             containerColor = Color(0xFF1B2233),
         )
     }
+
+    if (deleteSelectedPending) {
+        AlertDialog(
+            onDismissRequest = { deleteSelectedPending = false },
+            title = { Text("批量删除确认", color = NetShieldTextPrimary) },
+            text = {
+                Text(
+                    text = "确定删除选中的 ${state.selectedCount} 项吗？",
+                    color = NetShieldTextSecondary,
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        viewModel.deleteSelectedItems()
+                        deleteSelectedPending = false
+                    },
+                ) { Text("删除", color = Color(0xFFFF6B6B)) }
+            },
+            dismissButton = {
+                TextButton(onClick = { deleteSelectedPending = false }) {
+                    Text("取消", color = NetShieldTextSecondary)
+                }
+            },
+            containerColor = Color(0xFF1B2233),
+        )
+    }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun FileManagerToolBar(
     storage: FileStorageLocation,
@@ -240,12 +289,21 @@ private fun FileManagerToolBar(
     currentPath: String,
     pendingTransfer: PendingFileTransfer?,
     requiresUsbAccess: Boolean,
+    selectionMode: Boolean,
+    selectedCount: Int,
+    allVisibleSelected: Boolean,
     onStorageChange: (FileStorageLocation) -> Unit,
     onSearchQueryChange: (String) -> Unit,
     onCreateFolderClick: () -> Unit,
     onPasteClick: () -> Unit,
     onClearClipboardClick: () -> Unit,
     onRequestUsbAccess: () -> Unit,
+    onSelectAll: () -> Unit,
+    onClearSelection: () -> Unit,
+    onExitSelection: () -> Unit,
+    onCopySelected: () -> Unit,
+    onMoveSelected: () -> Unit,
+    onDeleteSelected: () -> Unit,
     onClose: () -> Unit,
 ) {
     Column(
@@ -293,14 +351,16 @@ private fun FileManagerToolBar(
                 modifier = Modifier.width(260.dp),
             )
             Spacer(modifier = Modifier.width(12.dp))
-            ToolButton(text = "新建文件夹", onClick = onCreateFolderClick)
-            if (pendingTransfer != null) {
+            if (!selectionMode) {
+                ToolButton(text = "新建文件夹", onClick = onCreateFolderClick)
+            }
+            if (pendingTransfer != null && !selectionMode) {
                 Spacer(modifier = Modifier.width(8.dp))
                 ToolButton(text = "粘贴", onClick = onPasteClick)
                 Spacer(modifier = Modifier.width(8.dp))
                 ToolButton(text = "清空", onClick = onClearClipboardClick)
             }
-            if (storage == FileStorageLocation.Usb && requiresUsbAccess) {
+            if (storage == FileStorageLocation.Usb && requiresUsbAccess && !selectionMode) {
                 Spacer(modifier = Modifier.width(8.dp))
                 ToolButton(text = "授权U盘", onClick = onRequestUsbAccess)
             }
@@ -311,6 +371,34 @@ private fun FileManagerToolBar(
                 fontSize = 42.sp,
                 modifier = Modifier.clickable(onClick = onClose),
             )
+        }
+        if (selectionMode) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = "已选 $selectedCount 项",
+                    color = NetShieldTextPrimary,
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.Medium,
+                )
+                Spacer(modifier = Modifier.width(10.dp))
+                ToolButton(
+                    text = if (allVisibleSelected) "取消全选" else "全选",
+                    onClick = if (allVisibleSelected) onClearSelection else onSelectAll,
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                ToolButton(text = "复制", onClick = onCopySelected)
+                Spacer(modifier = Modifier.width(8.dp))
+                ToolButton(text = "移动", onClick = onMoveSelected)
+                Spacer(modifier = Modifier.width(8.dp))
+                ToolButton(text = "删除", onClick = onDeleteSelected)
+                Spacer(modifier = Modifier.weight(1f))
+                ToolButton(text = "完成", onClick = onExitSelection)
+            }
         }
         Text(
             text = if (currentPath.isBlank()) "当前路径：-" else "当前路径：$currentPath",
@@ -345,17 +433,22 @@ private fun FileManagerToolBar(
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun FileListPanel(
     items: List<FileListItem>,
     isLoading: Boolean,
     canGoUp: Boolean,
+    selectionMode: Boolean,
+    selectedPaths: Set<String>,
     onNavigateUp: () -> Unit,
     onOpenDirectory: (FileListItem) -> Unit,
     onCopy: (FileListItem) -> Unit,
     onMove: (FileListItem) -> Unit,
     onRename: (FileListItem) -> Unit,
     onDelete: (FileListItem) -> Unit,
+    onLongPressItem: (FileListItem) -> Unit,
+    onToggleSelection: (FileListItem) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Column(
@@ -399,34 +492,55 @@ private fun FileListPanel(
             items(items, key = { it.path }) { item ->
                 FileItemRow(
                     item = item,
+                    selectionMode = selectionMode,
+                    selected = item.path in selectedPaths,
                     onOpenDirectory = onOpenDirectory,
                     onCopy = onCopy,
                     onMove = onMove,
                     onRename = onRename,
                     onDelete = onDelete,
+                    onLongPressItem = onLongPressItem,
+                    onToggleSelection = onToggleSelection,
                 )
             }
         }
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun FileItemRow(
     item: FileListItem,
+    selectionMode: Boolean,
+    selected: Boolean,
     onOpenDirectory: (FileListItem) -> Unit,
     onCopy: (FileListItem) -> Unit,
     onMove: (FileListItem) -> Unit,
     onRename: (FileListItem) -> Unit,
     onDelete: (FileListItem) -> Unit,
+    onLongPressItem: (FileListItem) -> Unit,
+    onToggleSelection: (FileListItem) -> Unit,
 ) {
+    val rowBackground = if (selected) Color(0x883A5A9F) else Color(0x55253143)
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(12.dp))
-            .background(Color(0x55253143))
+            .background(rowBackground)
             .padding(horizontal = 10.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
+        if (selectionMode) {
+            Icon(
+                imageVector = if (selected) Icons.Default.CheckBox else Icons.Default.CheckBoxOutlineBlank,
+                contentDescription = if (selected) "已选" else "未选",
+                tint = if (selected) NetShieldAccentBlue else NetShieldTextSecondary,
+                modifier = Modifier
+                    .size(28.dp)
+                    .clickable { onToggleSelection(item) },
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+        }
         Icon(
             imageVector = if (item.isDirectory) Icons.Default.Folder else Icons.Default.Description,
             contentDescription = null,
@@ -436,9 +550,16 @@ private fun FileItemRow(
         Column(
             modifier = Modifier
                 .weight(1f)
-                .clickable(enabled = item.isDirectory) {
-                    if (item.isDirectory) onOpenDirectory(item)
-                },
+                .combinedClickable(
+                    onClick = {
+                        if (selectionMode) {
+                            onToggleSelection(item)
+                        } else if (item.isDirectory) {
+                            onOpenDirectory(item)
+                        }
+                    },
+                    onLongClick = { onLongPressItem(item) },
+                ),
         ) {
             Text(
                 text = item.name,
@@ -453,13 +574,15 @@ private fun FileItemRow(
                 fontSize = 14.sp,
             )
         }
-        ActionButton(text = "复制", background = NetShieldAccentBlue, onClick = { onCopy(item) })
-        Spacer(modifier = Modifier.width(8.dp))
-        ActionButton(text = "移动", background = Color(0xFF4F7EF7), onClick = { onMove(item) })
-        Spacer(modifier = Modifier.width(8.dp))
-        ActionButton(text = "重命名", background = Color(0xFF556EE6), onClick = { onRename(item) })
-        Spacer(modifier = Modifier.width(8.dp))
-        ActionButton(text = "删除", background = Color(0xFFE14B4B), onClick = { onDelete(item) })
+        if (!selectionMode) {
+            ActionButton(text = "复制", background = NetShieldAccentBlue, onClick = { onCopy(item) })
+            Spacer(modifier = Modifier.width(8.dp))
+            ActionButton(text = "移动", background = Color(0xFF4F7EF7), onClick = { onMove(item) })
+            Spacer(modifier = Modifier.width(8.dp))
+            ActionButton(text = "重命名", background = Color(0xFF556EE6), onClick = { onRename(item) })
+            Spacer(modifier = Modifier.width(8.dp))
+            ActionButton(text = "删除", background = Color(0xFFE14B4B), onClick = { onDelete(item) })
+        }
     }
 }
 

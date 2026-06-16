@@ -54,7 +54,6 @@ fun ProbeManagePanel(
     onVolumeCommitted: (Int) -> Unit,
     onAddClick: () -> Unit,
     onSaveClick: () -> Unit,
-    onDetailClick: (Int) -> Unit,
     onDataDetailClick: (Int) -> Unit,
     onRemoveProbe: (Int) -> Unit,
     showSaveSuccess: Boolean = false,
@@ -111,7 +110,6 @@ fun ProbeManagePanel(
                 onDismissSaveSuccess = onDismissSaveSuccess,
                 onDraftChange = { onDraftChange(page, it) },
                 onVolumeCommitted = { onVolumeCommitted(page) },
-                onDetailClick = { onDetailClick(page) },
                 onDataDetailClick = { onDataDetailClick(page) },
                 onDeleteClick = { onRemoveProbe(page) },
                 onAddClick = onAddClick,
@@ -130,7 +128,6 @@ private fun ProbeManageCard(
     onDismissSaveSuccess: () -> Unit,
     onDraftChange: (ProbeManageDraft) -> Unit,
     onVolumeCommitted: () -> Unit,
-    onDetailClick: () -> Unit,
     onDataDetailClick: () -> Unit,
     onDeleteClick: () -> Unit,
     onAddClick: () -> Unit,
@@ -160,7 +157,6 @@ private fun ProbeManageCard(
                 draft = draft,
                 onDraftChange = onDraftChange,
                 onVolumeCommitted = onVolumeCommitted,
-                onDetailClick = onDetailClick,
                 onDataDetailClick = onDataDetailClick,
                 onDeleteClick = onDeleteClick,
                 modifier = Modifier
@@ -220,13 +216,13 @@ private fun ProbeManageCard(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 OutlinedButton(onClick = onAddClick) {
-                    Text("+ 添加探头", fontSize = 17.sp)
+                    Text("+ 添加探头", fontSize = 19.sp)
                 }
                 Button(
                     onClick = onSaveClick,
                     colors = ButtonDefaults.buttonColors(containerColor = NetShieldAccentBlue),
                 ) {
-                    Text("保存", fontSize = 17.sp, color = NetShieldTextPrimary)
+                    Text("保存", fontSize = 19.sp, color = NetShieldTextPrimary)
                 }
             }
         }

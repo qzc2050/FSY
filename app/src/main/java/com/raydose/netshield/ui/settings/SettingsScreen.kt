@@ -18,6 +18,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.raydose.netshield.model.DiscoveredDevice
+import com.raydose.netshield.data.FileManagerRepository
 import com.raydose.netshield.model.DisplaySoundSettings
 import com.raydose.netshield.model.HostNetworkSettings
 import com.raydose.netshield.model.ProbeManageDraft
@@ -58,25 +59,26 @@ fun SettingsScreen(
     onHostAlarmVolumeCommitted: () -> Unit,
     onPromptVolumeCommitted: () -> Unit,
     onMuteCommitted: (Boolean) -> Unit,
-    onPauseAlarmCommitted: (Boolean) -> Unit,
+    onPauseAlarmClick: () -> Unit,
     onSaveDisplaySound: () -> Unit,
     onPreviewStandby: () -> Unit,
-    onHostNetworkChange: (HostNetworkSettings) -> Unit,
-    onSlaveNetworkChange: (Int, SlaveNetworkCard) -> Unit,
-    onSaveHostNetwork: () -> Unit,
-    onSaveSlaveNetwork: (Int) -> Unit,
+    onCommitHostNetwork: (HostNetworkSettings) -> Unit,
+    onCommitSlaveNetwork: (Int, SlaveNetworkCard) -> Unit,
     onTimeSettingsChange: (TimeSettings) -> Unit,
     onSyncTimeToDevice: () -> Unit,
     onAddClick: () -> Unit,
     onSaveClick: () -> Unit,
     onDismissAddDialog: () -> Unit,
     onAddDevice: (DiscoveredDevice) -> Unit,
-    onDetailClick: (Int) -> Unit,
     onDataDetailClick: (Int) -> Unit,
     onRemoveProbe: (Int) -> Unit,
     onDismissDeleteConfirm: () -> Unit,
     onConfirmDeleteProbe: () -> Unit,
     onDismissSaveSuccess: () -> Unit,
+    fileManagerRepository: FileManagerRepository,
+    usbGrantEpoch: Int,
+    onRequestUsbAccess: () -> Unit,
+    onInstallApk: (java.io.File) -> Result<Unit>,
 ) {
     Box(modifier = Modifier.fillMaxSize()) {
         BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
@@ -135,7 +137,7 @@ fun SettingsScreen(
                             onHostAlarmVolumeCommitted = onHostAlarmVolumeCommitted,
                             onPromptVolumeCommitted = onPromptVolumeCommitted,
                             onMuteCommitted = onMuteCommitted,
-                            onPauseAlarmCommitted = onPauseAlarmCommitted,
+                            onPauseAlarmClick = onPauseAlarmClick,
                             onSaveClick = onSaveDisplaySound,
                             onPreviewStandby = onPreviewStandby,
                             modifier = Modifier.weight(1f),
@@ -143,10 +145,8 @@ fun SettingsScreen(
                                 SettingsTab.Network -> NetworkSettingsPanel(
                                     host = hostNetwork,
                                     slaves = slaveNetworkCards,
-                                    onHostChange = onHostNetworkChange,
-                                    onSlaveChange = onSlaveNetworkChange,
-                                    onSaveHost = onSaveHostNetwork,
-                                    onSaveSlave = onSaveSlaveNetwork,
+                                    onSaveHost = onCommitHostNetwork,
+                                    onSaveSlave = onCommitSlaveNetwork,
                                     modifier = Modifier.weight(1f),
                                 )
                                 SettingsTab.Time -> TimeSettingsPanel(
@@ -167,18 +167,21 @@ fun SettingsScreen(
                                     onVolumeCommitted = onVolumeCommitted,
                                     onAddClick = onAddClick,
                                     onSaveClick = onSaveClick,
-                                    onDetailClick = onDetailClick,
                                     onDataDetailClick = onDataDetailClick,
                                     onRemoveProbe = onRemoveProbe,
                                     modifier = Modifier.weight(1f),
                                 )
                                 SettingsTab.About -> AboutPanel(
                                     info = aboutInfo,
+                                    fileManagerRepository = fileManagerRepository,
+                                    usbGrantEpoch = usbGrantEpoch,
+                                    onRequestUsbAccess = onRequestUsbAccess,
+                                    onInstallApk = onInstallApk,
                                     modifier = Modifier.weight(1f),
                                 )
                             }
                         }
-                        if (showSaveSuccessDialog && selectedTab == SettingsTab.DisplaySound) {
+                        if (showSaveSuccessDialog && selectedTab in setOf(SettingsTab.DisplaySound, SettingsTab.Network)) {
                             Box(
                                 modifier = Modifier.fillMaxSize(),
                                 contentAlignment = Alignment.Center,

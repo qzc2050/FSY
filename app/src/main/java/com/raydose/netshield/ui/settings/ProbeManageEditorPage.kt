@@ -1,5 +1,8 @@
 package com.raydose.netshield.ui.settings
 
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -9,6 +12,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -18,19 +22,21 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.OutlinedButton
 import com.raydose.netshield.ui.components.NetShieldSlider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -40,18 +46,21 @@ import com.raydose.netshield.ui.theme.NetShieldDoorOpen
 import com.raydose.netshield.ui.theme.NetShieldTextPrimary
 import com.raydose.netshield.ui.theme.NetShieldTextSecondary
 
-private val FormLabelWidth = 96.dp
+private val FormLabelWidth = 108.dp
 private val FormRowSpacing = 14.dp
 private val FormColumnGap = 28.dp
 private val FieldTextColor = Color(0xFF1E2433)
 
-private val FormLabelSp = 18.sp
-private val FormFieldSp = 18.sp
+private val FormLabelSp = 20.sp
+private val FormFieldSp = 19.sp
+private val FormDataDetailSp = 22.sp
 private val FormActionSp = 18.sp
-private val FormThresholdLabelSp = 16.sp
-private val FormUnitSp = 14.sp
-private val FormAlarmSp = 15.sp
-private val FormToggleLabelSp = 17.sp
+private val FormThresholdLabelSp = 18.sp
+private val FormUnitSp = 16.sp
+private val FormAlarmSp = 18.sp
+private val FormToggleLabelSp = 20.sp
+private val FormSwitchLabelGap = 14.dp
+private val FormSwitchRowMinHeight = 52.dp
 private val DeleteIconSize = 36.dp
 private val DeleteButtonSize = 56.dp
 
@@ -59,7 +68,6 @@ private val DeleteButtonSize = 56.dp
 fun ProbeManageEditorPage(
     draft: ProbeManageDraft,
     onDraftChange: (ProbeManageDraft) -> Unit,
-    onDetailClick: () -> Unit,
     onDataDetailClick: () -> Unit,
     onDeleteClick: () -> Unit,
     onVolumeCommitted: () -> Unit,
@@ -72,20 +80,42 @@ fun ProbeManageEditorPage(
     ) {
         Row(
             modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Text(
-                text = "设备ID: ${draft.protoAddr}",
-                color = NetShieldTextPrimary,
-                fontSize = 20.sp,
-            )
-            Spacer(modifier = Modifier.width(12.dp))
-            OutlinedButton(onClick = onDetailClick) {
-                Text("详情", fontSize = FormActionSp)
+            TextButton(onClick = onDataDetailClick) {
+                Text(
+                    text = "数据详情",
+                    color = NetShieldAccentBlue,
+                    fontSize = FormDataDetailSp,
+                )
             }
-            Spacer(modifier = Modifier.weight(1f))
             ExternalAlarmBadge(connected = draft.externalAlarmConnected)
         }
+
+        Spacer(modifier = Modifier.height(14.dp))
+
+        ProbeFormGridRow(
+            gap = FormColumnGap,
+            left = {
+                ProbeInfoLabelCell(label = "型号", value = draft.savedProbe.model)
+            },
+            right = {
+                ProbeInfoLabelCell(label = "序列号", value = draft.savedProbe.serial)
+            },
+        )
+
+        Spacer(modifier = Modifier.height(FormRowSpacing))
+
+        ProbeFormGridRow(
+            gap = FormColumnGap,
+            left = {
+                ProbeInfoLabelCell(label = "IP 地址", value = draft.ip)
+            },
+            right = {
+                ProbeInfoLabelCell(label = "设备 ID", value = draft.protoAddr)
+            },
+        )
 
         Spacer(modifier = Modifier.height(18.dp))
 
@@ -99,11 +129,12 @@ fun ProbeManageEditorPage(
                 )
             },
             right = {
-                ProbeFormGridRightSlot {
-                    TextButton(onClick = onDataDetailClick) {
-                        Text("数据详情", color = NetShieldAccentBlue, fontSize = FormActionSp)
-                    }
-                }
+                ToggleCell(
+                    label = "从机屏幕",
+                    checked = draft.slaveScreenOn,
+                    onCheckedChange = { onDraftChange(draft.copy(slaveScreenOn = it)) },
+                    contentAlignment = Alignment.CenterStart,
+                )
             },
         )
 
@@ -119,13 +150,12 @@ fun ProbeManageEditorPage(
                 )
             },
             right = {
-                ProbeFormGridRightSlot {
-                    ToggleCell(
-                        label = "从机屏幕",
-                        checked = draft.slaveScreenOn,
-                        onCheckedChange = { onDraftChange(draft.copy(slaveScreenOn = it)) },
-                    )
-                }
+                ToggleCell(
+                    label = "报警灯光",
+                    checked = draft.alarmLightOn,
+                    onCheckedChange = { onDraftChange(draft.copy(alarmLightOn = it)) },
+                    contentAlignment = Alignment.CenterStart,
+                )
             },
         )
 
@@ -137,13 +167,7 @@ fun ProbeManageEditorPage(
             onValueChange = { onDraftChange(draft.copy(doseUpperUsv = it)) },
             alarmOn = draft.radiationUpperAlarmOn,
             onAlarmChange = { onDraftChange(draft.copy(radiationUpperAlarmOn = it)) },
-            trailingHalf = {
-                ToggleCell(
-                    label = "报警灯光",
-                    checked = draft.alarmLightOn,
-                    onCheckedChange = { onDraftChange(draft.copy(alarmLightOn = it)) },
-                )
-            },
+            trailingHalf = null,
         )
 
         Spacer(modifier = Modifier.height(FormRowSpacing))
@@ -178,14 +202,20 @@ fun ProbeManageEditorPage(
             left = { Box(modifier = Modifier.fillMaxWidth()) },
             right = {
                 ProbeFormGridRightSlot {
+                    val deleteEnabled = !draft.isTcpOnline
                     IconButton(
                         onClick = onDeleteClick,
+                        enabled = deleteEnabled,
                         modifier = Modifier.size(DeleteButtonSize),
                     ) {
                         Icon(
                             imageVector = Icons.Outlined.Delete,
                             contentDescription = "删除探头",
-                            tint = NetShieldDoorOpen,
+                            tint = if (deleteEnabled) {
+                                NetShieldDoorOpen
+                            } else {
+                                NetShieldTextSecondary.copy(alpha = 0.35f)
+                            },
                             modifier = Modifier.size(DeleteIconSize),
                         )
                     }
@@ -252,6 +282,27 @@ fun ExternalAlarmBadge(connected: Boolean) {
 }
 
 @Composable
+private fun ProbeInfoLabelCell(
+    label: String,
+    value: String,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        FormLabel(text = label)
+        Text(
+            text = value.ifBlank { "—" },
+            color = NetShieldTextPrimary,
+            fontSize = FormFieldSp,
+            modifier = Modifier.weight(1f),
+            maxLines = 1,
+            softWrap = false,
+        )
+    }
+}
+
+@Composable
 private fun ProbeLabeledFieldCell(
     label: String,
     value: String,
@@ -299,7 +350,8 @@ private fun ProbeThresholdAlarmRow(
         Box(
             modifier = Modifier
                 .weight(1f)
-                .fillMaxWidth(),
+                .fillMaxWidth()
+                .heightIn(min = FormSwitchRowMinHeight),
             contentAlignment = Alignment.Center,
         ) {
             AlarmToggleQuarterCell(
@@ -310,7 +362,8 @@ private fun ProbeThresholdAlarmRow(
         Box(
             modifier = Modifier
                 .weight(2f)
-                .fillMaxWidth(),
+                .fillMaxWidth()
+                .heightIn(min = FormSwitchRowMinHeight),
             contentAlignment = Alignment.Center,
         ) {
             trailingHalf?.invoke()
@@ -332,7 +385,7 @@ private fun ThresholdValueQuarterCell(
             text = label,
             color = NetShieldTextSecondary,
             fontSize = FormThresholdLabelSp,
-            modifier = Modifier.width(88.dp),
+            modifier = Modifier.width(96.dp),
             maxLines = 2,
         )
         ProbeValueField(
@@ -356,18 +409,13 @@ private fun AlarmToggleQuarterCell(
     checked: Boolean,
     onCheckedChange: (Boolean) -> Unit,
 ) {
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
+    ProbeToggleRow(
+        label = "报警",
+        labelFontSize = FormAlarmSp,
+        checked = checked,
+        onCheckedChange = onCheckedChange,
         horizontalArrangement = Arrangement.Center,
-    ) {
-        Text(
-            text = "报警",
-            color = NetShieldTextSecondary,
-            fontSize = FormAlarmSp,
-            modifier = Modifier.padding(end = 6.dp),
-        )
-        ProbeSwitch(checked = checked, onCheckedChange = onCheckedChange)
-    }
+    )
 }
 
 @Composable
@@ -375,17 +423,52 @@ private fun ToggleCell(
     label: String,
     checked: Boolean,
     onCheckedChange: (Boolean) -> Unit,
+    contentAlignment: Alignment = Alignment.CenterEnd,
+) {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(min = FormSwitchRowMinHeight),
+        contentAlignment = contentAlignment,
+    ) {
+        ProbeToggleRow(
+            label = label,
+            checked = checked,
+            onCheckedChange = onCheckedChange,
+            horizontalArrangement = if (contentAlignment == Alignment.CenterStart) {
+                Arrangement.Start
+            } else {
+                Arrangement.End
+            },
+            modifier = Modifier.fillMaxWidth(),
+        )
+    }
+}
+
+@Composable
+private fun ProbeToggleRow(
+    label: String,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
+    labelFontSize: TextUnit = FormToggleLabelSp,
+    horizontalArrangement: Arrangement.Horizontal = Arrangement.End,
+    modifier: Modifier = Modifier,
 ) {
     Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .heightIn(min = FormSwitchRowMinHeight),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.Center,
+        horizontalArrangement = horizontalArrangement,
     ) {
         Text(
             text = label,
             color = NetShieldTextSecondary,
-            fontSize = FormToggleLabelSp,
-            modifier = Modifier.padding(end = 8.dp),
+            fontSize = labelFontSize,
+            maxLines = 1,
+            softWrap = false,
         )
+        Spacer(modifier = Modifier.width(FormSwitchLabelGap))
         ProbeSwitch(checked = checked, onCheckedChange = onCheckedChange)
     }
 }
@@ -447,14 +530,28 @@ private fun ProbeSwitch(
     checked: Boolean,
     onCheckedChange: (Boolean) -> Unit,
 ) {
-    Switch(
-        checked = checked,
-        onCheckedChange = onCheckedChange,
-        colors = SwitchDefaults.colors(
-            checkedThumbColor = NetShieldTextPrimary,
-            checkedTrackColor = NetShieldAccentBlue,
-            uncheckedThumbColor = NetShieldTextSecondary,
-            uncheckedTrackColor = Color(0xFF4A4A5A),
-        ),
-    )
+    val switchInteraction = remember { MutableInteractionSource() }
+    Box(
+        modifier = Modifier
+            .defaultMinSize(minWidth = 56.dp, minHeight = FormSwitchRowMinHeight)
+            .clickable(
+                interactionSource = switchInteraction,
+                indication = null,
+                onClick = { onCheckedChange(!checked) },
+            )
+            .padding(horizontal = 4.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Switch(
+            checked = checked,
+            onCheckedChange = onCheckedChange,
+            modifier = Modifier.graphicsLayer(scaleX = 1.3f, scaleY = 1.3f),
+            colors = SwitchDefaults.colors(
+                checkedThumbColor = NetShieldTextPrimary,
+                checkedTrackColor = NetShieldAccentBlue,
+                uncheckedThumbColor = NetShieldTextSecondary,
+                uncheckedTrackColor = Color(0xFF4A4A5A),
+            ),
+        )
+    }
 }

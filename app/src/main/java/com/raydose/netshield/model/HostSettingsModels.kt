@@ -82,6 +82,12 @@ data class TimeSettings(
 /** 电子相册：图片与留言展示设置。 */
 data class AlbumSettings(
     val selectedImageUri: String = "",
+    /** 上次选图时浏览的存储位置 */
+    val lastPickerStorage: FileStorageLocation = FileStorageLocation.Local,
+    /** 上次选图时所在目录（默认优先 Pictures） */
+    val lastPickerDirectory: String = "",
+    /** 上次选中的源文件路径（导入前；U 盘拔出后仅作记录，展示用 selectedImageUri） */
+    val lastSelectedSourcePath: String = "",
     /** 所选图片作为待机页全屏背景 */
     val applyStandby: Boolean = false,
     /** 主页底部留言栏是否显示 */

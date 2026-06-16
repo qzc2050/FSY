@@ -643,4 +643,33 @@ class FileManagerRepository(context: Context) {
             error("删除失败: ${file.absolutePath}")
         }
     }
+
+    /** 将所选 APK 复制到应用缓存目录，供 [ApkInstallHelper] 安装。 */
+    fun stageApkForInstall(location: FileStorageLocation, path: String): Result<File> = runCatching {
+        require(path.isNotBlank()) { "未选择安装包" }
+        val cacheDir = File(appContext.cacheDir, "apk_update").apply { mkdirs() }
+        cacheDir.listFiles()?.forEach(::deleteRecursively)
+        val staged = when (location) {
+            FileStorageLocation.Local -> {
+                val source = requireLocalFile(path)
+                require(source.isFile) { "请选择 APK 文件" }
+                require(source.name.lowercase(Locale.US).endsWith(".apk")) { "请选择 APK 安装包" }
+                val target = File(cacheDir, source.name)
+                copyLocalFileToLocal(source, target)
+                target
+            }
+            FileStorageLocation.Usb -> {
+                val file = if (isRootUsbPath(path)) {
+                    copyRootUsbEntryToLocal(path, cacheDir)
+                } else {
+                    copyUsbEntryToLocal(requireUsbDocument(path), cacheDir)
+                }
+                require(file.isFile && file.name.lowercase(Locale.US).endsWith(".apk")) {
+                    "请选择 APK 安装包"
+                }
+                file
+            }
+        }
+        staged
+    }
 }

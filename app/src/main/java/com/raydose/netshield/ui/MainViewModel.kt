@@ -243,10 +243,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         applyDisplaySound(_displaySoundSettings.value.copy(mute = mute))
     }
 
-    /** 暂停报警 5 分钟：开启后计时，到期自动恢复。 */
-    fun commitDisplaySoundPauseAlarm(enabled: Boolean) {
-        val now = System.currentTimeMillis()
-        val until = if (enabled) now + PAUSE_ALARM_DURATION_MS else 0L
+    /** 暂停报警 5 分钟：每次点击重新计时 5 分钟。 */
+    fun triggerDisplaySoundPauseAlarm() {
+        val until = System.currentTimeMillis() + PAUSE_ALARM_DURATION_MS
         applyDisplaySound(_displaySoundSettings.value.copy(pauseAlarmUntilMillis = until))
         schedulePauseAlarmExpiry(until)
     }
@@ -386,23 +385,33 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun saveHostNetworkSection() {
-        val host = _settings.value.hostNetwork
-        hostSettingsRepository.saveHostNetwork(host)
-        _hostNetwork.value = host
+    fun commitHostNetwork(settings: HostNetworkSettings) {
+        val merged = mergeLiveHostIp(settings)
+        _hostNetwork.value = merged
+        _settings.update { it.copy(hostNetwork = merged, statusHint = null) }
+        hostSettingsRepository.saveHostNetwork(merged)
         showSettingsSaveSuccess()
         Log.i(ProbeConnectionManager.TAG, "主机网络信息已保存")
+    }
+
+    fun commitSlaveNetwork(index: Int, card: SlaveNetworkCard) {
+        updateSlaveNetworkCard(index, card)
+        hostSettingsRepository.saveSlaveNetworkCards(_settings.value.slaveNetworkCards)
+        showSettingsSaveSuccess()
+        Log.i(
+            ProbeConnectionManager.TAG,
+            "从机网络信息已保存 probe=${card.probeId}",
+        )
+    }
+
+    fun saveHostNetworkSection() {
+        commitHostNetwork(_settings.value.hostNetwork)
     }
 
     fun saveSlaveNetworkSection(index: Int) {
         val state = _settings.value
         if (index !in state.slaveNetworkCards.indices) return
-        hostSettingsRepository.saveSlaveNetworkCards(state.slaveNetworkCards)
-        showSettingsSaveSuccess()
-        Log.i(
-            ProbeConnectionManager.TAG,
-            "从机网络信息已保存 probe=${state.slaveNetworkCards[index].probeId}",
-        )
+        commitSlaveNetwork(index, state.slaveNetworkCards[index])
     }
 
     fun updateTimeSettings(settings: TimeSettings) {
@@ -640,6 +649,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun requestRemoveProbe(index: Int) {
         _settings.update { state ->
             if (index !in state.manageDrafts.indices) return@update state
+            if (state.manageDrafts[index].isTcpOnline) return@update state
             state.copy(deleteConfirmProbeIndex = index, statusHint = null)
         }
     }

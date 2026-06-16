@@ -6,6 +6,7 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
@@ -15,6 +16,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import com.raydose.netshield.R
+import com.raydose.netshield.data.AlbumImageRepository
 import com.raydose.netshield.model.AlbumSettings
 
 /** 待机全屏背景：相册图（需 applyStandby）或 [R.drawable.standby_default]。 */
@@ -24,7 +26,11 @@ fun StandbyBackground(
     modifier: Modifier = Modifier,
     scrimAlpha: Float = 0.35f,
 ) {
-    val useAlbumImage = albumSettings.applyStandby && albumSettings.selectedImageUri.isNotBlank()
+    val context = LocalContext.current
+    val albumImageRepository = remember { AlbumImageRepository(context) }
+    val useAlbumImage = albumSettings.applyStandby &&
+        albumSettings.selectedImageUri.isNotBlank() &&
+        albumImageRepository.isSelectedImageAvailable(albumSettings.selectedImageUri)
 
     Box(modifier = modifier.fillMaxSize()) {
         if (useAlbumImage) {
@@ -56,8 +62,15 @@ private fun StandbyAlbumUriImage(
     val context = LocalContext.current
     val bitmap = remember(uri) {
         runCatching {
-            context.contentResolver.openInputStream(Uri.parse(uri))?.use { input ->
-                BitmapFactory.decodeStream(input)?.asImageBitmap()
+            when {
+                uri.startsWith("file:") -> {
+                    val path = Uri.parse(uri).path ?: return@runCatching null
+                    BitmapFactory.decodeFile(path)?.asImageBitmap()
+                }
+                uri.startsWith("/") -> BitmapFactory.decodeFile(uri)?.asImageBitmap()
+                else -> context.contentResolver.openInputStream(Uri.parse(uri))?.use {
+                    BitmapFactory.decodeStream(it)?.asImageBitmap()
+                }
             }
         }.getOrNull()
     }

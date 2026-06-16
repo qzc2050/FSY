@@ -36,6 +36,8 @@ class FileManagerViewModel(application: Application) : AndroidViewModel(applicat
                     searchQuery = "",
                     message = null,
                     requiresUsbAccess = false,
+                    selectionMode = false,
+                    selectedPaths = emptySet(),
                 )
             }
             val root = withContext(Dispatchers.IO) { repository.resolveRoot(location) }
@@ -73,17 +75,20 @@ class FileManagerViewModel(application: Application) : AndroidViewModel(applicat
     }
 
     fun updateSearchQuery(query: String) {
-        _uiState.update { it.copy(searchQuery = query) }
+        _uiState.update { it.copy(searchQuery = query, selectionMode = false, selectedPaths = emptySet()) }
         loadItems()
     }
 
     fun openDirectory(item: FileListItem) {
+        if (_uiState.value.selectionMode) return
         if (!item.isDirectory) return
         directoryStack += item.path to item.name
         _uiState.update {
             it.copy(
                 currentPath = item.path,
                 currentPathLabel = buildDisplayPath(it.storageLocation),
+                selectionMode = false,
+                selectedPaths = emptySet(),
             )
         }
         loadItems()
@@ -97,9 +102,107 @@ class FileManagerViewModel(application: Application) : AndroidViewModel(applicat
             it.copy(
                 currentPath = target.first,
                 currentPathLabel = buildDisplayPath(it.storageLocation),
+                selectionMode = false,
+                selectedPaths = emptySet(),
             )
         }
         loadItems()
+    }
+
+    fun beginSelection(item: FileListItem) {
+        _uiState.update {
+            it.copy(
+                selectionMode = true,
+                selectedPaths = it.selectedPaths + item.path,
+            )
+        }
+    }
+
+    fun toggleItemSelection(item: FileListItem) {
+        _uiState.update { state ->
+            val selected = if (item.path in state.selectedPaths) {
+                state.selectedPaths - item.path
+            } else {
+                state.selectedPaths + item.path
+            }
+            state.copy(
+                selectedPaths = selected,
+                selectionMode = selected.isNotEmpty() || state.selectionMode,
+            )
+        }
+    }
+
+    fun selectAllVisible() {
+        _uiState.update { state ->
+            state.copy(
+                selectionMode = true,
+                selectedPaths = state.items.map { it.path }.toSet(),
+            )
+        }
+    }
+
+    fun clearSelection() {
+        _uiState.update { it.copy(selectedPaths = emptySet()) }
+    }
+
+    fun exitSelectionMode() {
+        _uiState.update { it.copy(selectionMode = false, selectedPaths = emptySet()) }
+    }
+
+    fun deleteSelectedItems() {
+        val items = _uiState.value.items.filter { it.path in _uiState.value.selectedPaths }
+        if (items.isEmpty()) {
+            _uiState.update { it.copy(message = "请先勾选文件") }
+            return
+        }
+        performFileAction {
+            var successCount = 0
+            var failedCount = 0
+            items.forEach { item ->
+                repository.deleteItem(item.storageLocation, item.path)
+                    .onSuccess { successCount++ }
+                    .onFailure { failedCount++ }
+            }
+            _uiState.update { state ->
+                state.copy(
+                    selectionMode = false,
+                    selectedPaths = emptySet(),
+                    message = when {
+                        failedCount == 0 -> "已删除 $successCount 项"
+                        successCount == 0 -> "删除失败"
+                        else -> "成功 $successCount 项，失败 $failedCount 项"
+                    },
+                )
+            }
+        }
+    }
+
+    fun stageCopySelected() {
+        val items = _uiState.value.items.filter { it.path in _uiState.value.selectedPaths }
+        val first = items.firstOrNull() ?: run {
+            _uiState.update { it.copy(message = "请先勾选文件") }
+            return
+        }
+        if (items.size > 1) {
+            stageCopy(first)
+            _uiState.update { it.copy(message = "已复制首项到剪贴板：${first.name}（共 ${items.size} 项，粘贴需逐次操作）") }
+        } else {
+            stageCopy(first)
+        }
+    }
+
+    fun stageMoveSelected() {
+        val items = _uiState.value.items.filter { it.path in _uiState.value.selectedPaths }
+        val first = items.firstOrNull() ?: run {
+            _uiState.update { it.copy(message = "请先勾选文件") }
+            return
+        }
+        if (items.size > 1) {
+            stageMove(first)
+            _uiState.update { it.copy(message = "已选择移动首项：${first.name}（共 ${items.size} 项，移动需逐次操作）") }
+        } else {
+            stageMove(first)
+        }
     }
 
     fun copyItem(sourcePath: String, targetDirectoryPath: String) {

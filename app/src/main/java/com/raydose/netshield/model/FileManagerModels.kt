@@ -32,4 +32,9 @@ data class FileManagerUiState(
     val requiresUsbAccess: Boolean = false,
     val isLoading: Boolean = false,
     val message: String? = null,
-)
+    val selectionMode: Boolean = false,
+    val selectedPaths: Set<String> = emptySet(),
+) {
+    val selectedCount: Int get() = selectedPaths.size
+    val allVisibleSelected: Boolean get() = items.isNotEmpty() && items.all { it.path in selectedPaths }
+}

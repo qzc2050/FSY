@@ -93,7 +93,7 @@ private fun SettingsNavItem(
         Text(
             text = tab.label,
             color = contentColor,
-            fontSize = if (selected) 20.sp else 18.sp,
+            fontSize = if (selected) 22.sp else 20.sp,
         )
     }
 }

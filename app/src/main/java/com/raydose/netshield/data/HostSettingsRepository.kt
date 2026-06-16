@@ -5,6 +5,7 @@ import com.raydose.netshield.model.AlbumMessage
 import com.raydose.netshield.model.AlbumSettings
 import com.raydose.netshield.model.AppLanguage
 import com.raydose.netshield.model.DisplaySoundSettings
+import com.raydose.netshield.model.FileStorageLocation
 import com.raydose.netshield.model.withExpiredPauseCleared
 import com.raydose.netshield.model.HostNetworkSettings
 import com.raydose.netshield.model.NetworkWifiDefaults
@@ -146,6 +147,9 @@ class HostSettingsRepository(context: Context) {
         }
         return AlbumSettings(
             selectedImageUri = o.optString("selectedImageUri", ""),
+            lastPickerStorage = parseAlbumPickerStorage(o.optString("lastPickerStorage", "")),
+            lastPickerDirectory = o.optString("lastPickerDirectory", ""),
+            lastSelectedSourcePath = o.optString("lastSelectedSourcePath", ""),
             applyStandby = o.optBoolean("applyStandby", false),
             showHomeMessages = legacyHomeMessages,
             showStandbyMessages = legacyStandbyMessages,
@@ -155,6 +159,9 @@ class HostSettingsRepository(context: Context) {
     fun saveAlbumSettings(settings: AlbumSettings) {
         val o = JSONObject().apply {
             put("selectedImageUri", settings.selectedImageUri)
+            put("lastPickerStorage", settings.lastPickerStorage.name)
+            put("lastPickerDirectory", settings.lastPickerDirectory)
+            put("lastSelectedSourcePath", settings.lastSelectedSourcePath)
             put("applyStandby", settings.applyStandby)
             put("showHomeMessages", settings.showHomeMessages)
             put("showStandbyMessages", settings.showStandbyMessages)
@@ -223,6 +230,9 @@ class HostSettingsRepository(context: Context) {
             )
         }
     }
+
+    private fun parseAlbumPickerStorage(raw: String): FileStorageLocation =
+        runCatching { FileStorageLocation.valueOf(raw) }.getOrDefault(FileStorageLocation.Local)
 
     companion object {
         private const val PREFS_NAME = "netshield_host_settings"

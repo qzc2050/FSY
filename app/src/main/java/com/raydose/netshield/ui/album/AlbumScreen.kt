@@ -42,6 +42,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -56,6 +57,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.DialogProperties
 import com.raydose.netshield.R
+import com.raydose.netshield.data.AlbumImageRepository
+import com.raydose.netshield.data.FileManagerRepository
 import com.raydose.netshield.ui.components.MessageEditDialog
 import com.raydose.netshield.model.AlbumMessage
 import com.raydose.netshield.model.AlbumSettings
@@ -67,15 +70,24 @@ import com.raydose.netshield.ui.theme.NetShieldAtmospherePlayerOverlay
 import com.raydose.netshield.ui.theme.NetShieldTextPrimary
 import com.raydose.netshield.ui.theme.NetShieldTextSecondary
 import com.raydose.netshield.ui.theme.ScreenSpec
+import java.io.File
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 @Composable
 fun AlbumScreen(
     probes: List<SlaveProbeUi>,
     settings: AlbumSettings,
     messages: List<AlbumMessage>,
+    fileManagerRepository: FileManagerRepository,
+    usbGrantEpoch: Int,
     onSettingsChange: (AlbumSettings) -> Unit,
     onMessagesChange: (List<AlbumMessage>) -> Unit,
-    onPickImage: () -> Unit,
+    onRequestUsbAccess: () -> Unit,
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -95,9 +107,11 @@ fun AlbumScreen(
             AlbumContent(
                 settings = settings,
                 messages = messages,
+                fileManagerRepository = fileManagerRepository,
+                usbGrantEpoch = usbGrantEpoch,
                 onSettingsChange = onSettingsChange,
                 onMessagesChange = onMessagesChange,
-                onPickImage = onPickImage,
+                onRequestUsbAccess = onRequestUsbAccess,
                 onClose = onBack,
                 modifier = Modifier
                     .fillMaxWidth()
@@ -111,12 +125,20 @@ fun AlbumScreen(
 private fun AlbumContent(
     settings: AlbumSettings,
     messages: List<AlbumMessage>,
+    fileManagerRepository: FileManagerRepository,
+    usbGrantEpoch: Int,
     onSettingsChange: (AlbumSettings) -> Unit,
     onMessagesChange: (List<AlbumMessage>) -> Unit,
-    onPickImage: () -> Unit,
+    onRequestUsbAccess: () -> Unit,
     onClose: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val albumImageRepository = remember { AlbumImageRepository(context) }
+    var showImagePicker by remember { mutableStateOf(false) }
+    var isImportingImage by remember { mutableStateOf(false) }
+    var imageImportMessage by remember { mutableStateOf<String?>(null) }
     var editingMessageId by remember { mutableStateOf<Long?>(null) }
     var editingText by remember { mutableStateOf<String?>(null) }
     var searchQuery by remember { mutableStateOf("") }
@@ -141,7 +163,11 @@ private fun AlbumContent(
             AlbumPreviewPanel(
                 selectedImageUri = settings.selectedImageUri,
                 applyStandby = settings.applyStandby,
-                onPickImage = onPickImage,
+                importMessage = imageImportMessage,
+                isImportingImage = isImportingImage,
+                imageAvailable = settings.selectedImageUri.isBlank() ||
+                    albumImageRepository.isSelectedImageAvailable(settings.selectedImageUri),
+                onPickImage = { showImagePicker = true },
                 onApplyStandbyChange = { onSettingsChange(settings.copy(applyStandby = it)) },
                 modifier = Modifier
                     .weight(0.38f)
@@ -191,6 +217,56 @@ private fun AlbumContent(
                     .fillMaxHeight(),
             )
         }
+    }
+    if (showImagePicker) {
+        val initialDirectory = settings.lastPickerDirectory.ifBlank {
+            albumImageRepository.defaultLocalPicturesDirectory().absolutePath
+        }
+        AlbumImagePickerDialog(
+            repository = fileManagerRepository,
+            albumImageRepository = albumImageRepository,
+            usbGrantEpoch = usbGrantEpoch,
+            isImporting = isImportingImage,
+            initialStorage = settings.lastPickerStorage,
+            initialDirectoryPath = initialDirectory,
+            onDismiss = {
+                if (!isImportingImage) showImagePicker = false
+            },
+            onRequestUsbAccess = onRequestUsbAccess,
+            onImageSelected = { location, path, browseDirectory ->
+                scope.launch {
+                    isImportingImage = true
+                    imageImportMessage = null
+                    val result = withContext(Dispatchers.IO) {
+                        albumImageRepository.importImage(
+                            fileManagerRepository = fileManagerRepository,
+                            sourceLocation = location,
+                            sourcePath = path,
+                        )
+                    }
+                    result
+                        .onSuccess { uri ->
+                            onSettingsChange(
+                                albumImageRepository.settingsForSelectedImage(
+                                    current = settings,
+                                    importedUri = uri,
+                                    pickerStorage = location,
+                                    pickerDirectory = browseDirectory.ifBlank {
+                                        File(path).parent.orEmpty()
+                                    },
+                                    sourcePath = path,
+                                ),
+                            )
+                            imageImportMessage = "图片已复制到本机，拔出 U 盘不影响显示"
+                            showImagePicker = false
+                        }
+                        .onFailure {
+                            imageImportMessage = "图片导入失败：${it.message ?: "未知错误"}"
+                        }
+                    isImportingImage = false
+                }
+            },
+        )
     }
     editingText?.let { text ->
         MessageEditDialog(
@@ -292,6 +368,9 @@ private fun AlbumWindowBar(
 private fun AlbumPreviewPanel(
     selectedImageUri: String,
     applyStandby: Boolean,
+    importMessage: String?,
+    isImportingImage: Boolean,
+    imageAvailable: Boolean,
     onPickImage: () -> Unit,
     onApplyStandbyChange: (Boolean) -> Unit,
     modifier: Modifier = Modifier,
@@ -300,15 +379,39 @@ private fun AlbumPreviewPanel(
         modifier = modifier.padding(top = 26.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        AlbumPreviewImage(selectedImageUri = selectedImageUri)
+        AlbumPreviewImage(
+            selectedImageUri = selectedImageUri,
+            imageAvailable = imageAvailable,
+        )
         Spacer(modifier = Modifier.height(18.dp))
         Button(
             onClick = onPickImage,
+            enabled = !isImportingImage,
             colors = ButtonDefaults.buttonColors(containerColor = NetShieldAccentBlue),
             shape = RoundedCornerShape(28.dp),
             modifier = Modifier.size(width = 88.dp, height = 58.dp),
         ) {
-            Text("选择", color = NetShieldTextPrimary, fontSize = 18.sp)
+            Text(
+                text = if (isImportingImage) "…" else "选择",
+                color = NetShieldTextPrimary,
+                fontSize = 18.sp,
+            )
+        }
+        importMessage?.let {
+            Text(
+                text = it,
+                color = NetShieldTextSecondary,
+                fontSize = 14.sp,
+                modifier = Modifier.padding(top = 8.dp),
+            )
+        }
+        if (selectedImageUri.isNotBlank() && !imageAvailable) {
+            Text(
+                text = "当前图片不可用（可能来自已拔出的 U 盘），请重新选择",
+                color = Color(0xFFFFB4B4),
+                fontSize = 14.sp,
+                modifier = Modifier.padding(top = 8.dp),
+            )
         }
         Spacer(modifier = Modifier.height(16.dp))
         AlbumSwitchRow("应用于待机画面", applyStandby, onApplyStandbyChange)
@@ -316,12 +419,12 @@ private fun AlbumPreviewPanel(
 }
 
 @Composable
-private fun AlbumPreviewImage(selectedImageUri: String) {
+private fun AlbumPreviewImage(selectedImageUri: String, imageAvailable: Boolean) {
     val imageModifier = Modifier
         .fillMaxWidth()
         .aspectRatio(16f / 9f)
         .clip(RoundedCornerShape(8.dp))
-    if (selectedImageUri.isBlank()) {
+    if (selectedImageUri.isBlank() || !imageAvailable) {
         Image(
             painter = painterResource(R.drawable.music_galaxy_cover),
             contentDescription = "相册预览",
@@ -331,11 +434,7 @@ private fun AlbumPreviewImage(selectedImageUri: String) {
     } else {
         val context = LocalContext.current
         val bitmap = remember(selectedImageUri) {
-            runCatching {
-                context.contentResolver.openInputStream(Uri.parse(selectedImageUri))?.use { input ->
-                    BitmapFactory.decodeStream(input)?.asImageBitmap()
-                }
-            }.getOrNull()
+            runCatching { decodeAlbumPreviewBitmap(context, selectedImageUri)?.asImageBitmap() }.getOrNull()
         }
         if (bitmap != null) {
             Image(
@@ -533,16 +632,17 @@ private fun MessageRow(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .height(52.dp)
+            .defaultMinSize(minHeight = 52.dp)
             .clip(RoundedCornerShape(4.dp))
             .background(Color(0xFF3946A1))
             .clickable(onClick = onClick)
-            .padding(start = 14.dp, end = 8.dp),
-        verticalAlignment = Alignment.CenterVertically,
+            .padding(start = 14.dp, end = 8.dp, top = 10.dp, bottom = 10.dp),
+        verticalAlignment = Alignment.Top,
     ) {
         if (manageMode) {
             Box(
                 modifier = Modifier
+                    .padding(top = 2.dp)
                     .size(26.dp)
                     .clip(RoundedCornerShape(13.dp))
                     .background(if (selected) NetShieldAccentBlue else Color.White.copy(alpha = 0.35f))
@@ -560,17 +660,24 @@ private fun MessageRow(
             }
             Spacer(modifier = Modifier.width(10.dp))
         }
-        Text(
-            text = message.text,
-            color = NetShieldTextPrimary,
-            fontSize = 20.sp,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.weight(1f),
-        )
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = formatMessageTimestamp(message.createdAtMillis),
+                color = NetShieldTextSecondary,
+                fontSize = 14.sp,
+            )
+            Text(
+                text = message.text,
+                color = NetShieldTextPrimary,
+                fontSize = 20.sp,
+                lineHeight = 28.sp,
+                modifier = Modifier.padding(top = 4.dp),
+            )
+        }
         if (!manageMode) {
             Box(
                 modifier = Modifier
+                    .padding(top = 2.dp)
                     .size(28.dp)
                     .clip(RoundedCornerShape(14.dp))
                     .background(Color.Red)
@@ -659,6 +766,23 @@ private fun AlbumSwitchRow(
 
 private fun nextMessageId(messages: List<AlbumMessage>): Long =
     (messages.maxOfOrNull { it.id } ?: 0L) + 1L
+
+private fun formatMessageTimestamp(millis: Long): String =
+    SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).format(Date(millis))
+
+private fun decodeAlbumPreviewBitmap(context: android.content.Context, uriString: String): android.graphics.Bitmap? {
+    if (uriString.isBlank()) return null
+    return runCatching {
+        when {
+            uriString.startsWith("file:") -> {
+                val path = Uri.parse(uriString).path ?: return@runCatching null
+                BitmapFactory.decodeFile(path)
+            }
+            uriString.startsWith("/") -> BitmapFactory.decodeFile(uriString)
+            else -> context.contentResolver.openInputStream(Uri.parse(uriString))?.use(BitmapFactory::decodeStream)
+        }
+    }.getOrNull()
+}
 
 private fun deleteMessagesByRange(
     messages: List<AlbumMessage>,

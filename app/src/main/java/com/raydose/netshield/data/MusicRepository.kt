@@ -2,6 +2,7 @@ package com.raydose.netshield.data
 
 import android.content.ContentUris
 import android.content.Context
+import android.os.Environment
 import android.provider.MediaStore
 import android.util.Log
 import com.raydose.netshield.model.MusicTrack
@@ -13,9 +14,17 @@ class MusicRepository(context: Context) {
 
     fun loadTracks(): List<MusicTrack> {
         val tracks = linkedMapOf<String, MusicTrack>()
-        loadMediaStoreTracks().forEach { tracks[it.id] = it }
+        val seenPaths = linkedSetOf<String>()
+
+        loadMediaStoreTracks().forEach { track ->
+            tracks[track.id] = track
+            track.absolutePath()?.let { seenPaths += it }
+        }
         loadStorageMusicTracks().forEach { track ->
-            tracks.putIfAbsent(track.uri.toString(), track)
+            val path = track.absolutePath()
+            if (path != null && path in seenPaths) return@forEach
+            if (path != null) seenPaths += path
+            tracks.putIfAbsent(path ?: track.uri.toString(), track)
         }
         return tracks.values.sortedWith(
             compareBy<MusicTrack> { it.sourceLabel }
@@ -31,6 +40,7 @@ class MusicRepository(context: Context) {
             MediaStore.Audio.Media.ARTIST,
             MediaStore.Audio.Media.DURATION,
             MediaStore.Audio.Media.RELATIVE_PATH,
+            MediaStore.Audio.Media.DATA,
         )
         val selection = "${MediaStore.Audio.Media.IS_MUSIC} != 0"
         val sortOrder = "${MediaStore.Audio.Media.TITLE} COLLATE NOCASE ASC"
@@ -41,6 +51,7 @@ class MusicRepository(context: Context) {
                 val artistColumn = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.ARTIST)
                 val durationColumn = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.DURATION)
                 val relativePathColumn = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.RELATIVE_PATH)
+                val dataColumn = cursor.getColumnIndex(MediaStore.Audio.Media.DATA)
                 buildList {
                     while (cursor.moveToNext()) {
                         val mediaId = cursor.getLong(idColumn)
@@ -48,6 +59,7 @@ class MusicRepository(context: Context) {
                         val title = cursor.getString(titleColumn).orEmpty().ifBlank { "未知歌曲" }
                         val artist = cursor.getString(artistColumn).orEmpty().ifBlank { "未知艺术家" }
                         val relativePath = cursor.getString(relativePathColumn).orEmpty()
+                        val dataPath = if (dataColumn >= 0) cursor.getString(dataColumn) else null
                         add(
                             MusicTrack(
                                 id = "media:$mediaId",
@@ -60,6 +72,7 @@ class MusicRepository(context: Context) {
                                 } else {
                                     "媒体库"
                                 },
+                                filePath = normalizeAbsolutePath(dataPath),
                             ),
                         )
                     }
@@ -76,9 +89,12 @@ class MusicRepository(context: Context) {
             .flatMap { root ->
                 listOf(File(root, "Music"), File(root, "music"))
                     .filter { it.isDirectory && it.canRead() }
+                    .distinctBy { directory ->
+                        runCatching { directory.canonicalPath }.getOrDefault(directory.absolutePath)
+                    }
                     .flatMap(::scanMusicDirectory)
             }
-            .distinctBy { it.uri.toString() }
+            .distinctBy { track -> track.absolutePath() ?: track.uri.toString() }
     }
 
     private fun storageRoots(): List<File> {
@@ -111,12 +127,28 @@ class MusicRepository(context: Context) {
                         artist = "本地文件",
                         uri = android.net.Uri.fromFile(file),
                         sourceLabel = directory.absolutePath,
+                        filePath = normalizeAbsolutePath(file.absolutePath),
                     )
                 }
                 .toList()
         }.onFailure {
             Log.w(TAG, "扫描音乐目录失败 path=${directory.absolutePath}", it)
         }.getOrDefault(emptyList())
+    }
+
+    fun musicImportDirectory(): File {
+        val candidate = File(Environment.getExternalStorageDirectory(), "Music")
+        if (!candidate.exists()) {
+            candidate.mkdirs()
+        }
+        return candidate
+    }
+
+    private fun MusicTrack.absolutePath(): String? = filePath ?: uri.path?.let(::normalizeAbsolutePath)
+
+    private fun normalizeAbsolutePath(path: String?): String? {
+        if (path.isNullOrBlank()) return null
+        return runCatching { File(path).canonicalPath }.getOrDefault(File(path).absolutePath)
     }
 
     private companion object {

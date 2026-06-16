@@ -16,7 +16,9 @@ import androidx.compose.ui.unit.sp
 import com.raydose.netshield.model.TimeSettings
 import com.raydose.netshield.ui.theme.NetShieldTextPrimary
 
-/** 与开关行数值区对齐的日期/时间字号 */
+private val TimeLabelSp = 20.sp
+private val TimeLabelWidth = 176.dp
+/** 日期/时间数值字号（标签样式见 [TimeLabelSp]） */
 private val TimeValueFontSize = 26.sp
 
 @Composable
@@ -61,18 +63,42 @@ fun TimeSettingsPanel(
                 }
             }
         }
-        SettingsSwitchRow("24 小时制", settings.use24Hour) {
-            onChange(settings.copy(use24Hour = it))
-        }
-        SettingsSwitchRow("农历显示", settings.showLunar) {
-            onChange(settings.copy(showLunar = it))
-        }
-        SettingsSwitchRow("公历显示", settings.showGregorian) {
-            onChange(settings.copy(showGregorian = it))
-        }
-        SettingsSwitchRow("节假日显示", settings.showHoliday) {
-            onChange(settings.copy(showHoliday = it))
-        }
+        SettingsSwitchRow(
+            label = "24 小时制",
+            checked = settings.use24Hour,
+            onCheckedChange = { onChange(settings.copy(use24Hour = it)) },
+            labelFontSize = TimeLabelSp,
+            labelWidth = TimeLabelWidth,
+            labelSingleLine = true,
+            enlargedSwitch = true,
+        )
+        SettingsSwitchRow(
+            label = "农历显示",
+            checked = settings.showLunar,
+            onCheckedChange = { onChange(settings.copy(showLunar = it)) },
+            labelFontSize = TimeLabelSp,
+            labelWidth = TimeLabelWidth,
+            labelSingleLine = true,
+            enlargedSwitch = true,
+        )
+        SettingsSwitchRow(
+            label = "公历显示",
+            checked = settings.showGregorian,
+            onCheckedChange = { onChange(settings.copy(showGregorian = it)) },
+            labelFontSize = TimeLabelSp,
+            labelWidth = TimeLabelWidth,
+            labelSingleLine = true,
+            enlargedSwitch = true,
+        )
+        SettingsSwitchRow(
+            label = "节假日显示",
+            checked = settings.showHoliday,
+            onCheckedChange = { onChange(settings.copy(showHoliday = it)) },
+            labelFontSize = TimeLabelSp,
+            labelWidth = TimeLabelWidth,
+            labelSingleLine = true,
+            enlargedSwitch = true,
+        )
     }
 }
 
@@ -83,7 +109,13 @@ private fun TimeDateValueRow(label: String, value: String) {
         modifier = Modifier.fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        SettingsFormLabel(label)
+        SettingsFormLabel(
+            text = label,
+            width = TimeLabelWidth,
+            fontSize = TimeLabelSp,
+            maxLines = 1,
+            softWrap = false,
+        )
         Text(
             text = value.ifBlank { "—" },
             color = NetShieldTextPrimary,
