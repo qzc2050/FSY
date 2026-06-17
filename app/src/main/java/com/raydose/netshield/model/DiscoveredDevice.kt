@@ -47,3 +47,25 @@ data class DiscoveredDevice(
             )
     }
 }
+
+/** 添加探头弹窗：按 IP 升序固定排序，避免组播刷新时列表跳动。 */
+fun Collection<DiscoveredDevice>.sortedForAddProbeDialog(): List<DiscoveredDevice> =
+    sortedWith(
+        compareBy(
+            { ipv4SortKey(it.ip) },
+            { it.protoAddr.trim() },
+            { it.serial.trim() },
+        ),
+    )
+
+private fun ipv4SortKey(ip: String): Long {
+    val parts = ip.trim().split('.')
+    if (parts.size != 4) return Long.MAX_VALUE
+    var key = 0L
+    for (part in parts) {
+        val octet = part.toIntOrNull() ?: return Long.MAX_VALUE
+        if (octet !in 0..255) return Long.MAX_VALUE
+        key = (key shl 8) or octet.toLong()
+    }
+    return key
+}

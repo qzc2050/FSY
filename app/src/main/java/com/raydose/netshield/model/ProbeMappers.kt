@@ -136,6 +136,36 @@ fun deriveDoorState(telemetryMap: Map<String, LiveProbeTelemetry>): DoorState {
     }
 }
 
-fun matchesSaved(probe: SavedProbe, device: DiscoveredDevice): Boolean =
-    probe.id == device.stableId ||
-        (probe.ip == device.ip && probe.protoAddr == device.protoAddr)
+fun matchesSaved(probe: SavedProbe, device: DiscoveredDevice): Boolean {
+    val probeSerial = probe.serial.trim()
+    val deviceSerial = device.serial.trim()
+    if (probeSerial.isNotEmpty() && deviceSerial.isNotEmpty()) {
+        if (probeSerial.equals(deviceSerial, ignoreCase = true)) return true
+    }
+    if (probe.id == device.stableId) return true
+    if (probe.protoAddr.isNotBlank() && probe.protoAddr == device.protoAddr) {
+        // 协议地址相同：IP 变化仍视为同一设备（序列号为空时兜底）
+        if (probeSerial.isEmpty() || deviceSerial.isEmpty()) return true
+        if (probeSerial.equals(deviceSerial, ignoreCase = true)) return true
+    }
+    return probe.ip == device.ip && probe.protoAddr == device.protoAddr
+}
+
+/** 组播发现同一设备（优先序列号）时，同步 IP/端口等网络信息。无变化返回 null。 */
+fun SavedProbe.mergeFromDiscovery(device: DiscoveredDevice): SavedProbe? {
+    if (!matchesSaved(this, device)) return null
+    val normalizedId = device.stableId.takeIf { device.serial.trim().isNotEmpty() } ?: id
+    val merged = copy(
+        id = normalizedId,
+        serial = device.serial.trim().ifEmpty { serial },
+        ip = device.ip,
+        controlPort = device.controlPort,
+        dataPort = device.dataPort,
+        model = device.model.ifBlank { model },
+        protoAddr = device.protoAddr.ifBlank { protoAddr },
+    )
+    return merged.takeIf { it != this }
+}
+
+fun findSavedProbeForDevice(probes: List<SavedProbe>, device: DiscoveredDevice): SavedProbe? =
+    probes.firstOrNull { matchesSaved(it, device) }

@@ -5,6 +5,7 @@ import android.net.Network
 import android.util.Log
 import com.raydose.netshield.model.DiscoveredDevice
 import com.raydose.netshield.model.SavedProbe
+import com.raydose.netshield.model.matchesSaved
 import com.raydose.netshield.net.FsyBroadcast
 import com.raydose.netshield.net.FsyProtocolFrameCollector
 import com.raydose.netshield.net.FsyMulticastDiscovery
@@ -293,10 +294,7 @@ class ProbeConnectionManager(
     private fun tryReconnectOnDiscovery(broadcast: FsyBroadcast) {
         if (suppressAutoReconnect) return
         val device = DiscoveredDevice.fromBroadcast(broadcast)
-        val probe = savedProbesRef.get().find { saved ->
-            saved.id == device.stableId ||
-                (saved.ip == device.ip && saved.protoAddr == device.protoAddr)
-        } ?: return
+        val probe = savedProbesRef.get().firstOrNull { matchesSaved(it, device) } ?: return
         if (isProbeOnline(probe.id)) return
 
         val now = System.currentTimeMillis()

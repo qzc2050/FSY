@@ -27,6 +27,7 @@ import com.raydose.netshield.ui.theme.ScreenSpec
 import com.raydose.netshield.ui.theme.TabletFormFactor
 import com.raydose.netshield.model.AlertLogKind
 import com.raydose.netshield.model.DiscoveredDevice
+import com.raydose.netshield.model.sortedForAddProbeDialog
 import com.raydose.netshield.model.DoorState
 import com.raydose.netshield.model.HostAdapterSnapshot
 import com.raydose.netshield.model.defaultHostEnvPlaceholders
@@ -44,6 +45,7 @@ import com.raydose.netshield.model.buildVolumeWriteFrame
 import com.raydose.netshield.model.mergeControlBit2Enables
 import com.raydose.netshield.model.deriveDoorState
 import com.raydose.netshield.model.matchesSaved
+import com.raydose.netshield.model.mergeFromDiscovery
 import com.raydose.netshield.model.mergeConfigFromTelemetry
 import com.raydose.netshield.model.toManageDraft
 import com.raydose.netshield.model.toSlaveProbeUi
@@ -214,7 +216,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             selectedProbeIndex = 0,
             manageDrafts = probes.map { it.toManageDraft() },
             draftProbes = probes,
-            discoveredDevices = discoveredMap.values.sortedByDescending { it.lastSeenMillis },
+            discoveredDevices = discoveredMap.values.sortedForAddProbeDialog(),
             displaySound = loadDisplaySoundForUi(),
             hostNetwork = mergeLiveHostIp(_hostNetwork.value),
             slaveNetworkCards = hostSettingsRepository.buildSlaveNetworkCards(probes),
@@ -608,7 +610,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _settings.update {
             it.copy(
                 showAddProbeDialog = true,
-                discoveredDevices = discoveredMap.values.sortedByDescending { it.lastSeenMillis },
+                discoveredDevices = discoveredMap.values.sortedForAddProbeDialog(),
                 statusHint = if (discoveredMap.isEmpty()) "正在搜索组播设备…" else null,
             )
         }
@@ -773,14 +775,58 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val broadcast = parseFsyBroadcast(text) ?: return
         val device = DiscoveredDevice.fromBroadcast(broadcast)
         discoveredMap[device.stableId] = device
+        applyDiscoveryNetworkUpdate(device)
         if (_settings.value.showAddProbeDialog) {
             _settings.update {
                 it.copy(
-                    discoveredDevices = discoveredMap.values.sortedByDescending { d -> d.lastSeenMillis },
+                    discoveredDevices = discoveredMap.values.sortedForAddProbeDialog(),
                     statusHint = null,
                 )
             }
         }
+    }
+
+    /**
+     * 同一序列号设备 IP 变化（如上电 DHCP）时，同步已保存探头的网络信息并重连 TCP。
+     */
+    private fun applyDiscoveryNetworkUpdate(device: DiscoveredDevice) {
+        val current = _savedProbes.value
+        val probe = current.firstOrNull { matchesSaved(it, device) } ?: return
+        val updated = probe.mergeFromDiscovery(device) ?: return
+
+        val list = current.map { saved -> if (saved.id == probe.id) updated else saved }
+        repository.save(list)
+        _savedProbes.value = list
+        connectionManager.setSavedProbes(list)
+
+        if (probe.id != updated.id) {
+            val telemetry = _liveTelemetry.value[probe.id] ?: LiveProbeTelemetry()
+            _liveTelemetry.update { map ->
+                map.filterKeys { it != probe.id } + (updated.id to telemetry)
+            }
+            connectionManager.disconnect(probe.id)
+        } else if (probe.ip != updated.ip || probe.controlPort != updated.controlPort) {
+            connectionManager.disconnect(probe.id)
+        }
+
+        connectionManager.connect(updated)
+
+        _settings.update { state ->
+            val drafts = state.manageDrafts.map { draft ->
+                if (!matchesSaved(draft.savedProbe, device)) draft
+                else draft.withSavedProbe(updated)
+            }
+            state.copy(
+                manageDrafts = drafts,
+                draftProbes = list,
+                slaveNetworkCards = hostSettingsRepository.buildSlaveNetworkCards(list),
+            )
+        }
+
+        Log.i(
+            ProbeConnectionManager.TAG,
+            "探头网络已同步 serial=${updated.serial} ${probe.ip} -> ${updated.ip} id=${updated.id}",
+        )
     }
 
     private fun pruneStaleDiscovery() {
@@ -788,7 +834,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val removed = discoveredMap.entries.removeIf { it.value.lastSeenMillis < cutoff }
         if (removed && _settings.value.showAddProbeDialog) {
             _settings.update {
-                it.copy(discoveredDevices = discoveredMap.values.sortedByDescending { d -> d.lastSeenMillis })
+                it.copy(discoveredDevices = discoveredMap.values.sortedForAddProbeDialog())
             }
         }
     }
