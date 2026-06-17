@@ -1,0 +1,40 @@
+# probe/ 嵌入式固件参考工程
+# 保留：源码、文档、Keil 工程文件（.uvprojx / .uvoptx / startup_*.s / *.sct 等）
+# 排除：MDK-ARM 编译输出与用户本地 IDE 状态
+
+# --- MDK-ARM 编译输出目录 ---
+**/MDK-ARM/*/
+**/MDK-ARM/LIST/
+
+# 实验/旧工程常见输出目录
+**/OBJ/
+
+# --- Keil / ARM 编译产物 ---
+*.o
+*.d
+*.crf
+*.axf
+*.elf
+*.hex
+*.bin
+*.map
+*.lst
+*.lnp
+*.htm
+*.dep
+*.build_log.htm
+*.iex
+*.tra
+
+# --- Keil 用户本地状态（每台机器不同）---
+*.uvguix
+*.uvguix.*
+*.uvguix.*.bak
+JLinkLog.txt
+JLinkSettings.ini
+
+# --- 其他构建/备份 ---
+Debug/
+Release/
+*.bkp
+*.bak

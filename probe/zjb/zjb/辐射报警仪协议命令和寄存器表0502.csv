@@ -1,0 +1,79 @@
+﻿地址（十进制）,寄存器数量(1个寄存器两个字节),类型,变量名,功能,备注,,
+1,2,uint32,dose_rate,辐射量*100,"uint32*100，单位uSv/h
+",只读,1
+3,2,int32,temp,温度*10,℃,只读,2
+5,2,uint32,press,气压,hPa,只读,3
+7,2,uint32,hum,湿度,%,只读,4
+9,2,uint32,co2,二氧化碳含量,ppm,只读,5
+11,2,uint32,pm2d5,pm2.5*10,,只读,6
+13,2,uint32,alarm_bit1,报警状态,"uint32，32个bit位 
+bit0:辐射上阈值报警，bit1:辐射下阈值报警，bit2：辐射检测离线，bit3：保留
+bit4:温度上阈值报警，bit5:温度下阈值报警，bit6：温度检测离线，bit7：保留
+bit8:气压上阈值报警，bit9:气压下阈值报警，bit10：气压检测离线，bit11：保留
+bit12:湿度上阈值报警，bit13:湿度下阈值报警,bit14：湿度检测离线, bit15：保留
+bit16:co2上阈值报警，bit17:co2下阈值报警, bit18：co2检测离线 , bit19：保留
+bit20:pm2.5上阈值报警,bit21:温pm2.5下阈值报警,bit22：pm2.5检测离,bit23：保留
+bit24:声报警损坏，  bit25:保留   bit26：声报警离线  bit27：保留
+bit28:光报警损坏 ，  bit29:保留  bit30：光报警离线  bit31：保留",只读,7
+,,,,,,,8
+,,,,,,,9
+,,,,,,,10
+20,4,uchar[8],data_time,时间（五分钟值）,"年月日时分秒 ，data_time[0]:年 data_time[1]:月  data_time[2]:日
+data_time[3]:时 data_time[4]:分  data_time[5]:秒data_time[6，7]预留",只读,11
+24,2,uint32,dose_rate,辐射量*100（五分钟值）,"uint16 高两位bit位是单位，00:uSv/h，01:mSv/h,10:Sv/h
+例：实际值 ：0.12uSv/h   uint16值：0x000c
+例: 实际值 ：0.12mSv/h   uint16值：0x400c
+",只读,
+,,,,,,,
+,,,,,,,
+,,,,,,,
+,,,,,,,
+报警阈值设置和其他控制,,,,,,,
+50,2,uint32,Alart_Threshold1,辐射量 报警上阈值*100,"uint16 高两位bit位是单位，00:uSv/h，01:mSv/h,10:Sv/h
+例：实际值 ：0.12uSv/h   uint16值：0x000c
+例: 实际值 ：0.12mSv/h   uint16值：0x400c
+",读写,
+52,2,uint32,Alart_Threshold2,辐射量 报警下阈值*100,"uint16 高两位bit位是单位，00:uSv/h，01:mSv/h,10:Sv/h
+例：实际值 ：0.12uSv/h   uint16值：0x000c
+例: 实际值 ：0.12mSv/h   uint16值：0x400c
+",读写,
+54,2,uint32,Alart_Threshold3,温度报警上阈值*10,℃,读写,
+56,2,uint32,Alart_Threshold4,温度报警下阈值*10,℃,读写,
+58,2,uint32,Alart_Threshold5,气压报警上阈值*10,hPa,读写,
+60,2,uint32,Alart_Threshold6,气压报警下阈值*10,hPa,读写,
+62,2,uint32,Alart_Threshold7,湿度报警上阈值*10,%,读写,
+64,2,uint32,Alart_Threshold8,湿度报警下阈值*10,%,读写,
+66,2,uint32,Alart_Threshold9,二氧化碳含量报警上阈值*100,%,读写,
+68,2,uint32,Alart_Threshold10,二氧化碳含量报警下阈值*100,%,读写,
+70,2,uint32,Alart_Threshold11,pm2.5报警上阈值*100,,,
+72,2,uint32,Alart_Threshold12,pm2.5报警下阈值*100,,,
+74,2,,,,,,
+76,2,,,,,,
+78,2,,,,,,
+80,2,,,,,,
+82,2,uint32,alrm_biten,报警使能,"uint32，对应报警状态，bit位为1时禁止
+如：bit0:辐射量上阈值报警使能，bit1:辐射量下阈值报警使能  bit2：辐射检测离线使能   bit3：保留",只读,8
+84,2,,,,,,
+86,8,char[16],serialnum,序列号,16个字节的序列号 “1905CCM0101”不足16位补零,读写,
+94,4,uchar[8],data_time,时间,"年月日时分秒 ，data_time[0]:年 data_time[1]:月  data_time[2]:日
+data_time[3]:时 data_time[4]:分  data_time[5]:秒data_time[6，7]预留",读写,
+98,10,char[20],,软件版本号,20个字节的软件版本号 “V1.5.1.20250829R”不足20位补零,只读,
+108,4,uchar[8],data_time_start,五分钟历史数据请求开始时间,"年月日时分秒 ，data_time[0]:年 data_time[1]:月  data_time[2]:日
+data_time[3]:时 data_time[4]:分  data_time[5]:秒data_time[6，7]预留",读写,
+112,4,uchar[8],data_time_end,五分钟历史数据请求借宿时间,"年月日时分秒 ，data_time[0]:年 data_time[1]:月  data_time[2]:日
+data_time[3]:时 data_time[4]:分  data_time[5]:秒data_time[6，7]预留",读写,
+,,,,,,,
+,,,,,,,
+,,,,,,,
+,,,,,,,
+120,1,uint16,reboot,控制设备重启,0x0001重启,,
+121,1,uint16,address,设备的通信协议地址,,,
+122,1,uint16,control_bit,控制声，光，屏幕启用,bit0 是否启用声音报警  bit1 是否启用光报警， bit2是否启用屏幕,,
+,,,,,,,
+,,,,,,,
+,,,,,,,
+程序更新,,,,,,,
+200,2,uint32,file_index,文件总长,int32 当前发送bin文件的文件索引位置,写,
+202,2,uint32,file_index,文件索引位置,int32 当前发送bin文件的文件索引位置,写,
+204,16,char[32],,文件数据,文件数据,写,
+,,,,,,,

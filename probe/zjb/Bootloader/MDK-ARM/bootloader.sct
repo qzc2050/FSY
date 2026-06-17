@@ -1,0 +1,17 @@
+; *************************************************************
+; *** Bootloader 分散加载文件
+; *** Bootloader 区: 0x08000000 - 0x08001FFF (8KB)
+; *************************************************************
+
+LR_IROM1 0x08000000 0x00002000  {    ; Bootloader load region (8KB)
+  ER_IROM1 0x08000000 0x00002000  {  ; load address = execution address
+    *.o (RESET, +First)
+    *(InRoot$$Sections)
+    .ANY (+RO)
+    .ANY (+XO)
+  }
+  RW_IRAM1 0x20000000 0x00005000  {  ; RW data (20KB RAM)
+    .ANY (+RW +ZI)
+  }
+}
+
