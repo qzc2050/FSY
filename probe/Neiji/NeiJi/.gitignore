@@ -1,0 +1,13 @@
+MDK-ARM/NeiJi/
+MDK-ARM/*.uvguix.*
+MDK-ARM/*.uvoptx
+MDK-ARM/RTE/
+*.o
+*.d
+*.crf
+*.htm
+*.lnp
+*.map
+*.lst
+*.dep
+*.build_log.htm
