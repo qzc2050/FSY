@@ -42,8 +42,8 @@ extern SDRAM_HandleTypeDef hsdram1;
 #define SDRAM_MODEREG_WRITEBURST_MODE_PROGRAMMED ((uint16_t)0x0000U)
 #define SDRAM_MODEREG_WRITEBURST_MODE_SINGLE     ((uint16_t)0x0200U)
 
-/* 64ms refresh, SDCLK=50MHz (FMC 100MHz / 2), 8192 rows */
-#define SDRAM_REFRESH_COUNT  ((uint32_t)((64UL * 1000UL * 50UL) / 8192UL - 20UL))
+/* 与 RAD-I 一致：64ms/8192 行，实测 729 更稳（网络/SPI 负载下避免 SDRAM 读成 0xFFFF 白屏） */
+#define SDRAM_REFRESH_COUNT  729U
 
 static uint8_t SDRAM_Send_Cmd(uint8_t bankx, uint8_t cmd, uint8_t refresh, uint16_t regval)
 {
@@ -95,7 +95,6 @@ int SDRAM_SelfTest(void)
   static const uint32_t patterns[] = {0xA5A5A5A5U, 0x5A5A5A5AU, 0x12345678U};
   const uint32_t cache_bytes = 32U;
 
-  printf("[SDRAM] probe...\r\n");
   UartDiag_Write("[SDRAM] probe...\r\n");
 
   for (uint32_t i = 0U; i < (uint32_t)(sizeof(patterns) / sizeof(patterns[0])); i++) {
@@ -117,9 +116,18 @@ int SDRAM_SelfTest(void)
     }
   }
 
-  printf("[SDRAM] OK\r\n");
   UartDiag_Write("[SDRAM] OK\r\n");
   return 0;
+}
+
+void FMC_ConfigLtdcSdramArbitration(void)
+{
+  /* LTDC = AXI master INI6; DMA2D = INI3. */
+  GPV->AXI_INI6_READ_QOS = 0xFU;
+  GPV->AXI_INI3_WRITE_QOS = 0U;
+  /* FMC/SDRAM = AXI target 5: READ_ISS_OVERRIDE — LTDC reads vs DMA2D writes. */
+  GPV->AXI_TARG5_FN_MOD_ISS_BM |= 1U;
+  UartDiag_Write("[FMC] AXI INI6 rdQoS=15 INI3 wrQoS=0 TARG5 READ_ISS (PLL FMC)\r\n");
 }
 
 /* USER CODE END 0 */
@@ -158,7 +166,7 @@ void MX_FMC_Init(void)
   SdramTiming.ExitSelfRefreshDelay = 8;
   SdramTiming.SelfRefreshTime = 5;
   SdramTiming.RowCycleDelay = 6;
-  SdramTiming.WriteRecoveryTime = 4;
+  SdramTiming.WriteRecoveryTime = 2;
   SdramTiming.RPDelay = 2;
   SdramTiming.RCDDelay = 2;
 
@@ -185,17 +193,9 @@ static void HAL_FMC_MspInit(void){
   FMC_Initialized = 1;
   RCC_PeriphCLKInitTypeDef PeriphClkInitStruct = {0};
 
-  /** Initializes the peripherals clock
-  */
+  /** FMC @ PLL1Q（RAD-I：PLLQ=5 → ~192MHz kernel，SDCLK≈96MHz，满足 LTDC 读带宽） */
     PeriphClkInitStruct.PeriphClockSelection = RCC_PERIPHCLK_FMC;
-    PeriphClkInitStruct.PLL2.PLL2M = 16;
-    PeriphClkInitStruct.PLL2.PLL2N = 128;
-    PeriphClkInitStruct.PLL2.PLL2P = 2;
-    PeriphClkInitStruct.PLL2.PLL2Q = 2;
-    PeriphClkInitStruct.PLL2.PLL2R = 2;
-    PeriphClkInitStruct.PLL2.PLL2RGE = RCC_PLL2VCIRANGE_0;
-    PeriphClkInitStruct.PLL2.PLL2VCOSEL = RCC_PLL2VCOWIDE;
-    PeriphClkInitStruct.FmcClockSelection = RCC_FMCCLKSOURCE_PLL2;
+    PeriphClkInitStruct.FmcClockSelection = RCC_FMCCLKSOURCE_PLL;
     if (HAL_RCCEx_PeriphCLKConfig(&PeriphClkInitStruct) != HAL_OK)
     {
       Error_Handler();

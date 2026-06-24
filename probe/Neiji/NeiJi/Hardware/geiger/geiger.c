@@ -211,9 +211,6 @@ void Geiger_Doserate_Calculate(void)
         // 真实模式：不覆盖，直接使用 once_cnt（已累加的值）
         
         // 使用 EWMA 算法更新剂量率，输入为 CPS（每秒计数）
-        if(one_second_cnt_func)
-            printf("%d,",once_cnt);
-
         data_var.real_rate = DoseRate_UpdateFromCps(once_cnt);
         
         // 超过量程限制

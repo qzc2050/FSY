@@ -1,8 +1,13 @@
 #include "lcd_rgb.h"
 
 #include "main.h"
+#include "ltdc.h"
+#include "uart_diag.h"
 #include "stm32h7xx_hal_dma2d.h"
 #include "core_cm7.h"
+#include "FreeRTOS.h"
+#include "task.h"
+#include <stdio.h>
 #include <string.h>
 #include <stdbool.h>
 
@@ -14,6 +19,9 @@ static volatile bool lcd_dma2d_busy = false;
 static uint32_t lcd_dma2d_clean_addr;
 static uint32_t lcd_dma2d_clean_size;
 static void (*lcd_flush_done_cb)(void);
+
+static void lcd_dma2d_fill(uint32_t dst, uint16_t width, uint16_t height,
+                           uint16_t dst_line_offset, uint32_t color);
 
 static uint32_t lcd_phys_addr(uint16_t px, uint16_t py)
 {
@@ -44,6 +52,7 @@ void LCD_FlushWait(void)
 	lcd_dma2d_wait();
 
 	while(lcd_dma2d_busy) {
+		taskYIELD();
 	}
 }
 
@@ -72,9 +81,107 @@ static void lcd_dcache_clean(const void *addr, uint32_t size)
 	SCB_CleanDCache_by_Addr((uint32_t *)start, len);
 }
 
+void LCD_DrawBufClean(const void *addr, uint32_t pixel_count)
+{
+	if((addr == NULL) || (pixel_count == 0U)) {
+		return;
+	}
+
+	lcd_dcache_clean(addr, pixel_count * 2U);
+}
+
+static void lcd_dcache_invalidate(const void *addr, uint32_t size)
+{
+	if((SCB->CCR & SCB_CCR_DC_Msk) == 0U) {
+		return;
+	}
+
+	uint32_t start = (uint32_t)addr & ~31U;
+	uint32_t end = (uint32_t)addr + size;
+	uint32_t len = ((end - start + 31U) & ~31U);
+
+	SCB_InvalidateDCache_by_Addr((uint32_t *)start, len);
+}
+
+uint32_t LCD_FramebufBaseAddr(void)
+{
+	return (uint32_t)(uintptr_t)&ltdc_lcd_framebuf;
+}
+
+void LCD_FillPhysRect(uint16_t px, uint16_t py, uint16_t width, uint16_t height, uint16_t color)
+{
+	uint32_t addr;
+	uint32_t size;
+
+	if((width == 0U) || (height == 0U)) {
+		return;
+	}
+
+	if(((uint32_t)px + width) > LCD_PHYS_WIDTH || ((uint32_t)py + height) > LCD_PHYS_HEIGHT) {
+		return;
+	}
+
+	addr = lcd_phys_addr(px, py);
+	size = (uint32_t)height * ((uint32_t)LCD_PHYS_WIDTH * 2U);
+	lcd_dma2d_fill(addr, width, height, (uint16_t)(LCD_PHYS_WIDTH - width), color);
+	lcd_dcache_clean((const void *)addr, size);
+}
+
+uint32_t LCD_LtdcLayer0CFBAR(void)
+{
+	return LTDC_Layer1->CFBAR & LTDC_LxCFBAR_CFBADD_Msk;
+}
+
+void LCD_LtdcReloadFramebuf(void)
+{
+	(void)HAL_LTDC_SetAddress(&hltdc, LCD_FramebufBaseAddr(), 0U);
+	(void)HAL_LTDC_Reload(&hltdc, LTDC_SRCR_VBR);
+}
+
+void LCD_LtdcLogState(const char *tag)
+{
+	char msg[160];
+	uint32_t cfbar = LTDC_Layer1->CFBAR & LTDC_LxCFBAR_CFBADD_Msk;
+	uint32_t cfblr = LTDC_Layer1->CFBLR;
+	uint32_t cfblnbr = LTDC_Layer1->CFBLNR & LTDC_LxCFBLNR_CFBLNBR_Msk;
+	uint32_t whpcr = LTDC_Layer1->WHPCR;
+	uint32_t wvpcr = LTDC_Layer1->WVPCR;
+	uint32_t isr = LTDC->ISR;
+
+	(void)snprintf(msg, sizeof(msg),
+	               "[ltdc] %s CFBAR=0x%08lX CFBLR=0x%08lX CFBLNBR=%lu WHPCR=0x%08lX WVPCR=0x%08lX ISR=0x%lX%s\r\n",
+	               tag,
+	               (unsigned long)cfbar,
+	               (unsigned long)cfblr,
+	               (unsigned long)cfblnbr,
+	               (unsigned long)whpcr,
+	               (unsigned long)wvpcr,
+	               (unsigned long)isr,
+	               (isr & LTDC_ISR_FUIF) ? " FUIF" : "");
+	UartDiag_Write(msg);
+	if ((isr & LTDC_ISR_FUIF) != 0U) {
+		LTDC->ICR = LTDC_ICR_CFUIF;
+	}
+}
+
+void LCD_InvalidateFramebuf(void)
+{
+	lcd_dcache_invalidate((const void *)LCD_FramebufBaseAddr(),
+	                      (uint32_t)LCD_PHYS_WIDTH * LCD_PHYS_HEIGHT * 2U);
+}
+
+uint16_t LCD_ReadFramebufPixel(uint16_t px, uint16_t py)
+{
+	if(px >= LCD_PHYS_WIDTH || py >= LCD_PHYS_HEIGHT) {
+		return 0U;
+	}
+
+	return ltdc_lcd_framebuf[(uint32_t)py * LCD_PHYS_WIDTH + px];
+}
+
 static void lcd_dma2d_start_async(uint32_t src, uint32_t dst, uint16_t width, uint16_t height,
                                   uint16_t src_line_offset, uint16_t dst_line_offset,
-                                  uint32_t clean_addr, uint32_t clean_size)
+                                  uint32_t dst_cache_addr, uint32_t dst_cache_size)
 {
 	LCD_FlushWait();
 
@@ -88,8 +195,8 @@ static void lcd_dma2d_start_async(uint32_t src, uint32_t dst, uint16_t width, ui
 	DMA2D->OOR = dst_line_offset;
 	DMA2D->OPFCCR = DMA2D_OUTPUT_RGB565;
 	DMA2D->NLR = ((uint32_t)width << 16) | height;
-	lcd_dma2d_clean_addr = clean_addr;
-	lcd_dma2d_clean_size = clean_size;
+	lcd_dma2d_clean_addr = dst_cache_addr;
+	lcd_dma2d_clean_size = dst_cache_size;
 	lcd_dma2d_busy = true;
 	DMA2D->CR |= DMA2D_CR_START;
 }
@@ -125,6 +232,8 @@ static void lcd_dma2d_blit_m2m(uint32_t src, uint32_t dst, uint16_t width, uint1
 	DMA2D->NLR = ((uint32_t)width << 16) | height;
 	DMA2D->CR |= DMA2D_CR_START;
 	lcd_dma2d_wait();
+	lcd_dcache_clean((const void *)dst,
+	                 (uint32_t)height * (((uint32_t)width + dst_line_offset) * 2U));
 }
 
 /* 逻辑 w×h -> 物理布局（按行读 src 顺序访问，利于 Cache） */
@@ -169,9 +278,6 @@ static void lcd_dma2d_fill(uint32_t dst, uint16_t width, uint16_t height,
 	DMA2D->OCOLR = color;
 	DMA2D->CR |= DMA2D_CR_START;
 	lcd_dma2d_wait();
-
-	lcd_dcache_clean((const void *)dst,
-	                 (uint32_t)height * (((uint32_t)width + dst_line_offset) * 2U));
 }
 
 void delay_us(uint32_t us)
@@ -328,11 +434,15 @@ void LCD_GC9503V_init(void)
 
 void LCD_Clear(uint32_t color)
 {
-	lcd_dma2d_fill((uint32_t)&ltdc_lcd_framebuf,
+	uint32_t fb = (uint32_t)&ltdc_lcd_framebuf;
+
+	lcd_dma2d_fill(fb,
 	               LCD_PHYS_WIDTH,
 	               LCD_PHYS_HEIGHT,
 	               0U,
 	               color);
+	lcd_dcache_clean((const void *)fb,
+	                 (uint32_t)LCD_PHYS_WIDTH * LCD_PHYS_HEIGHT * 2U);
 }
 
 void LCD_DrawPoint(uint16_t x, uint16_t y, uint16_t color)
@@ -346,7 +456,6 @@ void LCD_DrawPoint(uint16_t x, uint16_t y, uint16_t color)
 
 	lcd_logical_to_phys(x, y, &px, &py);
 	*(__IO uint16_t *)lcd_phys_addr(px, py) = color;
-	lcd_dcache_clean((const void *)lcd_phys_addr(px, py), 2U);
 }
 
 void LCD_BlitPhysAreaAsync(uint16_t px, uint16_t py, uint16_t width, uint16_t height, const uint16_t *src)
@@ -402,20 +511,19 @@ bool LCD_BlitAreaAsync(uint16_t x, uint16_t y, uint16_t width, uint16_t height, 
 		return false;
 	}
 
-	if(height > LCD_SCRATCH_BUF_LINES) {
+	if(height > LCD_LVGL_BUF_LINES) {
 		return false;
 	}
 
 	pixel_count = (uint32_t)width * height;
 	px_bottom = (uint16_t)(LCD_PHYS_WIDTH - height - y);
 	dst_addr = lcd_phys_addr(px_bottom, x);
-	clean_size = (uint32_t)width * ((uint32_t)LCD_PHYS_WIDTH * 2U);
-
 	if(height == 1U) {
 		uint16_t px = (uint16_t)(LCD_PHYS_WIDTH - 1U - y);
 
 		lcd_dcache_clean(src, (uint32_t)width * 2U);
 		dst_addr = lcd_phys_addr(px, x);
+		clean_size = (uint32_t)LCD_PHYS_WIDTH * 2U;
 		lcd_dma2d_start_async((uint32_t)src,
 		                      dst_addr,
 		                      1U,
@@ -427,6 +535,9 @@ bool LCD_BlitAreaAsync(uint16_t x, uint16_t y, uint16_t width, uint16_t height, 
 		return true;
 	}
 
+	clean_size = (uint32_t)width * ((uint32_t)LCD_PHYS_WIDTH * 2U);
+
+	lcd_dcache_clean(src, pixel_count * 2U);
 	lcd_transpose_to_phys(src, lcd_rotate_buf, width, height);
 	lcd_dcache_clean(lcd_rotate_buf, pixel_count * 2U);
 

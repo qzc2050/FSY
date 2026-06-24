@@ -69,7 +69,7 @@
 #define configTICK_RATE_HZ                       ((TickType_t)1000)
 #define configMAX_PRIORITIES                     ( 56 )
 #define configMINIMAL_STACK_SIZE                 ((uint16_t)128)
-#define configTOTAL_HEAP_SIZE                    ((size_t)65536)
+#define configTOTAL_HEAP_SIZE                    ((size_t)(256 * 1024))
 #define configMAX_TASK_NAME_LEN                  ( 16 )
 #define configUSE_TRACE_FACILITY                 1
 #define configUSE_16_BIT_TICKS                   0
@@ -166,7 +166,7 @@ standard names. */
 
 /* USER CODE BEGIN Defines */
 #undef configTOTAL_HEAP_SIZE
-#define configTOTAL_HEAP_SIZE                    ((size_t)(64 * 1024))
+#define configTOTAL_HEAP_SIZE                    ((size_t)(256 * 1024))
 /* USER CODE END Defines */
 
 #endif /* FREERTOS_CONFIG_H */

@@ -60,17 +60,17 @@ void MX_LTDC_Init(void)
     Error_Handler();
   }
   pLayerCfg.WindowX0 = 0;
-  pLayerCfg.WindowX1 = 480;
+  pLayerCfg.WindowX1 = LCD_PHYS_WIDTH;
   pLayerCfg.WindowY0 = 0;
-  pLayerCfg.WindowY1 = 854;
+  pLayerCfg.WindowY1 = LCD_PHYS_HEIGHT;
   pLayerCfg.PixelFormat = LTDC_PIXEL_FORMAT_RGB565;
   pLayerCfg.Alpha = 255;
   pLayerCfg.Alpha0 = 0;
   pLayerCfg.BlendingFactor1 = LTDC_BLENDING_FACTOR1_PAxCA;
   pLayerCfg.BlendingFactor2 = LTDC_BLENDING_FACTOR2_PAxCA;
-  pLayerCfg.FBStartAdress = 0;
-  pLayerCfg.ImageWidth = 0;
-  pLayerCfg.ImageHeight = 0;
+  pLayerCfg.FBStartAdress = (uint32_t)&ltdc_lcd_framebuf;
+  pLayerCfg.ImageWidth = LCD_PHYS_WIDTH;
+  pLayerCfg.ImageHeight = LCD_PHYS_HEIGHT;
   pLayerCfg.Backcolor.Blue = 0;
   pLayerCfg.Backcolor.Green = 0;
   pLayerCfg.Backcolor.Red = 0;
@@ -79,29 +79,8 @@ void MX_LTDC_Init(void)
     Error_Handler();
   }
   /* USER CODE BEGIN LTDC_Init 2 */
-  {
-    LTDC_LayerCfgTypeDef layer = {0};
-
-    layer.WindowX0 = 0;
-    layer.WindowX1 = LCD_PHYS_WIDTH;
-    layer.WindowY0 = 0;
-    layer.WindowY1 = LCD_PHYS_HEIGHT;
-    layer.PixelFormat = LTDC_PIXEL_FORMAT_RGB565;
-    layer.Alpha = 255;
-    layer.Alpha0 = 0;
-    layer.BlendingFactor1 = LTDC_BLENDING_FACTOR1_PAxCA;
-    layer.BlendingFactor2 = LTDC_BLENDING_FACTOR2_PAxCA;
-    layer.FBStartAdress = (uint32_t)ltdc_lcd_framebuf;
-    layer.ImageWidth = LCD_PHYS_WIDTH;
-    layer.ImageHeight = LCD_PHYS_HEIGHT;
-    layer.Backcolor.Blue = 0;
-    layer.Backcolor.Green = 0;
-    layer.Backcolor.Red = 0;
-    if (HAL_LTDC_ConfigLayer(&hltdc, &layer, 0) != HAL_OK)
-    {
-      Error_Handler();
-    }
-  }
+  HAL_LTDC_SetWindowPosition(&hltdc, 0, 0, 0);
+  HAL_LTDC_SetWindowSize(&hltdc, LCD_PHYS_WIDTH, LCD_PHYS_HEIGHT, 0);
   /* USER CODE END LTDC_Init 2 */
 
 }

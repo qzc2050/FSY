@@ -9,6 +9,7 @@
 #define BLUE                             0x001FU
 #define RED                              0xF800U
 #define GREEN                            0x07E0U
+#define LCD_UI_BG                        0x2104U   /* RGB565 #202020，与 LVGL 背景一致 */
 
 #define LCD_PHYS_WIDTH                   480U
 #define LCD_PHYS_HEIGHT                  854U
@@ -16,6 +17,7 @@
 #define LCD_WIDTH                        854U
 #define LCD_HEIGHT                       480U
 #define LCD_SCRATCH_BUF_LINES            LCD_HEIGHT
+#define LCD_LVGL_BUF_LINES               LCD_HEIGHT
 
 #define GC9503_CMD_MADCTL                0xB1U
 #define GC9503_MADCTL_VALUE              0x10U
@@ -50,9 +52,17 @@
 
 void LCD_Dma2dInit(void);
 void LCD_GC9503V_init(void);
+void LCD_DrawBufClean(const void *addr, uint32_t pixel_count);
 void LCD_Clear(uint32_t color);
 void LCD_FlushWait(void);
 void LCD_SetFlushDoneCallback(void (*cb)(void));
 bool LCD_BlitAreaAsync(uint16_t x, uint16_t y, uint16_t width, uint16_t height, const uint16_t *src);
+void LCD_FillPhysRect(uint16_t px, uint16_t py, uint16_t width, uint16_t height, uint16_t color);
+void LCD_LtdcReloadFramebuf(void);
+void LCD_LtdcLogState(const char *tag);
+uint32_t LCD_LtdcLayer0CFBAR(void);
+uint32_t LCD_FramebufBaseAddr(void);
+void LCD_InvalidateFramebuf(void);
+uint16_t LCD_ReadFramebufPixel(uint16_t px, uint16_t py);
 
 #endif /* __LCD_RGB_H */

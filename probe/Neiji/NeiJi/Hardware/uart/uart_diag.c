@@ -10,7 +10,7 @@ void UartDiag_WriteRaw(const uint8_t *data, uint16_t len)
         return;
     }
 
-    (void)HAL_UART_Transmit(&huart1, (uint8_t *)data, len, 500U);
+    (void)HAL_UART_Transmit(&huart1, (uint8_t *)data, len, 100U);
 }
 
 void UartDiag_Write(const char *text)

@@ -15,6 +15,7 @@
 #include "geiger_task.h"
 #include "key_task.h"
 #include "net_task.h"
+#include "ui_task.h"
 #include "net_tcp.h"
 #include "w25q_port.h"
 #include "uart_diag.h"
@@ -77,7 +78,6 @@ static void BootMessage(void)
     static const char msg[] = "NeiJi uart1 proto ready\r\n";
 
     UartDiag_Write(msg);
-    (void)Uart1_Port_Write((const uint8_t *)msg, (uint16_t)(sizeof(msg) - 1U));
 
 }
 
@@ -94,6 +94,10 @@ void App_TasksInit(void)
     Uart1_Port_Init();
 
     Uart1_Port_StartRx();
+
+    /* LVGL 尽早启动，避免长时间停留在 main 里的纯色底 */
+    Ui_TaskInit();
+    UartDiag_Write("[APP] after Ui_TaskInit\r\n");
 
     BootMessage();
 
