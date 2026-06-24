@@ -113,12 +113,12 @@ diag=12 稳定后，step1 仍保留轻量 `[ltdc]` 周期日志；step2 将移�
 
 ---
 
-## 7. 后续 step2（未做）
+## 7. 后续 step2（已完成 2026-06-24）
 
-- [ ] 去掉顶白/底红测试色条与 `[fb]`/`[test]` 探针
-- [ ] 恢复 `lv_timer_handler` 主循环
-- [ ] `lv_port_disp` 对齐 RAD-I 双缓冲、去掉 `full_refresh`
-- [ ] `NEIJI_DIAG_BUILD` 归零或改为正式版本号
+- [x] 去掉顶白/底红测试色条与 `[fb]`/`[test]`/`[ltdc]` 探针
+- [x] 恢复 `lv_timer_handler` 主循环（5ms tick，对齐 RAD-I）
+- [x] `lv_port_disp` 双缓冲 partial refresh，去掉 `full_refresh` 与 draw 探针
+- [x] `NEIJI_DIAG_BUILD` 归零
 
 ---
 
@@ -129,4 +129,4 @@ diag=12 稳定后，step1 仍保留轻量 `[ltdc]` 周期日志；step2 将移�
 
 ---
 
-*文档版本：diag=12 stable · 2026-06-24*
+*文档版本：diag=12 stable + step2 · 2026-06-24*
