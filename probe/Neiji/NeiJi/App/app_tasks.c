@@ -95,7 +95,8 @@ void App_TasksInit(void)
 
     Uart1_Port_StartRx();
 
-    /* LVGL 尽早启动，避免长时间停留在 main 里的纯色底 */
+    /* 按键扫描先于 LVGL，供 lv_port_indev 读取 */
+    Key_TaskInit();
     Ui_TaskInit();
     UartDiag_Write("[APP] after Ui_TaskInit\r\n");
 
@@ -115,7 +116,6 @@ void App_TasksInit(void)
 
     Sensor_TaskInit();
     Geiger_TaskInit();
-    Key_TaskInit();
     Net_TaskInit();
 
 }

@@ -17,14 +17,13 @@ static const osThreadAttr_t keyTaskAttributes = {
 
 void Key_TaskInit(void)
 {
+    KEY_Init();
     keyTaskHandle = osThreadNew(KeyTask, NULL, &keyTaskAttributes);
 }
 
 static void KeyTask(void *argument)
 {
     (void)argument;
-
-    KEY_Init();
 
     for (;;) {
         KEY_Scan();

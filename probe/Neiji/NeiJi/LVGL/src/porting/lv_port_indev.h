@@ -5,7 +5,10 @@
 extern "C" {
 #endif
 
+#include "lvgl.h"
+
 void lv_port_indev_init(void);
+lv_group_t *lv_port_indev_get_group(void);
 
 #ifdef __cplusplus
 }

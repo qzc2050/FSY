@@ -37,7 +37,7 @@
           <bCustSvd>0</bCustSvd>
           <UseEnv>0</UseEnv>
           <BinPath></BinPath>
-          <IncludePath>../Hardware/beep;../Hardware/rtc;../LVGL;../LVGL/src;../LVGL/src/porting</IncludePath>
+          <IncludePath>../Hardware/beep;../Hardware/rtc;../LVGL;../LVGL/src;../LVGL/src/porting;../LVGL/app</IncludePath>
           <LibPath></LibPath>
           <RegisterFilePath></RegisterFilePath>
           <DBRegisterFilePath></DBRegisterFilePath>
@@ -339,7 +339,7 @@
               <MiscControls></MiscControls>
               <Define>USE_PWR_LDO_SUPPLY,USE_HAL_DRIVER,STM32H743xx</Define>
               <Undefine></Undefine>
-              <IncludePath>../Core/Inc;../App;../Hardware/log;../Hardware/uart;../Hardware/lcd;../Hardware/key;../Hardware/sensors;../Hardware/rtc;../Hardware/geiger;../Hardware/dose_rate;../Hardware/storage;../Hardware/w25q;../Hardware/w5500;../Hardware/w5500/WIZnet;../Protocol;../Drivers/STM32H7xx_HAL_Driver/Inc;../Drivers/STM32H7xx_HAL_Driver/Inc/Legacy;../Middlewares/Third_Party/FreeRTOS/Source/include;../Middlewares/Third_Party/FreeRTOS/Source/CMSIS_RTOS_V2;../Middlewares/Third_Party/FreeRTOS/Source/portable/RVDS/ARM_CM4F;../Drivers/CMSIS/Device/ST/STM32H7xx/Include;../Drivers/CMSIS/Include;../Hardware/beep;../Hardware/rtc;../LVGL;../LVGL/src;../LVGL/src/porting</IncludePath>
+              <IncludePath>../Core/Inc;../App;../Hardware/log;../Hardware/uart;../Hardware/lcd;../Hardware/key;../Hardware/sensors;../Hardware/rtc;../Hardware/geiger;../Hardware/dose_rate;../Hardware/storage;../Hardware/w25q;../Hardware/w5500;../Hardware/w5500/WIZnet;../Protocol;../Drivers/STM32H7xx_HAL_Driver/Inc;../Drivers/STM32H7xx_HAL_Driver/Inc/Legacy;../Middlewares/Third_Party/FreeRTOS/Source/include;../Middlewares/Third_Party/FreeRTOS/Source/CMSIS_RTOS_V2;../Middlewares/Third_Party/FreeRTOS/Source/portable/RVDS/ARM_CM4F;../Drivers/CMSIS/Device/ST/STM32H7xx/Include;../Drivers/CMSIS/Include;../Hardware/beep;../Hardware/rtc;../LVGL;../LVGL/src;../LVGL/src/porting;../LVGL/app</IncludePath>
             </VariousControls>
           </Cads>
           <Aads>
@@ -357,7 +357,7 @@
               <MiscControls></MiscControls>
               <Define></Define>
               <Undefine></Undefine>
-              <IncludePath>../Core/Inc;../App;../Hardware/log;../Hardware/uart;../Hardware/lcd;../Hardware/key;../Hardware/sensors;../Hardware/rtc;../Hardware/geiger;../Hardware/dose_rate;../Hardware/storage;../Hardware/w25q;../Hardware/w5500;../Hardware/w5500/WIZnet;../Protocol;../Drivers/STM32H7xx_HAL_Driver/Inc;../Drivers/STM32H7xx_HAL_Driver/Inc/Legacy;../Middlewares/Third_Party/FreeRTOS/Source/include;../Middlewares/Third_Party/FreeRTOS/Source/CMSIS_RTOS_V2;../Middlewares/Third_Party/FreeRTOS/Source/portable/RVDS/ARM_CM4F;../Drivers/CMSIS/Device/ST/STM32H7xx/Include;../Drivers/CMSIS/Include;../Hardware/beep;../Hardware/rtc;../LVGL;../LVGL/src;../LVGL/src/porting</IncludePath>
+              <IncludePath>../Core/Inc;../App;../Hardware/log;../Hardware/uart;../Hardware/lcd;../Hardware/key;../Hardware/sensors;../Hardware/rtc;../Hardware/geiger;../Hardware/dose_rate;../Hardware/storage;../Hardware/w25q;../Hardware/w5500;../Hardware/w5500/WIZnet;../Protocol;../Drivers/STM32H7xx_HAL_Driver/Inc;../Drivers/STM32H7xx_HAL_Driver/Inc/Legacy;../Middlewares/Third_Party/FreeRTOS/Source/include;../Middlewares/Third_Party/FreeRTOS/Source/CMSIS_RTOS_V2;../Middlewares/Third_Party/FreeRTOS/Source/portable/RVDS/ARM_CM4F;../Drivers/CMSIS/Device/ST/STM32H7xx/Include;../Drivers/CMSIS/Include;../Hardware/beep;../Hardware/rtc;../LVGL;../LVGL/src;../LVGL/src/porting;../LVGL/app</IncludePath>
             </VariousControls>
           </Aads>
           <LDads>
@@ -458,7 +458,7 @@
                       <MiscControls></MiscControls>
                       <Define></Define>
                       <Undefine></Undefine>
-                      <IncludePath>../Hardware/beep;../Hardware/rtc;../LVGL;../LVGL/src;../LVGL/src/porting</IncludePath>
+                      <IncludePath>../Hardware/beep;../Hardware/rtc;../LVGL;../LVGL/src;../LVGL/src/porting;../LVGL/app</IncludePath>
                     </VariousControls>
                   </Cads>
                 </FileArmAds>
@@ -514,7 +514,7 @@
                       <MiscControls></MiscControls>
                       <Define></Define>
                       <Undefine></Undefine>
-                      <IncludePath>../Hardware/beep;../Hardware/rtc;../LVGL;../LVGL/src;../LVGL/src/porting</IncludePath>
+                      <IncludePath>../Hardware/beep;../Hardware/rtc;../LVGL;../LVGL/src;../LVGL/src/porting;../LVGL/app</IncludePath>
                     </VariousControls>
                   </Cads>
                 </FileArmAds>
@@ -570,7 +570,7 @@
                       <MiscControls></MiscControls>
                       <Define></Define>
                       <Undefine></Undefine>
-                      <IncludePath>../Hardware/beep;../Hardware/rtc;../LVGL;../LVGL/src;../LVGL/src/porting</IncludePath>
+                      <IncludePath>../Hardware/beep;../Hardware/rtc;../LVGL;../LVGL/src;../LVGL/src/porting;../LVGL/app</IncludePath>
                     </VariousControls>
                   </Cads>
                 </FileArmAds>
@@ -626,7 +626,7 @@
                       <MiscControls></MiscControls>
                       <Define></Define>
                       <Undefine></Undefine>
-                      <IncludePath>../Hardware/beep;../Hardware/rtc;../LVGL;../LVGL/src;../LVGL/src/porting</IncludePath>
+                      <IncludePath>../Hardware/beep;../Hardware/rtc;../LVGL;../LVGL/src;../LVGL/src/porting;../LVGL/app</IncludePath>
                     </VariousControls>
                   </Cads>
                 </FileArmAds>
@@ -682,7 +682,7 @@
                       <MiscControls></MiscControls>
                       <Define></Define>
                       <Undefine></Undefine>
-                      <IncludePath>../Hardware/beep;../Hardware/rtc;../LVGL;../LVGL/src;../LVGL/src/porting</IncludePath>
+                      <IncludePath>../Hardware/beep;../Hardware/rtc;../LVGL;../LVGL/src;../LVGL/src/porting;../LVGL/app</IncludePath>
                     </VariousControls>
                   </Cads>
                 </FileArmAds>
@@ -738,7 +738,7 @@
                       <MiscControls></MiscControls>
                       <Define></Define>
                       <Undefine></Undefine>
-                      <IncludePath>../Hardware/beep;../Hardware/rtc;../LVGL;../LVGL/src;../LVGL/src/porting</IncludePath>
+                      <IncludePath>../Hardware/beep;../Hardware/rtc;../LVGL;../LVGL/src;../LVGL/src/porting;../LVGL/app</IncludePath>
                     </VariousControls>
                   </Cads>
                 </FileArmAds>
@@ -1114,7 +1114,7 @@
                       <MiscControls></MiscControls>
                       <Define></Define>
                       <Undefine></Undefine>
-                      <IncludePath>../Hardware/beep;../Hardware/rtc;../LVGL;../LVGL/src;../LVGL/src/porting</IncludePath>
+                      <IncludePath>../Hardware/beep;../Hardware/rtc;../LVGL;../LVGL/src;../LVGL/src/porting;../LVGL/app</IncludePath>
                     </VariousControls>
                   </Cads>
                 </FileArmAds>
@@ -1170,7 +1170,7 @@
                       <MiscControls></MiscControls>
                       <Define></Define>
                       <Undefine></Undefine>
-                      <IncludePath>../Hardware/beep;../Hardware/rtc;../LVGL;../LVGL/src;../LVGL/src/porting</IncludePath>
+                      <IncludePath>../Hardware/beep;../Hardware/rtc;../LVGL;../LVGL/src;../LVGL/src/porting;../LVGL/app</IncludePath>
                     </VariousControls>
                   </Cads>
                 </FileArmAds>
@@ -1226,7 +1226,7 @@
                       <MiscControls></MiscControls>
                       <Define></Define>
                       <Undefine></Undefine>
-                      <IncludePath>../Hardware/beep;../Hardware/rtc;../LVGL;../LVGL/src;../LVGL/src/porting</IncludePath>
+                      <IncludePath>../Hardware/beep;../Hardware/rtc;../LVGL;../LVGL/src;../LVGL/src/porting;../LVGL/app</IncludePath>
                     </VariousControls>
                   </Cads>
                 </FileArmAds>
@@ -1282,7 +1282,7 @@
                       <MiscControls></MiscControls>
                       <Define></Define>
                       <Undefine></Undefine>
-                      <IncludePath>../Hardware/beep;../Hardware/rtc;../LVGL;../LVGL/src;../LVGL/src/porting</IncludePath>
+                      <IncludePath>../Hardware/beep;../Hardware/rtc;../LVGL;../LVGL/src;../LVGL/src/porting;../LVGL/app</IncludePath>
                     </VariousControls>
                   </Cads>
                 </FileArmAds>
@@ -1338,7 +1338,7 @@
                       <MiscControls></MiscControls>
                       <Define></Define>
                       <Undefine></Undefine>
-                      <IncludePath>../Hardware/beep;../Hardware/rtc;../LVGL;../LVGL/src;../LVGL/src/porting</IncludePath>
+                      <IncludePath>../Hardware/beep;../Hardware/rtc;../LVGL;../LVGL/src;../LVGL/src/porting;../LVGL/app</IncludePath>
                     </VariousControls>
                   </Cads>
                 </FileArmAds>
@@ -1394,7 +1394,7 @@
                       <MiscControls></MiscControls>
                       <Define></Define>
                       <Undefine></Undefine>
-                      <IncludePath>../Hardware/beep;../Hardware/rtc;../LVGL;../LVGL/src;../LVGL/src/porting</IncludePath>
+                      <IncludePath>../Hardware/beep;../Hardware/rtc;../LVGL;../LVGL/src;../LVGL/src/porting;../LVGL/app</IncludePath>
                     </VariousControls>
                   </Cads>
                 </FileArmAds>
@@ -1450,7 +1450,7 @@
                       <MiscControls></MiscControls>
                       <Define></Define>
                       <Undefine></Undefine>
-                      <IncludePath>../Hardware/beep;../Hardware/rtc;../LVGL;../LVGL/src;../LVGL/src/porting</IncludePath>
+                      <IncludePath>../Hardware/beep;../Hardware/rtc;../LVGL;../LVGL/src;../LVGL/src/porting;../LVGL/app</IncludePath>
                     </VariousControls>
                   </Cads>
                 </FileArmAds>
@@ -1506,7 +1506,7 @@
                       <MiscControls></MiscControls>
                       <Define></Define>
                       <Undefine></Undefine>
-                      <IncludePath>../Hardware/beep;../Hardware/rtc;../LVGL;../LVGL/src;../LVGL/src/porting</IncludePath>
+                      <IncludePath>../Hardware/beep;../Hardware/rtc;../LVGL;../LVGL/src;../LVGL/src/porting;../LVGL/app</IncludePath>
                     </VariousControls>
                   </Cads>
                 </FileArmAds>
@@ -1567,7 +1567,7 @@
                       <MiscControls></MiscControls>
                       <Define></Define>
                       <Undefine></Undefine>
-                      <IncludePath>../Hardware/beep;../Hardware/rtc;../LVGL;../LVGL/src;../LVGL/src/porting</IncludePath>
+                      <IncludePath>../Hardware/beep;../Hardware/rtc;../LVGL;../LVGL/src;../LVGL/src/porting;../LVGL/app</IncludePath>
                     </VariousControls>
                   </Cads>
                 </FileArmAds>
@@ -1623,7 +1623,7 @@
                       <MiscControls></MiscControls>
                       <Define></Define>
                       <Undefine></Undefine>
-                      <IncludePath>../Hardware/beep;../Hardware/rtc;../LVGL;../LVGL/src;../LVGL/src/porting</IncludePath>
+                      <IncludePath>../Hardware/beep;../Hardware/rtc;../LVGL;../LVGL/src;../LVGL/src/porting;../LVGL/app</IncludePath>
                     </VariousControls>
                   </Cads>
                 </FileArmAds>
@@ -1679,7 +1679,7 @@
                       <MiscControls></MiscControls>
                       <Define></Define>
                       <Undefine></Undefine>
-                      <IncludePath>../Hardware/beep;../Hardware/rtc;../LVGL;../LVGL/src;../LVGL/src/porting</IncludePath>
+                      <IncludePath>../Hardware/beep;../Hardware/rtc;../LVGL;../LVGL/src;../LVGL/src/porting;../LVGL/app</IncludePath>
                     </VariousControls>
                   </Cads>
                 </FileArmAds>
@@ -2511,6 +2511,11 @@
               <FilePath>../LVGL/src/porting/lv_port_disp.c</FilePath>
             </File>
             <File>
+              <FileName>lv_port_indev.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../LVGL/src/porting/lv_port_indev.c</FilePath>
+            </File>
+            <File>
               <FileName>lv_arc.c</FileName>
               <FileType>1</FileType>
               <FilePath>../LVGL/src/widgets/lv_arc.c</FilePath>
@@ -2589,6 +2594,41 @@
               <FileName>lv_textarea.c</FileName>
               <FileType>1</FileType>
               <FilePath>../LVGL/src/widgets/lv_textarea.c</FilePath>
+            </File>
+          </Files>
+        </Group>
+        <Group>
+          <GroupName>LVGL/app</GroupName>
+          <Files>
+            <File>
+              <FileName>ui.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../LVGL/app/ui.c</FilePath>
+            </File>
+            <File>
+              <FileName>ui_main.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../LVGL/app/screens/ui_main.c</FilePath>
+            </File>
+            <File>
+              <FileName>ui_font_hansanbold24.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../LVGL/app/fonts/ui_font_hansanbold24.c</FilePath>
+            </File>
+            <File>
+              <FileName>ui_font_hansanbold32.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../LVGL/app/fonts/ui_font_hansanbold32.c</FilePath>
+            </File>
+            <File>
+              <FileName>ui_font_hansanbold48.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../LVGL/app/fonts/ui_font_hansanbold48.c</FilePath>
+            </File>
+            <File>
+              <FileName>ui_font_hansanbold64.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../LVGL/app/fonts/ui_font_hansanbold64.c</FilePath>
             </File>
           </Files>
         </Group>
