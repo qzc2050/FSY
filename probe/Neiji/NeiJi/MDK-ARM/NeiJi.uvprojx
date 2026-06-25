@@ -2606,9 +2606,39 @@
               <FilePath>../LVGL/app/ui.c</FilePath>
             </File>
             <File>
+              <FileName>ui_helpers.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../LVGL/app/ui_helpers.c</FilePath>
+            </File>
+            <File>
               <FileName>ui_main.c</FileName>
               <FileType>1</FileType>
               <FilePath>../LVGL/app/screens/ui_main.c</FilePath>
+            </File>
+            <File>
+              <FileName>ui_Main_Interface.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../LVGL/app/screens/ui_Main_Interface.c</FilePath>
+            </File>
+            <File>
+              <FileName>ui_comp.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../LVGL/app/components/ui_comp.c</FilePath>
+            </File>
+            <File>
+              <FileName>ui_comp_hook.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../LVGL/app/components/ui_comp_hook.c</FilePath>
+            </File>
+            <File>
+              <FileName>ui_comp_mainmenu.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../LVGL/app/components/ui_comp_mainmenu.c</FilePath>
+            </File>
+            <File>
+              <FileName>ui_font_hansanbold128.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../LVGL/app/fonts/ui_font_hansanbold128.c</FilePath>
             </File>
             <File>
               <FileName>ui_font_hansanbold24.c</FileName>
@@ -2616,9 +2646,19 @@
               <FilePath>../LVGL/app/fonts/ui_font_hansanbold24.c</FilePath>
             </File>
             <File>
+              <FileName>ui_font_hansanbold28.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../LVGL/app/fonts/ui_font_hansanbold28.c</FilePath>
+            </File>
+            <File>
               <FileName>ui_font_hansanbold32.c</FileName>
               <FileType>1</FileType>
               <FilePath>../LVGL/app/fonts/ui_font_hansanbold32.c</FilePath>
+            </File>
+            <File>
+              <FileName>ui_font_hansanbold36.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../LVGL/app/fonts/ui_font_hansanbold36.c</FilePath>
             </File>
             <File>
               <FileName>ui_font_hansanbold48.c</FileName>
@@ -2629,6 +2669,101 @@
               <FileName>ui_font_hansanbold64.c</FileName>
               <FileType>1</FileType>
               <FilePath>../LVGL/app/fonts/ui_font_hansanbold64.c</FilePath>
+            </File>
+            <File>
+              <FileName>ui_img_1261263291.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../LVGL/app/images/ui_img_1261263291.c</FilePath>
+            </File>
+            <File>
+              <FileName>ui_img_1464373361.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../LVGL/app/images/ui_img_1464373361.c</FilePath>
+            </File>
+            <File>
+              <FileName>ui_img_1523901040.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../LVGL/app/images/ui_img_1523901040.c</FilePath>
+            </File>
+            <File>
+              <FileName>ui_img_1640302447.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../LVGL/app/images/ui_img_1640302447.c</FilePath>
+            </File>
+            <File>
+              <FileName>ui_img_1777030953.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../LVGL/app/images/ui_img_1777030953.c</FilePath>
+            </File>
+            <File>
+              <FileName>ui_img_1779444627.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../LVGL/app/images/ui_img_1779444627.c</FilePath>
+            </File>
+            <File>
+              <FileName>ui_img_182239421.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../LVGL/app/images/ui_img_182239421.c</FilePath>
+            </File>
+            <File>
+              <FileName>ui_img_1957260177.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../LVGL/app/images/ui_img_1957260177.c</FilePath>
+            </File>
+            <File>
+              <FileName>ui_img_1985833602.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../LVGL/app/images/ui_img_1985833602.c</FilePath>
+            </File>
+            <File>
+              <FileName>ui_img_2138131786.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../LVGL/app/images/ui_img_2138131786.c</FilePath>
+            </File>
+            <File>
+              <FileName>ui_img_373985928.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../LVGL/app/images/ui_img_373985928.c</FilePath>
+            </File>
+            <File>
+              <FileName>ui_img_532493655.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../LVGL/app/images/ui_img_532493655.c</FilePath>
+            </File>
+            <File>
+              <FileName>ui_img_545021016.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../LVGL/app/images/ui_img_545021016.c</FilePath>
+            </File>
+            <File>
+              <FileName>ui_img_602667123.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../LVGL/app/images/ui_img_602667123.c</FilePath>
+            </File>
+            <File>
+              <FileName>ui_img_820325126.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../LVGL/app/images/ui_img_820325126.c</FilePath>
+            </File>
+            <File>
+              <FileName>ui_img_834997458.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../LVGL/app/images/ui_img_834997458.c</FilePath>
+            </File>
+            <File>
+              <FileName>ui_img_966723152.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../LVGL/app/images/ui_img_966723152.c</FilePath>
+            </File>
+            <File>
+              <FileName>ui_img_display_png.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../LVGL/app/images/ui_img_display_png.c</FilePath>
+            </File>
+            <File>
+              <FileName>ui_img_pm2_5_png.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../LVGL/app/images/ui_img_pm2_5_png.c</FilePath>
             </File>
           </Files>
         </Group>

@@ -84,4 +84,6 @@ void ui_main_create(void)
     lv_obj_set_style_text_font(ui_main_status_label, &lv_font_montserrat_24, 0);
     lv_obj_set_style_text_color(ui_main_status_label, ui_color(UI_MUTED_COLOR), 0);
     lv_obj_align(ui_main_status_label, LV_ALIGN_BOTTOM_MID, 0, -28);
+
+    ui_MainMenu_create(s_scr);
 }
