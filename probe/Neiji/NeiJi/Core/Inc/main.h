@@ -42,7 +42,7 @@ extern "C" {
 /* Exported constants --------------------------------------------------------*/
 /* USER CODE BEGIN EC */
 /* LVGL/显示探针版本：每次改探针或 flush 逻辑后 +1，便于串口日志对版 */
-#define NEIJI_DIAG_BUILD  0U   /* step2: 正常 LVGL 刷新，diag=0 */
+#define NEIJI_DIAG_BUILD  5U   /* WS2812: fully match RAD-I tim.c */
 /* USER CODE END EC */
 
 /* Exported macro ------------------------------------------------------------*/

@@ -61,10 +61,15 @@ static void SensorTask(void *argument)
         if (Pcf85063_GetTime(&rtc) == 0) {
             env_data.dt = rtc;
         }
-        if (aht.online != 0U) {
+
+        // 不依赖 online 标志，只要值在合理范围就更新
+        if (aht.temperature_c >= -40.0f && aht.temperature_c <= 85.0f) {
             env_data.temperature = aht.temperature_c;
+        }
+        if (aht.humidity_rh >= 0.0f && aht.humidity_rh <= 100.0f) {
             env_data.humidity = aht.humidity_rh;
         }
+
         if (bmp.online != 0U) {
             env_data.baro = bmp.pressure_pa;
         }

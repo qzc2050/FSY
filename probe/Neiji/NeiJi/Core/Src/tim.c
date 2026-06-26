@@ -25,7 +25,9 @@
 /* USER CODE END 0 */
 
 TIM_HandleTypeDef htim2;
+TIM_HandleTypeDef htim4;
 TIM_HandleTypeDef htim12;
+DMA_HandleTypeDef hdma_tim4_ch1;
 
 /* TIM2 init function */
 void MX_TIM2_Init(void)
@@ -102,6 +104,34 @@ void HAL_TIM_Base_MspInit(TIM_HandleTypeDef* tim_baseHandle)
 
   /* USER CODE END TIM2_MspInit 1 */
   }
+  else if(tim_baseHandle->Instance==TIM4)
+  {
+    /* TIM4 clock enable */
+    __HAL_RCC_TIM4_CLK_ENABLE();
+
+    /* TIM4 DMA Init */
+    /* TIM4_CH1 Init */
+    hdma_tim4_ch1.Instance = DMA1_Stream3;
+    hdma_tim4_ch1.Init.Request = DMA_REQUEST_TIM4_CH1;
+    hdma_tim4_ch1.Init.Direction = DMA_MEMORY_TO_PERIPH;
+    hdma_tim4_ch1.Init.PeriphInc = DMA_PINC_DISABLE;
+    hdma_tim4_ch1.Init.MemInc = DMA_MINC_ENABLE;
+    hdma_tim4_ch1.Init.PeriphDataAlignment = DMA_PDATAALIGN_WORD;
+    hdma_tim4_ch1.Init.MemDataAlignment = DMA_MDATAALIGN_WORD;
+    hdma_tim4_ch1.Init.Mode = DMA_CIRCULAR;
+    hdma_tim4_ch1.Init.Priority = DMA_PRIORITY_HIGH;
+    hdma_tim4_ch1.Init.FIFOMode = DMA_FIFOMODE_DISABLE;
+    if (HAL_DMA_Init(&hdma_tim4_ch1) != HAL_OK)
+    {
+      Error_Handler();
+    }
+
+    __HAL_LINKDMA(tim_baseHandle,hdma[TIM_DMA_ID_CC1],hdma_tim4_ch1);
+
+    /* TIM4 interrupt Init */
+    HAL_NVIC_SetPriority(TIM4_IRQn, 2, 0);
+    HAL_NVIC_EnableIRQ(TIM4_IRQn);
+  }
 }
 
 void HAL_TIM_Base_MspDeInit(TIM_HandleTypeDef* tim_baseHandle)
@@ -126,9 +156,75 @@ void HAL_TIM_Base_MspDeInit(TIM_HandleTypeDef* tim_baseHandle)
 
   /* USER CODE END TIM2_MspDeInit 1 */
   }
+  else if(tim_baseHandle->Instance==TIM4)
+  {
+    __HAL_RCC_TIM4_CLK_DISABLE();
+
+    /* TIM4 DMA DeInit */
+    HAL_DMA_DeInit(tim_baseHandle->hdma[TIM_DMA_ID_CC1]);
+
+    /* TIM4 interrupt Deinit */
+    HAL_NVIC_DisableIRQ(TIM4_IRQn);
+  }
 }
 
 /* USER CODE BEGIN 1 */
+/* TIM4 init for WS2812B PCA (PD12, AF2, PWM+DMA) */
+void MX_TIM4_Init(void)
+{
+    TIM_ClockConfigTypeDef sClockSourceConfig = {0};
+    TIM_MasterConfigTypeDef sMasterConfig = {0};
+    TIM_OC_InitTypeDef sConfigOC = {0};
+
+    /* PSC=1 -> CK_CNT = TIM4CLK/2; Period+1 tuned by ws2812b_init (target 1500ns/bit, WS2812B-2020) */
+    htim4.Instance = TIM4;
+    htim4.Init.Prescaler = 2-1;
+    htim4.Init.CounterMode = TIM_COUNTERMODE_UP;
+    htim4.Init.Period = 180-1;
+    htim4.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+    htim4.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+    if (HAL_TIM_Base_Init(&htim4) != HAL_OK) {
+        Error_Handler();
+    }
+    sClockSourceConfig.ClockSource = TIM_CLOCKSOURCE_INTERNAL;
+    if (HAL_TIM_ConfigClockSource(&htim4, &sClockSourceConfig) != HAL_OK) {
+        Error_Handler();
+    }
+    if (HAL_TIM_PWM_Init(&htim4) != HAL_OK) {
+        Error_Handler();
+    }
+    sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
+    sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
+    if (HAL_TIMEx_MasterConfigSynchronization(&htim4, &sMasterConfig) != HAL_OK) {
+        Error_Handler();
+    }
+    sConfigOC.OCMode = TIM_OCMODE_PWM1;
+    sConfigOC.Pulse = 0;
+    sConfigOC.OCPolarity = TIM_OCPOLARITY_HIGH;
+    sConfigOC.OCFastMode = TIM_OCFAST_DISABLE;
+    if (HAL_TIM_PWM_ConfigChannel(&htim4, &sConfigOC, TIM_CHANNEL_1) != HAL_OK) {
+        Error_Handler();
+    }
+    HAL_TIM_MspPostInit(&htim4);
+}
+
+void HAL_TIM_MspPostInit(TIM_HandleTypeDef* timHandle)
+{
+    GPIO_InitTypeDef GPIO_InitStruct = {0};
+    if(timHandle->Instance==TIM4)
+    {
+        __HAL_RCC_GPIOD_CLK_ENABLE();
+        /**TIM4 GPIO Configuration
+        PD12     ------> TIM4_CH1
+        */
+        GPIO_InitStruct.Pin = GPIO_PIN_12;
+        GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
+        GPIO_InitStruct.Pull = GPIO_NOPULL;
+        GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_VERY_HIGH;
+        GPIO_InitStruct.Alternate = GPIO_AF2_TIM4;
+        HAL_GPIO_Init(GPIOD, &GPIO_InitStruct);
+    }
+}
 void MX_TIM12_Init(void)
 {
     TIM_ClockConfigTypeDef sClockSourceConfig = {0};
@@ -139,7 +235,7 @@ void MX_TIM12_Init(void)
     __HAL_RCC_TIM12_CLK_ENABLE();
     __HAL_RCC_GPIOH_CLK_ENABLE();
 
-    GPIO_InitStruct.Pin = GPIO_PIN_9;
+    GPIO_InitStruct.Pin = GPIO_PIN_6 | GPIO_PIN_9;
     GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
     GPIO_InitStruct.Pull = GPIO_NOPULL;
     GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
@@ -175,5 +271,12 @@ void MX_TIM12_Init(void)
         Error_Handler();
     }
     HAL_TIM_PWM_Start(&htim12, TIM_CHANNEL_2);
+
+    /* CH1 for LCD backlight */
+    sConfigOC.Pulse = 1000;
+    if (HAL_TIM_PWM_ConfigChannel(&htim12, &sConfigOC, TIM_CHANNEL_1) != HAL_OK) {
+        Error_Handler();
+    }
+    HAL_TIM_PWM_Start(&htim12, TIM_CHANNEL_1);
 }
 /* USER CODE END 1 */

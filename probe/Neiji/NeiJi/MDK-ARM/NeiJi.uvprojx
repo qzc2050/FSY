@@ -48,7 +48,7 @@
             <NotGenerated>0</NotGenerated>
             <InvalidFlash>1</InvalidFlash>
           </TargetStatus>
-          <OutputDirectory>NeiJi\</OutputDirectory>
+          <OutputDirectory>.\NeiJi\</OutputDirectory>
           <OutputName>NeiJi</OutputName>
           <CreateExecutable>1</CreateExecutable>
           <CreateLib>0</CreateLib>
@@ -81,7 +81,7 @@
           </BeforeMake>
           <AfterMake>
             <RunUserProg1>0</RunUserProg1>
-            <RunUserProg2>1</RunUserProg2>
+            <RunUserProg2>0</RunUserProg2>
             <UserProg1Name></UserProg1Name>
             <UserProg2Name></UserProg2Name>
             <UserProg1Dos16Mode>0</UserProg1Dos16Mode>
@@ -339,7 +339,7 @@
               <MiscControls></MiscControls>
               <Define>USE_PWR_LDO_SUPPLY,USE_HAL_DRIVER,STM32H743xx</Define>
               <Undefine></Undefine>
-              <IncludePath>../Core/Inc;../App;../Hardware/log;../Hardware/uart;../Hardware/lcd;../Hardware/key;../Hardware/sensors;../Hardware/rtc;../Hardware/geiger;../Hardware/dose_rate;../Hardware/storage;../Hardware/w25q;../Hardware/w5500;../Hardware/w5500/WIZnet;../Protocol;../Drivers/STM32H7xx_HAL_Driver/Inc;../Drivers/STM32H7xx_HAL_Driver/Inc/Legacy;../Middlewares/Third_Party/FreeRTOS/Source/include;../Middlewares/Third_Party/FreeRTOS/Source/CMSIS_RTOS_V2;../Middlewares/Third_Party/FreeRTOS/Source/portable/RVDS/ARM_CM4F;../Drivers/CMSIS/Device/ST/STM32H7xx/Include;../Drivers/CMSIS/Include;../Hardware/beep;../Hardware/rtc;../LVGL;../LVGL/src;../LVGL/src/porting;../LVGL/app</IncludePath>
+              <IncludePath>../Core/Inc;../App;../Hardware/log;../Hardware/uart;../Hardware/lcd;../Hardware/key;../Hardware/sensors;../Hardware/rtc;../Hardware/geiger;../Hardware/dose_rate;../Hardware/storage;../Hardware/w25q;../Hardware/WS2812B;../Hardware/w5500;../Hardware/w5500/WIZnet;../Protocol;../Drivers/STM32H7xx_HAL_Driver/Inc;../Drivers/STM32H7xx_HAL_Driver/Inc/Legacy;../Middlewares/Third_Party/FreeRTOS/Source/include;../Middlewares/Third_Party/FreeRTOS/Source/CMSIS_RTOS_V2;../Middlewares/Third_Party/FreeRTOS/Source/portable/RVDS/ARM_CM4F;../Drivers/CMSIS/Device/ST/STM32H7xx/Include;../Drivers/CMSIS/Include;../Hardware/beep;../Hardware/rtc;../LVGL;../LVGL/src;../LVGL/src/porting;../LVGL/app</IncludePath>
             </VariousControls>
           </Cads>
           <Aads>
@@ -357,7 +357,7 @@
               <MiscControls></MiscControls>
               <Define></Define>
               <Undefine></Undefine>
-              <IncludePath>../Core/Inc;../App;../Hardware/log;../Hardware/uart;../Hardware/lcd;../Hardware/key;../Hardware/sensors;../Hardware/rtc;../Hardware/geiger;../Hardware/dose_rate;../Hardware/storage;../Hardware/w25q;../Hardware/w5500;../Hardware/w5500/WIZnet;../Protocol;../Drivers/STM32H7xx_HAL_Driver/Inc;../Drivers/STM32H7xx_HAL_Driver/Inc/Legacy;../Middlewares/Third_Party/FreeRTOS/Source/include;../Middlewares/Third_Party/FreeRTOS/Source/CMSIS_RTOS_V2;../Middlewares/Third_Party/FreeRTOS/Source/portable/RVDS/ARM_CM4F;../Drivers/CMSIS/Device/ST/STM32H7xx/Include;../Drivers/CMSIS/Include;../Hardware/beep;../Hardware/rtc;../LVGL;../LVGL/src;../LVGL/src/porting;../LVGL/app</IncludePath>
+              <IncludePath>../Core/Inc;../App;../Hardware/log;../Hardware/uart;../Hardware/lcd;../Hardware/key;../Hardware/sensors;../Hardware/rtc;../Hardware/geiger;../Hardware/dose_rate;../Hardware/storage;../Hardware/w25q;../Hardware/WS2812B;../Hardware/w5500;../Hardware/w5500/WIZnet;../Protocol;../Drivers/STM32H7xx_HAL_Driver/Inc;../Drivers/STM32H7xx_HAL_Driver/Inc/Legacy;../Middlewares/Third_Party/FreeRTOS/Source/include;../Middlewares/Third_Party/FreeRTOS/Source/CMSIS_RTOS_V2;../Middlewares/Third_Party/FreeRTOS/Source/portable/RVDS/ARM_CM4F;../Drivers/CMSIS/Device/ST/STM32H7xx/Include;../Drivers/CMSIS/Include;../Hardware/beep;../Hardware/rtc;../LVGL;../LVGL/src;../LVGL/src/porting;../LVGL/app</IncludePath>
             </VariousControls>
           </Aads>
           <LDads>
@@ -893,6 +893,11 @@
               <FileName>flash_fs_mutex.c</FileName>
               <FileType>1</FileType>
               <FilePath>../Hardware/storage/flash_fs_mutex.c</FilePath>
+            </File>
+            <File>
+              <FileName>ws2812b.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../Hardware/WS2812B/ws2812b.c</FilePath>
             </File>
             <File>
               <FileName>w25qxx.c</FileName>

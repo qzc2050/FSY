@@ -18,6 +18,7 @@
 #include "ui_task.h"
 #include "net_tcp.h"
 #include "w25q_port.h"
+#include "ws2812b.h"
 #include "uart_diag.h"
 #include <stdio.h>
 #include <string.h>
@@ -97,6 +98,11 @@ void App_TasksInit(void)
 
     /* 按键扫描先于 LVGL，供 lv_port_indev 读取 */
     Key_TaskInit();
+
+    /* Flash 配置必须在 UI 之前加载，否则 UI bind 读到全零 */
+    DeviceConfig_TaskInit();
+    (void)DeviceConfig_Init();
+
     Ui_TaskInit();
     UartDiag_Write("[APP] after Ui_TaskInit\r\n");
 
@@ -104,20 +110,17 @@ void App_TasksInit(void)
 
     Fsy_Upload_Init();
 
-    DeviceConfig_TaskInit();
-
-    (void)DeviceConfig_Init();
-
     (void)W25Q_Port_SelfTest();
 
     uartTaskHandle = osThreadNew(UartTask, NULL, &uartTaskAttributes);
 
     uploadTaskHandle = osThreadNew(UploadTask, NULL, &uploadTaskAttributes);
 
+		ws2812b_TaskInit();
     Sensor_TaskInit();
     Geiger_TaskInit();
     Net_TaskInit();
-
+    
 }
 
 
