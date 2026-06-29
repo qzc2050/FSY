@@ -4,8 +4,11 @@
 #include "task.h"
 
 #include "stm32h7xx_hal_rcc.h"
+#include "stm32h7xx_hal_dma.h"
 #include "cmsis_os.h"
 #include "uart_diag.h"
+
+extern DMA_HandleTypeDef hdma_tim4_ch1;
 
 
 uint32_t ws2812_code0;
@@ -151,14 +154,11 @@ void State_Led_Show(uint16_t Pixel_Len, RGB_Color_TypeDef Color, uint8_t led_num
 			State_Pixel_Buf[row][j] = 0U;
 	}
 
-    // for(uint8_t i = 0;i < WS2812_STATE_BUF_ROWS;i++)
-        SCB_CleanDCache_by_Addr(&State_Pixel_Buf[0][0], 32 * 24);
-    
+    SCB_CleanDCache_by_Addr(&State_Pixel_Buf[0][0], WS2812_STATE_BUF_ROWS * 24);
+
 	dma_len = (uint32_t)(led_num + WS2812_RESET_ROWS) * 24U;
 	HAL_TIM_PWM_Start_DMA(&htim4, TIM_CHANNEL_1, (uint32_t *)State_Pixel_Buf, dma_len);
 }
-
-
 
 
 
@@ -201,9 +201,8 @@ void rgb_led_flush(void)
     }
     
     SCB_CleanDCache_by_Addr(&State_Pixel_Buf[0][0], WS2812_STATE_BUF_ROWS * 24);
-
-    uint32_t dma_len = (uint32_t)(TOTAL_LED_COUNT + WS2812_RESET_ROWS) * 24U;
-    HAL_TIM_PWM_Start_DMA(&htim4, TIM_CHANNEL_1, (uint32_t *)State_Pixel_Buf, dma_len);
+    HAL_TIM_PWM_Start_DMA(&htim4, TIM_CHANNEL_1, (uint32_t *)State_Pixel_Buf,
+                          (uint32_t)(TOTAL_LED_COUNT + WS2812_RESET_ROWS) * 24U);
 }
 
 void mode_keep1(float light)
@@ -246,25 +245,38 @@ void ws2812_clr_mode(rgbled_mode_t mode)
     rgb_ctrl.rgb_sta &= ~((uint8_t)1 << mode);
 }
 
+static void ws2812_task(void *pvParameters);
+
 void ws2812b_TaskInit(void)
 {
-    printf("[APP] WS2812B: PD12 GPIO test (20s high, 2s low loop)\r\n");
+    static osThreadId_t handle;
+    static const osThreadAttr_t attr = {
+        .name = "ws2812Task",
+        .stack_size = 512 * 4,
+        .priority = osPriorityNormal,
+    };
+    int i;
 
-    for (;;) {
-        HAL_GPIO_WritePin(GPIOD, GPIO_PIN_12, GPIO_PIN_SET);
-        printf("[APP] PD12 = HIGH\r\n");
-        vTaskDelay(pdMS_TO_TICKS(20000));
+    printf("[APP] ws2812b_init start\r\n");
+    ws2812b_init();
+    printf("[APP] ws2812b_init done\r\n");
 
-        HAL_GPIO_WritePin(GPIOD, GPIO_PIN_12, GPIO_PIN_RESET);
-        printf("[APP] PD12 = LOW\r\n");
-        vTaskDelay(pdMS_TO_TICKS(2000));
-    }
+    for (i = 0; i < TOTAL_LED_COUNT; i++)
+        rgb_color[i] = rgb_color_array[i];
+    color_idx = TOTAL_LED_COUNT;
+
+    ws2812_clr_mode(RGBLED_SHUTDOWN_MODE);
+    ws2812_set_mode(RGBLED_KEEP_1_MODE);
+    printf("[APP] ws2812 LED ON\r\n");
+
+    handle = osThreadNew(ws2812_task, NULL, &attr);
+    (void)handle;
 }
 
-#if 0 /* ws2812_task: disabled for GPIO test */
 static void ws2812_task(void *pvParameters)
 {
     uint8_t idx_val = 0;
+    TickType_t last_wake = xTaskGetTickCount();
 
     (void)pvParameters;
 
@@ -301,7 +313,6 @@ static void ws2812_task(void *pvParameters)
             }
             rgb_led_flush();
         }
-        vTaskDelay(COMMON_DELAY);
+        vTaskDelayUntil(&last_wake, COMMON_DELAY);
     }
 }
-#endif
