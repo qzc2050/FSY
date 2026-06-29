@@ -1,9 +1,9 @@
 #include "geiger.h"
 #include "tim.h"
 #include "main.h"
-#include "beep.h"
 #include "fsy_regmap.h"
 #include "dose_rate.h"
+#include "alarm_output.h"
 
 #define Dev_Tk_Wait(ms, tk_var)  ((uint32_t)((HAL_GetTick() - (tk_var)) >= (ms)))
 #define Dev_Tk_Init(tk_ptr)      do { *(tk_ptr) = HAL_GetTick(); } while (0)
@@ -53,6 +53,7 @@ volatile Sys_Cfg_Struct sys_cfg = {
     .alarm_volume_saved = 0U,
     .display_enable = DEVICE_CFG_DEFAULT_DISPLAY,
     .dev_addr = DEVICE_CFG_DEFAULT_DEV_ADDR,
+    .language = DEVICE_CFG_DEFAULT_LANGUAGE,
     .SN = DEVICE_CFG_DEFAULT_SN,
     .hw_version = DEVICE_CFG_DEFAULT_HW,
     .bright_sz = DEVICE_CFG_DEFAULT_BRIGHT,
@@ -212,6 +213,7 @@ void Geiger_Doserate_Calculate(void)
         
         // 使用 EWMA 算法更新剂量率，输入为 CPS（每秒计数）
         data_var.real_rate = DoseRate_UpdateFromCps(once_cnt);
+        Alarm_Output_NotifyCps(once_cnt);
         
         // 超过量程限制
         if(data_var.real_rate > RATE_LIMIT)
@@ -345,41 +347,24 @@ float dose_rate_adaptive_ema(float current_count) {
 ***************************************************************************************************/
 void Dose_Rate_TH_Alarm(void)
 {
-    uint8_t sound_enabled;
-    
-    /* 检查声报警是否使能：alarm_sound=1 且音量>0 */
-    sound_enabled = sys_cfg.alarm_sound && (sys_cfg.alarm_volume > 0U);
-    
-    if(data_var.real_rate >= (float)RATE_LIMIT)  // 剂量率超上限
+    if(data_var.real_rate >= (float)RATE_LIMIT)
     {
-        if(sound_enabled)
-            Beep_Ctr(BEEP_EVENT_LIMIT);
-        Alarm_Status_Update(RATE_HIGH_ALARM_BIT, true);  // 设置辐射上阈值报警位
+        Alarm_Status_Update(RATE_HIGH_ALARM_BIT, true);
     }
-    else if(beep_event == BEEP_EVENT_LIMIT)
+    else if(sys_cfg.th_rh_rate > 0.0f &&
+             (data_var.real_rate >= sys_cfg.th_rh_rate))
     {
-        Beep_Ctr(BEEP_EVENT_CLR);
-        Alarm_Status_Update(RATE_HIGH_ALARM_BIT, false);  // 清除辐射上阈值报警位
+        Alarm_Status_Update(RATE_HIGH_ALARM_BIT, true);
     }
-    else if(sys_cfg.th_rh_rate > 0.0f &&  // 上阈值>0，允许报警
-             (data_var.real_rate >= sys_cfg.th_rh_rate))  // 剂量率超阈值
+    else if(sys_cfg.th_rl_rate > 0.0f &&
+             (data_var.real_rate < sys_cfg.th_rl_rate))
     {
-        if(sound_enabled)
-            Beep_Ctr(BEEP_EVENT_RTH);
-        Alarm_Status_Update(RATE_HIGH_ALARM_BIT, true);  // 设置辐射上阈值报警位
-    }
-    else if(sys_cfg.th_rl_rate > 0.0f &&  // 下阈值>0，允许报警
-             (data_var.real_rate < sys_cfg.th_rl_rate))  // 剂量率超阈值
-    {
-        if(sound_enabled)
-            Beep_Ctr(BEEP_EVENT_RTH);
-        Alarm_Status_Update(RATE_LOW_ALARM_BIT, true);  // 设置辐射下阈值报警位
+        Alarm_Status_Update(RATE_LOW_ALARM_BIT, true);
     }
     else
     {
-        // 剂量率正常，清除所有辐射报警位
-        Alarm_Status_Update(RATE_HIGH_ALARM_BIT, false);  // 清除辐射上阈值报警位
-        Alarm_Status_Update(RATE_LOW_ALARM_BIT, false);   // 清除辐射下阈值报警位
+        Alarm_Status_Update(RATE_HIGH_ALARM_BIT, false);
+        Alarm_Status_Update(RATE_LOW_ALARM_BIT, false);
     }
 }
 

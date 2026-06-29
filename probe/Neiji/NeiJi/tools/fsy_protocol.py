@@ -51,6 +51,8 @@ REG_SERIALNUM_COUNT = 8
 REG_ADDRESS = 121
 REG_PRODUCT_MODEL = 130
 REG_PRODUCT_MODEL_COUNT = 8
+REG_PRODUCT_NAME = 146
+REG_PRODUCT_NAME_COUNT = 8
 REG_CURRENT_IP = 6
 REG_CURRENT_IP_COUNT = 2
 REG_DOSE_HI_TH = 50
@@ -60,6 +62,13 @@ REG_ALARM_ENABLE = 82
 REG_ALARM_ENABLE_COUNT = 2
 ALARM_BIT_DOSE_HI = 0
 ALARM_BIT_DOSE_LO = 1
+
+# 实时区 0x000D 报警状态 — 环境传感器离线位（与 fsy_regmap.c / alarm_output.c 一致）
+ALARM_BIT_AHT20 = (1 << 6) | (1 << 14)
+ALARM_BIT_BMP280 = 1 << 10
+ALARM_BIT_ENS160 = 1 << 18
+ALARM_BIT_PM25 = 1 << 22
+ALARM_BIT_ENV_MASK = ALARM_BIT_AHT20 | ALARM_BIT_BMP280 | ALARM_BIT_ENS160 | ALARM_BIT_PM25
 REG_TIME = 94
 REG_TIME_COUNT = 4
 REG_SOFTWARE_VERSION = 98
@@ -69,6 +78,7 @@ REG_STATIC_IP_COUNT = 2
 REG_DHCP_ENABLE = 170
 CFG_SN_MAX_LEN = 12
 CFG_MODEL_MAX_LEN = 12
+CFG_PRODUCT_NAME_MAX_BYTES = 16
 
 
 def format_dose_rate(raw_x100: int) -> str:
@@ -88,6 +98,65 @@ def _fmt_press(v: int) -> str:
     return f"{v / 100.0:.1f} hPa ({v} Pa)"
 
 
+def decode_alarm_status(raw: int) -> List[str]:
+    """解析 0x000D 报警状态位 → 中文说明列表。"""
+    items: List[str] = []
+    if raw & (1 << ALARM_BIT_DOSE_HI):
+        items.append("剂量率超上限")
+    if raw & (1 << ALARM_BIT_DOSE_LO):
+        items.append("剂量率超下限")
+    if raw & ALARM_BIT_AHT20:
+        items.append("温湿度传感器离线(AHT20)")
+    if raw & ALARM_BIT_BMP280:
+        items.append("气压传感器离线(BMP280)")
+    if raw & ALARM_BIT_ENS160:
+        items.append("气体传感器离线(ENS160)")
+    if raw & ALARM_BIT_PM25:
+        items.append("PM2.5传感器离线")
+    return items
+
+
+def suggest_led_effect(raw: int) -> str:
+    """与固件 alarm_output 灯带逻辑一致（不含探头 120s 无计数，该位未上报寄存器）。"""
+    if raw & (1 << ALARM_BIT_DOSE_HI):
+        return "红快流水（超上限）"
+    if raw & (1 << ALARM_BIT_DOSE_LO):
+        return "红慢流水（超下限）"
+    if raw & ALARM_BIT_ENV_MASK:
+        return "红常亮（传感器故障）"
+    return "白灯慢流水（正常）"
+
+
+def format_alarm_status_short(raw: int) -> str:
+    items = decode_alarm_status(raw)
+    if not items:
+        return "正常"
+    if len(items) == 1:
+        return items[0]
+    return f"{items[0]} 等{len(items)}项"
+
+
+def format_alarm_status_detail(raw: int) -> str:
+    lines = [f"原始值 0x{raw:08X}"]
+    items = decode_alarm_status(raw)
+    if not items:
+        lines.append("当前无报警/故障。")
+    else:
+        lines.append("活动项：")
+        for name in items:
+            lines.append(f"  · {name}")
+    lines.append(f"灯带（光报警开）: {suggest_led_effect(raw)}")
+    lines.append("说明: 探头长时间无计数故障未写入本寄存器，仅灯带可表现。")
+    return "\n".join(lines)
+
+
+def _fmt_alarm_status(v: int) -> str:
+    short = format_alarm_status_short(v)
+    if v == 0:
+        return short
+    return f"{short}  [0x{v:08X}]"
+
+
 # 实时寄存器（0x23 主动上传，每个 uint32，地址步进 2）
 RT_REGISTER_FMT: Dict[int, Tuple[str, Callable[[int], str]]] = {
     0x0001: ("剂量率", format_dose_rate),
@@ -96,7 +165,7 @@ RT_REGISTER_FMT: Dict[int, Tuple[str, Callable[[int], str]]] = {
     0x0007: ("湿度", lambda v: f"{v:.1f} %"),
     0x0009: ("CO2", lambda v: f"{v:.0f} ppm"),
     0x000B: ("PM2.5", lambda v: f"{v / 10.0:.1f} μg/m³"),
-    0x000D: ("报警状态", lambda v: f"0x{v:08X}"),
+    0x000D: ("报警状态", _fmt_alarm_status),
     0x000F: ("设备/IO状态", lambda v: f"0x{v:08X}"),
     0x0011: ("预留1", lambda v: f"0x{v:08X}"),
     0x0013: ("预留2", lambda v: f"0x{v:08X}"),
@@ -151,6 +220,36 @@ def reg_payload_to_ascii(payload: bytes) -> str:
         if hi:
             chars.append(chr(hi))
     return "".join(chars).rstrip("\x00 ")
+
+
+def reg_payload_to_utf8(payload: bytes) -> str:
+    """寄存器原始字节 → UTF-8 字符串（去尾部 \\0）。"""
+    raw = payload.rstrip(b"\x00")
+    if not raw:
+        return ""
+    return raw.decode("utf-8", errors="replace")
+
+
+def truncate_utf8(text: str, max_bytes: int) -> str:
+    raw = text.encode("utf-8")
+    if len(raw) <= max_bytes:
+        return text
+    raw = raw[:max_bytes]
+    while raw:
+        try:
+            return raw.decode("utf-8")
+        except UnicodeDecodeError:
+            raw = raw[:-1]
+    return ""
+
+
+def utf8_to_reg_values(text: str, reg_count: int) -> List[int]:
+    raw = truncate_utf8(text, reg_count * 2).encode("utf-8")
+    raw = raw.ljust(reg_count * 2, b"\x00")
+    values: List[int] = []
+    for i in range(0, reg_count * 2, 2):
+        values.append(raw[i] | (raw[i + 1] << 8))
+    return values
 
 
 def ascii_to_reg_values(text: str, reg_count: int) -> List[int]:

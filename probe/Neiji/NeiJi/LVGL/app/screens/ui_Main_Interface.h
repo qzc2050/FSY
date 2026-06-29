@@ -16,6 +16,7 @@ extern "C" {
 extern void ui_Main_Interface_screen_init(void);
 extern void ui_Main_Interface_screen_destroy(void);
 extern void ui_Main_Interface_screen_relocalize(void);
+extern void ui_main_bind_settings(void);
 extern lv_obj_t * ui_Main_Interface;
 extern lv_obj_t * ui_Panel_temperature;
 extern lv_obj_t * ui_temperature;

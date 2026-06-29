@@ -49,6 +49,7 @@
 #define FSY_REG_SOFTWARE_VERSION_REGS 10U
 
 #define FSY_REG_ADDRESS           121U
+#define FSY_REG_ALARM_VOLUME      122U
 
 /* 当前 IP（只读，W5500 实际地址） */
 #define FSY_REG_CURRENT_IP        6U
@@ -60,12 +61,16 @@
 
 #define FSY_REG_PRODUCT_MODEL_REGS 8U
 
+#define FSY_REG_PRODUCT_NAME      146U
+
+#define FSY_REG_PRODUCT_NAME_REGS 8U
+
 #define FSY_REG_STATIC_IP         138U
 #define FSY_REG_STATIC_IP_REGS    2U
 
 #define FSY_REG_DHCP_ENABLE       170U
 
-
+#define FSY_REG_LANGUAGE          174U
 
 void Fsy_Regmap_Init(void);
 
@@ -102,6 +107,8 @@ void Fsy_Regmap_UpdateDoseRate(float rate_usv_h);
 void Fsy_Regmap_ApplyAlarmEnable(uint32_t enable_mask);
 
 void Fsy_Regmap_SyncAlarmStatus(uint32_t alarm_status);
+
+uint32_t Fsy_Regmap_GetAlarmStatus(void);
 
 #endif
 

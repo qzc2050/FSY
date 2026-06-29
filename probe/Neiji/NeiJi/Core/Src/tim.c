@@ -243,7 +243,7 @@ void MX_TIM12_Init(void)
     HAL_GPIO_Init(GPIOH, &GPIO_InitStruct);
 
     htim12.Instance = TIM12;
-    htim12.Init.Prescaler = 239;
+    htim12.Init.Prescaler = 11;
     htim12.Init.CounterMode = TIM_COUNTERMODE_UP;
     htim12.Init.Period = 1000;
     htim12.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;

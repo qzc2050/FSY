@@ -10,6 +10,9 @@
 #define RED                              0xF800U
 #define GREEN                            0x07E0U
 #define LCD_UI_BG                        0x2104U   /* RGB565 #202020，与 LVGL 背景一致 */
+/* #FFFFFF bg_opa=60 叠 #202020 → RGB888 #545454 / RGB565 0x52AA（视觉同半透明，无 alpha 竖条） */
+#define LCD_UI_PANEL_BLEND888            0x545454U
+#define LCD_UI_PANEL_BLEND565            0x52AAU
 
 #define LCD_PHYS_WIDTH                   480U
 #define LCD_PHYS_HEIGHT                  854U
@@ -51,6 +54,7 @@
 #define LCD_WRITE_DATA                   1U
 
 void LCD_Dma2dInit(void);
+void LCD_VsyncInit(void);
 void LCD_GC9503V_init(void);
 void LCD_DrawBufClean(const void *addr, uint32_t pixel_count);
 void LCD_Clear(uint32_t color);

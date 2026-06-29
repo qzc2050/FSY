@@ -19,6 +19,7 @@
 #include "net_tcp.h"
 #include "w25q_port.h"
 #include "ws2812b.h"
+#include "alarm_output.h"
 #include "uart_diag.h"
 #include <stdio.h>
 #include <string.h>

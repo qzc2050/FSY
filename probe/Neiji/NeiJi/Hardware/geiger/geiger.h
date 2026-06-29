@@ -8,7 +8,7 @@
 #include "sys_cfg_defaults.h"
 
 #ifndef GEIGER_HV_ENABLE
-#define GEIGER_HV_ENABLE  0
+#define GEIGER_HV_ENABLE  1
 #endif
 
 #define GEIGER_PIN_Pin GPIO_PIN_0

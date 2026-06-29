@@ -8,6 +8,8 @@
 #include "lv_port_indev.h"
 #include "ui.h"
 #include "uart_diag.h"
+#include "main.h"
+#include "lcd_rgb.h"
 
 #define UI_TASK_STACK_SIZE  (1024U * 12U)
 #define UI_LVGL_TICK_MS     5U
@@ -41,12 +43,24 @@ static void UiTask(void *argument)
     ui_init();
 
     UartDiag_Write("[ui] ready\r\n");
+#if NEIJI_LTDC_FB_NOCACHE
+    UartDiag_Write("[ui] LTDC FB nocache MPU\r\n");
+#endif
 
     lv_timer_handler();
     (void)osDelay(UI_LVGL_TICK_MS);
 
     for (;;) {
         (void)lv_timer_handler();
+#if NEIJI_LTDC_DIAG
+        {
+            static uint32_t ltdc_tk;
+            if ((lv_tick_get() - ltdc_tk) >= 3000U) {
+                ltdc_tk = lv_tick_get();
+                LCD_LtdcLogState("poll");
+            }
+        }
+#endif
         (void)osDelay(UI_LVGL_TICK_MS);
     }
 }

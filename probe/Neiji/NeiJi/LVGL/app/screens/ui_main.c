@@ -2,6 +2,8 @@
 
 #include "../ui.h"
 
+#include <stdio.h>
+
 /* RAD-I 主界面配色 */
 #define UI_BG_COLOR      0x121212U
 #define UI_PANEL_COLOR   0x1E1E1EU
@@ -21,8 +23,11 @@ static lv_color_t ui_color(uint32_t hex)
 
 void ui_main_set_dose(float dose_usv_h)
 {
+    char buf[16];
+
     if (ui_main_dose_label != NULL) {
-        lv_label_set_text_fmt(ui_main_dose_label, "%.2f", (double)dose_usv_h);
+        snprintf(buf, sizeof(buf), "%.2f", (double)dose_usv_h);
+        lv_label_set_text(ui_main_dose_label, buf);
     }
 }
 

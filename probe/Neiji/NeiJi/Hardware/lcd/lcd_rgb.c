@@ -18,7 +18,15 @@ static __align(4) DEV_MALLOC_EXSRAM uint16_t lcd_rotate_buf[LCD_WIDTH * LCD_SCRA
 static volatile bool lcd_dma2d_busy = false;
 static uint32_t lcd_dma2d_clean_addr;
 static uint32_t lcd_dma2d_clean_size;
+static uint16_t lcd_dma2d_clean_py;
+static uint16_t lcd_dma2d_clean_px;
+static uint16_t lcd_dma2d_clean_line_w;
+static uint16_t lcd_dma2d_clean_line_cnt;
+static bool lcd_dma2d_clean_rows = false;
 static void (*lcd_flush_done_cb)(void);
+
+#define LCD_FB_NOCACHE_BASE  0xC0000000U
+#define LCD_FB_NOCACHE_SIZE  0x00200000U
 
 static void lcd_dma2d_fill(uint32_t dst, uint16_t width, uint16_t height,
                            uint16_t dst_line_offset, uint32_t color);
@@ -61,11 +69,60 @@ void LCD_SetFlushDoneCallback(void (*cb)(void))
 	lcd_flush_done_cb = cb;
 }
 
+static volatile bool lcd_vsync_flag;
+
+void LCD_VsyncInit(void)
+{
+#if NEIJI_DISP_VSYNC_FLUSH
+	(void)HAL_LTDC_ProgramLineEvent(&hltdc, LCD_PHYS_HEIGHT);
+	__HAL_LTDC_ENABLE_IT(&hltdc, LTDC_IT_LI);
+	HAL_NVIC_SetPriority(LTDC_IRQn, 6U, 0U);
+	HAL_NVIC_EnableIRQ(LTDC_IRQn);
+	lcd_vsync_flag = false;
+#endif
+}
+
+void HAL_LTDC_LineEventCallback(LTDC_HandleTypeDef *hltdc_ptr)
+{
+	(void)hltdc_ptr;
+	lcd_vsync_flag = true;
+}
+
+static void lcd_wait_vsync(void)
+{
+#if NEIJI_DISP_VSYNC_FLUSH
+	uint32_t t0 = HAL_GetTick();
+
+	lcd_vsync_flag = false;
+	while(!lcd_vsync_flag) {
+		if((HAL_GetTick() - t0) > 25U) {
+			break;
+		}
+		taskYIELD();
+	}
+#else
+	(void)0;
+#endif
+}
+
 void LCD_Dma2dInit(void)
 {
 	__HAL_RCC_DMA2D_CLK_ENABLE();
 	HAL_NVIC_SetPriority(DMA2D_IRQn, 6U, 0U);
 	HAL_NVIC_EnableIRQ(DMA2D_IRQn);
+	LCD_VsyncInit();
+}
+
+static bool lcd_in_nocache_fb(uint32_t addr, uint32_t size)
+{
+#if NEIJI_LTDC_FB_NOCACHE
+	return (addr >= LCD_FB_NOCACHE_BASE) &&
+	       ((addr + size) <= (LCD_FB_NOCACHE_BASE + LCD_FB_NOCACHE_SIZE));
+#else
+	(void)addr;
+	(void)size;
+	return false;
+#endif
 }
 
 static void lcd_dcache_clean(const void *addr, uint32_t size)
@@ -74,11 +131,68 @@ static void lcd_dcache_clean(const void *addr, uint32_t size)
 		return;
 	}
 
+	if(lcd_in_nocache_fb((uint32_t)(uintptr_t)addr, size)) {
+		return;
+	}
+
 	uint32_t start = (uint32_t)addr & ~31U;
 	uint32_t end = (uint32_t)addr + size;
 	uint32_t len = ((end - start + 31U) & ~31U);
 
 	SCB_CleanDCache_by_Addr((uint32_t *)start, len);
+}
+
+static void lcd_dcache_clean_phys_rows(uint16_t py, uint16_t px, uint16_t line_w, uint16_t line_cnt)
+{
+	uint16_t i;
+	uint16_t pad = (uint16_t)NEIJI_DISP_FLUSH_PAD;
+	uint16_t py0 = py;
+	uint16_t px0 = px;
+	uint16_t w = line_w;
+	uint16_t h = line_cnt;
+
+	if(pad > 0U) {
+		if(py0 > pad) {
+			py0 = (uint16_t)(py0 - pad);
+		} else {
+			py0 = 0U;
+		}
+		if(px0 > pad) {
+			px0 = (uint16_t)(px0 - pad);
+		} else {
+			px0 = 0U;
+		}
+		w = (uint16_t)(w + pad * 2U);
+		h = (uint16_t)(h + pad * 2U);
+		if(((uint32_t)px0 + w) > LCD_PHYS_WIDTH) {
+			w = (uint16_t)(LCD_PHYS_WIDTH - px0);
+		}
+		if(((uint32_t)py0 + h) > LCD_PHYS_HEIGHT) {
+			h = (uint16_t)(LCD_PHYS_HEIGHT - py0);
+		}
+	}
+
+	for(i = 0U; i < h; i++) {
+		uint32_t addr = lcd_phys_addr(px0, (uint16_t)(py0 + i));
+
+		lcd_dcache_clean((const void *)addr, (uint32_t)w * 2U);
+	}
+}
+
+static void lcd_dma2d_set_clean_block(uint32_t addr, uint32_t size)
+{
+	lcd_dma2d_clean_rows = false;
+	lcd_dma2d_clean_addr = addr;
+	lcd_dma2d_clean_size = size;
+}
+
+static void lcd_dma2d_set_clean_rows(uint16_t py, uint16_t px, uint16_t line_w, uint16_t line_cnt)
+{
+	lcd_dma2d_clean_rows = true;
+	lcd_dma2d_clean_py = py;
+	lcd_dma2d_clean_px = px;
+	lcd_dma2d_clean_line_w = line_w;
+	lcd_dma2d_clean_line_cnt = line_cnt;
 }
 
 void LCD_DrawBufClean(const void *addr, uint32_t pixel_count)
@@ -180,10 +294,10 @@ uint16_t LCD_ReadFramebufPixel(uint16_t px, uint16_t py)
 }
 
 static void lcd_dma2d_start_async(uint32_t src, uint32_t dst, uint16_t width, uint16_t height,
-                                  uint16_t src_line_offset, uint16_t dst_line_offset,
-                                  uint32_t dst_cache_addr, uint32_t dst_cache_size)
+                                  uint16_t src_line_offset, uint16_t dst_line_offset)
 {
 	LCD_FlushWait();
+	lcd_wait_vsync();
 
 	DMA2D->IFCR = DMA2D_IFCR_CTCIF;
 	DMA2D->CR &= ~DMA2D_CR_START;
@@ -195,8 +309,6 @@ static void lcd_dma2d_start_async(uint32_t src, uint32_t dst, uint16_t width, ui
 	DMA2D->OOR = dst_line_offset;
 	DMA2D->OPFCCR = DMA2D_OUTPUT_RGB565;
 	DMA2D->NLR = ((uint32_t)width << 16) | height;
-	lcd_dma2d_clean_addr = dst_cache_addr;
-	lcd_dma2d_clean_size = dst_cache_size;
 	lcd_dma2d_busy = true;
 	DMA2D->CR |= DMA2D_CR_START;
 }
@@ -206,7 +318,14 @@ void DMA2D_IRQHandler(void)
 	if((DMA2D->ISR & DMA2D_ISR_TCIF) != 0U) {
 		DMA2D->IFCR = DMA2D_IFCR_CTCIF;
 		DMA2D->CR &= ~(DMA2D_CR_START | DMA2D_CR_TCIE);
-		lcd_dcache_clean((const void *)lcd_dma2d_clean_addr, lcd_dma2d_clean_size);
+		if(lcd_dma2d_clean_rows) {
+			lcd_dcache_clean_phys_rows(lcd_dma2d_clean_py,
+			                           lcd_dma2d_clean_px,
+			                           lcd_dma2d_clean_line_w,
+			                           lcd_dma2d_clean_line_cnt);
+		} else {
+			lcd_dcache_clean((const void *)lcd_dma2d_clean_addr, lcd_dma2d_clean_size);
+		}
 		lcd_dma2d_busy = false;
 
 		if(lcd_flush_done_cb != NULL) {
@@ -461,7 +580,6 @@ void LCD_DrawPoint(uint16_t x, uint16_t y, uint16_t color)
 void LCD_BlitPhysAreaAsync(uint16_t px, uint16_t py, uint16_t width, uint16_t height, const uint16_t *src)
 {
 	uint32_t dst_addr;
-	uint32_t clean_size;
 
 	if((src == NULL) || (width == 0U) || (height == 0U)) {
 		return;
@@ -474,16 +592,13 @@ void LCD_BlitPhysAreaAsync(uint16_t px, uint16_t py, uint16_t width, uint16_t he
 	lcd_dcache_clean(src, (uint32_t)width * height * 2U);
 
 	dst_addr = lcd_phys_addr(px, py);
-	clean_size = (uint32_t)height * ((uint32_t)LCD_PHYS_WIDTH * 2U);
-
+	lcd_dma2d_set_clean_rows(py, px, width, height);
 	lcd_dma2d_start_async((uint32_t)src,
 	                      dst_addr,
 	                      width,
 	                      height,
 	                      0U,
-	                      (uint16_t)(LCD_PHYS_WIDTH - width),
-	                      dst_addr,
-	                      clean_size);
+	                      (uint16_t)(LCD_PHYS_WIDTH - width));
 }
 
 void LCD_BlitPhysArea(uint16_t px, uint16_t py, uint16_t width, uint16_t height, const uint16_t *src)
@@ -497,7 +612,6 @@ bool LCD_BlitAreaAsync(uint16_t x, uint16_t y, uint16_t width, uint16_t height, 
 	uint16_t px_bottom;
 	uint32_t pixel_count;
 	uint32_t dst_addr;
-	uint32_t clean_size;
 	const uint16_t *dma_src;
 	uint16_t dma_w;
 	uint16_t dma_h;
@@ -523,19 +637,15 @@ bool LCD_BlitAreaAsync(uint16_t x, uint16_t y, uint16_t width, uint16_t height, 
 
 		lcd_dcache_clean(src, (uint32_t)width * 2U);
 		dst_addr = lcd_phys_addr(px, x);
-		clean_size = (uint32_t)LCD_PHYS_WIDTH * 2U;
+		lcd_dma2d_set_clean_rows(x, px, width, 1U);
 		lcd_dma2d_start_async((uint32_t)src,
 		                      dst_addr,
 		                      1U,
 		                      width,
 		                      0U,
-		                      (uint16_t)(LCD_PHYS_WIDTH - 1U),
-		                      dst_addr,
-		                      clean_size);
+		                      (uint16_t)(LCD_PHYS_WIDTH - 1U));
 		return true;
 	}
-
-	clean_size = (uint32_t)width * ((uint32_t)LCD_PHYS_WIDTH * 2U);
 
 	lcd_dcache_clean(src, pixel_count * 2U);
 	lcd_transpose_to_phys(src, lcd_rotate_buf, width, height);
@@ -546,14 +656,13 @@ bool LCD_BlitAreaAsync(uint16_t x, uint16_t y, uint16_t width, uint16_t height, 
 	dma_h = width;
 	dst_oor = (uint16_t)(LCD_PHYS_WIDTH - height);
 
+	lcd_dma2d_set_clean_rows(x, px_bottom, height, width);
 	lcd_dma2d_start_async((uint32_t)dma_src,
 	                      dst_addr,
 	                      dma_w,
 	                      dma_h,
 	                      0U,
-	                      dst_oor,
-	                      dst_addr,
-	                      clean_size);
+	                      dst_oor);
 	return true;
 }
 

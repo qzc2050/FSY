@@ -1,5 +1,6 @@
 #include "fsy_regmap.h"
 #include "device_config.h"
+#include "net_config.h"
 #include "w5500_dhcp.h"
 #include "pcf85063.h"
 #include "aht20.h"
@@ -12,8 +13,11 @@
 static uint32_t s_rt_regs[FSY_RT_REG_COUNT];
 static uint32_t s_alarm_status;
 static uint8_t s_time_write_buf[8];
-static uint8_t s_time_write_mask;
-static const char s_software_version[] = "NeiJi V1.0";
+
+static const char *cfg_software_version_text(void)
+{
+    return DEVICE_SOFTWARE_VERSION;
+}
 
 #define FSY_ALARM_ENV_MASK  ((1UL << 6) | (1UL << 10) | (1UL << 14) | \
                              (1UL << 18) | (1UL << 22))
@@ -137,11 +141,11 @@ static int read_software_version_reg(uint16_t reg, uint8_t *out, uint16_t out_ca
     }
 
     off = (uint16_t)((reg - FSY_REG_SOFTWARE_VERSION) * 2U);
-    if (off < (uint16_t)(sizeof(s_software_version) - 1U)) {
-        lo = (uint8_t)s_software_version[off];
+    if (off < (uint16_t)(strlen(cfg_software_version_text()) + 1U)) {
+        lo = (uint8_t)cfg_software_version_text()[off];
     }
-    if ((off + 1U) < (uint16_t)(sizeof(s_software_version) - 1U)) {
-        hi = (uint8_t)s_software_version[off + 1U];
+    if ((off + 1U) < (uint16_t)(strlen(cfg_software_version_text()) + 1U)) {
+        hi = (uint8_t)cfg_software_version_text()[off + 1U];
     }
     store_u16_le(out, (uint16_t)lo | ((uint16_t)hi << 8));
     return 2;
@@ -157,10 +161,28 @@ static int time_bytes_valid(const uint8_t bytes[8])
     return 1;
 }
 
+static uint8_t time_calc_weekday(uint8_t year2, uint8_t month, uint8_t day)
+{
+    uint32_t y = 2000U + (uint32_t)(year2 % 100U);
+    uint32_t m = month;
+    uint32_t d = day;
+    uint32_t k;
+    uint32_t j;
+    int w;
+
+    if (m < 3U) {
+        m += 12U;
+        y -= 1U;
+    }
+    k = y % 100U;
+    j = y / 100U;
+    w = (int)((d + (13U * (m + 1U)) / 5U + k + k / 4U + j / 4U + 5U * j) % 7);
+    return (uint8_t)((w + 6) % 7);
+}
+
 static int write_time_regs(uint16_t start_reg, const uint8_t *data, uint16_t byte_count)
 {
     uint16_t reg_count;
-    uint16_t i;
     Pcf85063_DateTime_t dt;
 
     if ((data == NULL) || ((byte_count % 2U) != 0U) || (byte_count == 0U)) {
@@ -168,25 +190,19 @@ static int write_time_regs(uint16_t start_reg, const uint8_t *data, uint16_t byt
     }
 
     reg_count = (uint16_t)(byte_count / 2U);
-    if ((start_reg < FSY_REG_TIME) ||
-        ((uint16_t)(start_reg + reg_count) > (uint16_t)(FSY_REG_TIME + FSY_REG_TIME_REGS))) {
+    if ((start_reg != FSY_REG_TIME) || (reg_count != FSY_REG_TIME_REGS)) {
         return -1;
     }
 
-    for (i = 0U; i < reg_count; i++) {
-        uint16_t reg = (uint16_t)(start_reg + i);
-        uint16_t off = (uint16_t)((reg - FSY_REG_TIME) * 2U);
+    s_time_write_buf[0] = data[0];
+    s_time_write_buf[1] = data[1];
+    s_time_write_buf[2] = data[2];
+    s_time_write_buf[3] = data[3];
+    s_time_write_buf[4] = data[4];
+    s_time_write_buf[5] = data[5];
+    s_time_write_buf[6] = data[6];
+    s_time_write_buf[7] = data[7];
 
-        s_time_write_buf[off] = data[i * 2U];
-        s_time_write_buf[off + 1U] = data[(uint16_t)(i * 2U + 1U)];
-        s_time_write_mask |= (uint8_t)(1U << (reg - FSY_REG_TIME));
-    }
-
-    if ((s_time_write_mask & 0x0FU) != 0x0FU) {
-        return 0;
-    }
-
-    s_time_write_mask = 0U;
     if (!time_bytes_valid(s_time_write_buf)) {
         return -1;
     }
@@ -197,7 +213,7 @@ static int write_time_regs(uint16_t start_reg, const uint8_t *data, uint16_t byt
     dt.hour = s_time_write_buf[3];
     dt.minute = s_time_write_buf[4];
     dt.second = s_time_write_buf[5];
-    dt.week = 0U;
+    dt.week = time_calc_weekday(dt.year, dt.month, dt.day);
     dt.online = 1U;
 
     return Pcf85063_SetTime(&dt);
@@ -277,11 +293,18 @@ static int reg_is_configurable(uint16_t reg)
         (reg < (uint16_t)(FSY_REG_PRODUCT_MODEL + FSY_REG_PRODUCT_MODEL_REGS))) {
         return 1;
     }
+    if ((reg >= FSY_REG_PRODUCT_NAME) &&
+        (reg < (uint16_t)(FSY_REG_PRODUCT_NAME + FSY_REG_PRODUCT_NAME_REGS))) {
+        return 1;
+    }
     if ((reg >= FSY_REG_STATIC_IP) &&
         (reg < (uint16_t)(FSY_REG_STATIC_IP + FSY_REG_STATIC_IP_REGS))) {
         return 1;
     }
     if (reg == FSY_REG_DHCP_ENABLE) {
+        return 1;
+    }
+    if (reg == FSY_REG_LANGUAGE) {
         return 1;
     }
     if ((reg >= FSY_REG_DOSE_HI_TH) &&
@@ -307,15 +330,28 @@ int Fsy_Regmap_WriteBlock(uint16_t start_reg, const uint8_t *data,
                           uint16_t byte_count)
 {
     uint16_t i;
+    uint16_t reg_count;
 
     if ((data == NULL) || ((byte_count % 2U) != 0U) || (byte_count == 0U)) {
         return -1;
     }
+
+    reg_count = (uint16_t)(byte_count / 2U);
+    if ((start_reg == FSY_REG_TIME) && (reg_count == FSY_REG_TIME_REGS)) {
+        for (i = 0U; i < reg_count; i++) {
+            uint16_t reg = (uint16_t)(start_reg + i);
+            if (!reg_is_configurable(reg)) {
+                return -1;
+            }
+        }
+        return write_time_regs(start_reg, data, byte_count);
+    }
+
     if (DeviceConfig_IsReady() == 0U) {
         return -1;
     }
 
-    for (i = 0U; i < (uint16_t)(byte_count / 2U); i++) {
+    for (i = 0U; i < reg_count; i++) {
         uint16_t reg = (uint16_t)(start_reg + i);
         if ((reg >= FSY_REG_SOFTWARE_VERSION) &&
             (reg < (uint16_t)(FSY_REG_SOFTWARE_VERSION + FSY_REG_SOFTWARE_VERSION_REGS))) {
@@ -324,11 +360,6 @@ int Fsy_Regmap_WriteBlock(uint16_t start_reg, const uint8_t *data,
         if (!reg_is_configurable(reg)) {
             return -1;
         }
-    }
-
-    if ((start_reg >= FSY_REG_TIME) &&
-        ((uint16_t)(start_reg + (byte_count / 2U)) <= (uint16_t)(FSY_REG_TIME + FSY_REG_TIME_REGS))) {
-        return write_time_regs(start_reg, data, byte_count);
     }
 
     return DeviceConfig_WriteRegBlock(start_reg, data, byte_count);
@@ -405,7 +436,7 @@ void Fsy_Regmap_UpdateDoseRate(float rate_usv_h)
     rate_x100 = (uint32_t)(rate_usv_h * 100.0f);
     s_rt_regs[0] = rate_x100;
 
-    DeviceConfig_GetDoseAlarmConfig(&hi_x100, &lo_x100, &alarm_enable);
+    DeviceConfig_GetDoseAlarmConfig(&hi_x100, &lo_x100, &alarm_enable, NULL);
 
     if (((alarm_enable & (1UL << FSY_ALARM_BIT_DOSE_HI)) != 0U) &&
         (hi_x100 > 0U) && (rate_x100 > hi_x100)) {
@@ -425,6 +456,11 @@ void Fsy_Regmap_SyncAlarmStatus(uint32_t alarm_status)
 {
     s_alarm_status = alarm_status;
     s_rt_regs[6] = s_alarm_status;
+}
+
+uint32_t Fsy_Regmap_GetAlarmStatus(void)
+{
+    return s_alarm_status;
 }
 
 void Fsy_Regmap_ApplyAlarmEnable(uint32_t enable_mask)

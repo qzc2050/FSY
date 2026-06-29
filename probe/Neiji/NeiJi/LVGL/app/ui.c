@@ -1,6 +1,8 @@
 #include "ui.h"
 
+#include "language.h"
 #include "screens/ui_Main_Interface.h"
+#include "ui_alarm_status.h"
 
 lv_anim_t *opaon_Animation(lv_obj_t *TargetObject, int delay)
 {
@@ -20,4 +22,11 @@ void ui_init(void)
     lv_disp_set_theme(dispp, theme);
 
     ui_Main_Interface_screen_init();
+
+    /* Bind hardware config values to UI labels */
+    ui_main_bind_settings();
+
+    language_init();
+    update_all_ui_texts();
+    Ui_AlarmStatus_Init();
 }

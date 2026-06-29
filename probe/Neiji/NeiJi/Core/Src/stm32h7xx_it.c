@@ -244,5 +244,12 @@ void USART3_IRQHandler(void)
 }
 
 /* USER CODE BEGIN 1 */
+#include "ltdc.h"
 
+extern LTDC_HandleTypeDef hltdc;
+
+void LTDC_IRQHandler(void)
+{
+  HAL_LTDC_IRQHandler(&hltdc);
+}
 /* USER CODE END 1 */

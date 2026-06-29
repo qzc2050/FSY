@@ -33,6 +33,7 @@
 #include "core_cm7.h"
 #include "lcd_rgb.h"
 #include "uart_diag.h"
+#include "beep.h"
 #include <stdio.h>
   /* USER CODE END Includes */
 
@@ -121,6 +122,7 @@ int main(void)
   MX_I2C1_Init();
   MX_I2C4_Init();
   MX_TIM2_Init();
+  __HAL_RCC_DMA1_CLK_ENABLE();
   MX_TIM4_Init();
   MX_TIM12_Init();
   MX_SPI1_Init();
@@ -139,6 +141,7 @@ int main(void)
   LCD_GC9503V_init();
   LCD_Clear(LCD_UI_BG);
   HAL_GPIO_WritePin(LCD_BACKLIGHT_GPIO_Port, LCD_BACKLIGHT_Pin, GPIO_PIN_SET);
+  Beep_PinEnsure();
   UartDiag_Write("[LCD] bringup gray\r\n");
   /* USER CODE END 2 */
 
@@ -260,9 +263,29 @@ void MPU_Config(void)
 
   HAL_MPU_Disable();
 
+#if NEIJI_LTDC_FB_NOCACHE
+  /** LTDC 帧缓冲 1MB @ 0xC0000000 — non-cacheable（LTDC/DMA2D 直访 SDRAM，消除竖条） */
+  MPU_InitStruct.Enable = MPU_REGION_ENABLE;
+  MPU_InitStruct.Number = MPU_REGION_NUMBER0;
+  MPU_InitStruct.BaseAddress = 0xC0000000;
+  MPU_InitStruct.Size = MPU_REGION_SIZE_2MB;
+  MPU_InitStruct.SubRegionDisable = 0x00;
+  MPU_InitStruct.TypeExtField = MPU_TEX_LEVEL0;
+  MPU_InitStruct.AccessPermission = MPU_REGION_FULL_ACCESS;
+  MPU_InitStruct.DisableExec = MPU_INSTRUCTION_ACCESS_ENABLE;
+  MPU_InitStruct.IsShareable = MPU_ACCESS_NOT_SHAREABLE;
+  MPU_InitStruct.IsCacheable = MPU_ACCESS_NOT_CACHEABLE;
+  MPU_InitStruct.IsBufferable = MPU_ACCESS_NOT_BUFFERABLE;
+  HAL_MPU_ConfigRegion(&MPU_InitStruct);
+
+  /** SDRAM 32MB @ 0xC0000000 — cacheable+bufferable（LVGL 缓冲等） */
+  MPU_InitStruct.Enable = MPU_REGION_ENABLE;
+  MPU_InitStruct.Number = MPU_REGION_NUMBER1;
+#else
   /** SDRAM 32MB @ 0xC0000000 — cacheable+bufferable（RAD-I 同板策略） */
   MPU_InitStruct.Enable = MPU_REGION_ENABLE;
   MPU_InitStruct.Number = MPU_REGION_NUMBER0;
+#endif
   MPU_InitStruct.BaseAddress = 0xC0000000;
   MPU_InitStruct.Size = MPU_REGION_SIZE_32MB;
   MPU_InitStruct.SubRegionDisable = 0x00;

@@ -42,7 +42,31 @@ extern "C" {
 /* Exported constants --------------------------------------------------------*/
 /* USER CODE BEGIN EC */
 /* LVGL/显示探针版本：每次改探针或 flush 逻辑后 +1，便于串口日志对版 */
-#define NEIJI_DIAG_BUILD  5U   /* WS2812: fully match RAD-I tim.c */
+#define NEIJI_DIAG_BUILD  15U   /* 15=关 VSYNC(局部 flush 每块等 16ms 会拖死整机) */
+#ifndef NEIJI_BEEP_PROBE
+#define NEIJI_BEEP_PROBE  0U   /* 1=上电串口蜂鸣探针；硬件已确认后保持 0 */
+#endif
+#ifndef NEIJI_UI_LIVE_REFRESH
+#define NEIJI_UI_LIVE_REFRESH  1U   /* 1=主界面每秒刷新传感器/剂量/时间 */
+#endif
+#ifndef NEIJI_UI_RADIATION_SPIN
+#define NEIJI_UI_RADIATION_SPIN  1   /* 1=辐射图标转轮动画 */
+#endif
+#ifndef NEIJI_WS2812_ENABLE
+#define NEIJI_WS2812_ENABLE  1   /* 1=WS2812 灯带任务 */
+#endif
+#ifndef NEIJI_LTDC_FB_NOCACHE
+#define NEIJI_LTDC_FB_NOCACHE  1   /* 1=LTDC 帧缓冲 MPU 非 cache */
+#endif
+#ifndef NEIJI_LTDC_DIAG
+#define NEIJI_LTDC_DIAG  0   /* 1=周期串口 [ltdc] 探针 */
+#endif
+#ifndef NEIJI_DISP_FLUSH_PAD
+#define NEIJI_DISP_FLUSH_PAD  2U   /* DMA2D 写帧缓冲后物理行 clean 扩边(像素) */
+#endif
+#ifndef NEIJI_DISP_VSYNC_FLUSH
+#define NEIJI_DISP_VSYNC_FLUSH  0   /* 0=默认；1=每块 flush 等 VSYNC，动画多时极慢且传感器易判离线 */
+#endif
 /* USER CODE END EC */
 
 /* Exported macro ------------------------------------------------------------*/
@@ -66,6 +90,8 @@ void Error_Handler(void);
 #define LCD_CS_GPIO_Port GPIOH
 #define LCD_BACKLIGHT_Pin GPIO_PIN_6
 #define LCD_BACKLIGHT_GPIO_Port GPIOH
+#define BEEP_PWM_Pin GPIO_PIN_9
+#define BEEP_PWM_GPIO_Port GPIOH
 #define W5500_RST_Pin GPIO_PIN_6
 #define W5500_RST_GPIO_Port GPIOC
 #define W5500_CS_Pin GPIO_PIN_10

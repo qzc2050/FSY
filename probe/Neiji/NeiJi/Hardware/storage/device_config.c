@@ -9,6 +9,8 @@
 #include "network_cmd.h"
 #include "fsy_dispatch.h"
 #include "fsy_regmap.h"
+#include "sys_cfg_defaults.h"
+#include "geiger.h"
 
 #include "cmsis_os.h"
 
@@ -17,7 +19,11 @@
 #include <string.h>
 
 #define CFG_MAGIC                 0x44455643U /* 'DEVC' */
-#define CFG_VERSION               3U
+#define CFG_VERSION               7U
+#define CFG_VERSION_V6            6U
+#define CFG_VERSION_V5            5U
+#define CFG_VERSION_V4            4U
+#define CFG_VERSION_V3            3U
 #define CFG_VERSION_V2            2U
 #define CFG_VERSION_V1            1U
 
@@ -44,7 +50,75 @@ typedef struct __attribute__((packed)) {
     uint32_t dose_hi_x100;
     uint32_t dose_lo_x100;
     uint32_t alarm_enable_mask;
+    uint8_t alarm_volume;
+    char product_name[CFG_MODEL_FIELD_LEN];
+    uint8_t language;
+} DeviceCfgBlobV6;
+
+typedef struct __attribute__((packed)) {
+    uint32_t magic;
+    uint32_t version;
+    uint32_t crc32;
+    char sn[CFG_SN_FIELD_LEN];
+    char product_model[CFG_MODEL_FIELD_LEN];
+    uint8_t dev_addr;
+    uint8_t dhcp_enable;
+    uint8_t static_ip[4];
+    uint32_t dose_hi_x100;
+    uint32_t dose_lo_x100;
+    uint32_t alarm_enable_mask;
+    uint8_t alarm_volume;
+    char product_name[CFG_MODEL_FIELD_LEN];
+    uint8_t language;
+    uint8_t alarm_sound;
+    uint8_t alarm_light;
 } DeviceCfgBlob;
+
+typedef struct __attribute__((packed)) {
+    uint32_t magic;
+    uint32_t version;
+    uint32_t crc32;
+    char sn[CFG_SN_FIELD_LEN];
+    char product_model[CFG_MODEL_FIELD_LEN];
+    uint8_t dev_addr;
+    uint8_t dhcp_enable;
+    uint8_t static_ip[4];
+    uint32_t dose_hi_x100;
+    uint32_t dose_lo_x100;
+    uint32_t alarm_enable_mask;
+    uint8_t alarm_volume;
+    char product_name[CFG_MODEL_FIELD_LEN];
+} DeviceCfgBlobV5;
+
+typedef struct __attribute__((packed)) {
+    uint32_t magic;
+    uint32_t version;
+    uint32_t crc32;
+    char sn[CFG_SN_FIELD_LEN];
+    char product_model[CFG_MODEL_FIELD_LEN];
+    uint8_t dev_addr;
+    uint8_t dhcp_enable;
+    uint8_t static_ip[4];
+    uint32_t dose_hi_x100;
+    uint32_t dose_lo_x100;
+    uint32_t alarm_enable_mask;
+    uint8_t alarm_volume;
+    uint8_t reserved[3];
+} DeviceCfgBlobV4;
+
+typedef struct __attribute__((packed)) {
+    uint32_t magic;
+    uint32_t version;
+    uint32_t crc32;
+    char sn[CFG_SN_FIELD_LEN];
+    char product_model[CFG_MODEL_FIELD_LEN];
+    uint8_t dev_addr;
+    uint8_t dhcp_enable;
+    uint8_t static_ip[4];
+    uint32_t dose_hi_x100;
+    uint32_t dose_lo_x100;
+    uint32_t alarm_enable_mask;
+} DeviceCfgBlobV3;
 
 typedef struct __attribute__((packed)) {
     uint32_t magic;
@@ -120,6 +194,10 @@ static void cfg_apply_alarm_defaults(DeviceCfgBlob *blob)
     blob->dose_hi_x100 = CFG_DOSE_HI_DEFAULT_X100;
     blob->dose_lo_x100 = CFG_DOSE_LO_DEFAULT_X100;
     blob->alarm_enable_mask = CFG_ALARM_DOSE_DEFAULT;
+    blob->alarm_volume = (uint8_t)DEVICE_CFG_DEFAULT_ALARM_VOLUME;
+    blob->alarm_sound = (uint8_t)DEVICE_CFG_DEFAULT_ALARM_SOUND;
+    blob->alarm_light = (uint8_t)DEVICE_CFG_DEFAULT_ALARM_LIGHT;
+    cfg_fixed_copy(blob->product_name, CFG_MODEL_FIELD_LEN, NEIJI_PRODUCT_NAME);
 }
 
 static void cfg_apply_defaults(void)
@@ -129,6 +207,10 @@ static void cfg_apply_defaults(void)
     s_cfg.version = CFG_VERSION;
     cfg_fixed_copy(s_cfg.sn, CFG_SN_FIELD_LEN, NEIJI_DEVICE_SN);
     cfg_fixed_copy(s_cfg.product_model, CFG_MODEL_FIELD_LEN, DEVICE_PRODUCT_MODEL);
+    cfg_fixed_copy(s_cfg.product_name, CFG_MODEL_FIELD_LEN, NEIJI_PRODUCT_NAME);
+    s_cfg.language = (uint8_t)DEVICE_CFG_DEFAULT_LANGUAGE;
+    s_cfg.alarm_sound = (uint8_t)DEVICE_CFG_DEFAULT_ALARM_SOUND;
+    s_cfg.alarm_light = (uint8_t)DEVICE_CFG_DEFAULT_ALARM_LIGHT;
     s_cfg.dev_addr = DEVICE_CFG_DEFAULT_DEV_ADDR;
     cfg_apply_network_defaults(&s_cfg);
     cfg_apply_alarm_defaults(&s_cfg);
@@ -233,6 +315,229 @@ static void cfg_upgrade_v2_to_v3(const DeviceCfgBlobV2 *old, DeviceCfgBlob *cur)
     cfg_refresh_crc(cur);
 }
 
+static uint32_t cfg_calc_crc_v3(const DeviceCfgBlobV3 *blob)
+{
+    DeviceCfgBlobV3 tmp;
+
+    memcpy(&tmp, blob, sizeof(tmp));
+    tmp.crc32 = 0U;
+    return cfg_crc32((const uint8_t *)&tmp.version,
+                     sizeof(DeviceCfgBlobV3) - offsetof(DeviceCfgBlobV3, version));
+}
+
+static int cfg_blob_v3_valid(const DeviceCfgBlobV3 *blob)
+{
+    if (blob->magic != CFG_MAGIC) {
+        return 0;
+    }
+    if (blob->version != CFG_VERSION_V3) {
+        return 0;
+    }
+    if (blob->crc32 != cfg_calc_crc_v3(blob)) {
+        return 0;
+    }
+    if ((blob->dev_addr == 0U) || (blob->dev_addr > 247U)) {
+        return 0;
+    }
+    if (blob->dhcp_enable > 1U) {
+        return 0;
+    }
+    if ((blob->alarm_enable_mask & ~CFG_ALARM_DOSE_DEFAULT) != 0U) {
+        return 0;
+    }
+    return 1;
+}
+
+static void cfg_upgrade_v3_to_v4(const DeviceCfgBlobV3 *old, DeviceCfgBlob *cur)
+{
+    memset(cur, 0, sizeof(*cur));
+    cur->magic = CFG_MAGIC;
+    cur->version = CFG_VERSION;
+    memcpy(cur->sn, old->sn, sizeof(cur->sn));
+    memcpy(cur->product_model, old->product_model, sizeof(cur->product_model));
+    cur->dev_addr = old->dev_addr;
+    cur->dhcp_enable = old->dhcp_enable;
+    memcpy(cur->static_ip, old->static_ip, sizeof(cur->static_ip));
+    cur->dose_hi_x100 = old->dose_hi_x100;
+    cur->dose_lo_x100 = old->dose_lo_x100;
+    cur->alarm_enable_mask = old->alarm_enable_mask;
+    cur->alarm_volume = (uint8_t)DEVICE_CFG_DEFAULT_ALARM_VOLUME;
+    cfg_fixed_copy(cur->product_name, CFG_MODEL_FIELD_LEN, NEIJI_PRODUCT_NAME);
+    cfg_refresh_crc(cur);
+}
+
+static uint32_t cfg_calc_crc_v4(const DeviceCfgBlobV4 *blob)
+{
+    DeviceCfgBlobV4 tmp;
+
+    memcpy(&tmp, blob, sizeof(tmp));
+    tmp.crc32 = 0U;
+    return cfg_crc32((const uint8_t *)&tmp.version,
+                     sizeof(DeviceCfgBlobV4) - offsetof(DeviceCfgBlobV4, version));
+}
+
+static int cfg_blob_v4_valid(const DeviceCfgBlobV4 *blob)
+{
+    if (blob->magic != CFG_MAGIC) {
+        return 0;
+    }
+    if (blob->version != CFG_VERSION_V4) {
+        return 0;
+    }
+    if (blob->crc32 != cfg_calc_crc_v4(blob)) {
+        return 0;
+    }
+    if ((blob->dev_addr == 0U) || (blob->dev_addr > 247U)) {
+        return 0;
+    }
+    if (blob->dhcp_enable > 1U) {
+        return 0;
+    }
+    if ((blob->alarm_enable_mask & ~CFG_ALARM_DOSE_DEFAULT) != 0U) {
+        return 0;
+    }
+    if (blob->alarm_volume > 100U) {
+        return 0;
+    }
+    return 1;
+}
+
+static void cfg_upgrade_v4_to_v5(const DeviceCfgBlobV4 *old, DeviceCfgBlob *cur)
+{
+    memset(cur, 0, sizeof(*cur));
+    cur->magic = CFG_MAGIC;
+    cur->version = CFG_VERSION;
+    memcpy(cur->sn, old->sn, sizeof(cur->sn));
+    memcpy(cur->product_model, old->product_model, sizeof(cur->product_model));
+    cur->dev_addr = old->dev_addr;
+    cur->dhcp_enable = old->dhcp_enable;
+    memcpy(cur->static_ip, old->static_ip, sizeof(cur->static_ip));
+    cur->dose_hi_x100 = old->dose_hi_x100;
+    cur->dose_lo_x100 = old->dose_lo_x100;
+    cur->alarm_enable_mask = old->alarm_enable_mask;
+    cur->alarm_volume = old->alarm_volume;
+    cfg_fixed_copy(cur->product_name, CFG_MODEL_FIELD_LEN, NEIJI_PRODUCT_NAME);
+    cur->language = (uint8_t)DEVICE_CFG_DEFAULT_LANGUAGE;
+    cfg_refresh_crc(cur);
+}
+
+static uint32_t cfg_calc_crc_v5(const DeviceCfgBlobV5 *blob)
+{
+    DeviceCfgBlobV5 tmp;
+
+    memcpy(&tmp, blob, sizeof(tmp));
+    tmp.crc32 = 0U;
+    return cfg_crc32((const uint8_t *)&tmp.version,
+                     sizeof(DeviceCfgBlobV5) - offsetof(DeviceCfgBlobV5, version));
+}
+
+static int cfg_blob_v5_valid(const DeviceCfgBlobV5 *blob)
+{
+    if (blob->magic != CFG_MAGIC) {
+        return 0;
+    }
+    if (blob->version != CFG_VERSION_V5) {
+        return 0;
+    }
+    if (blob->crc32 != cfg_calc_crc_v5(blob)) {
+        return 0;
+    }
+    if ((blob->dev_addr == 0U) || (blob->dev_addr > 247U)) {
+        return 0;
+    }
+    if (blob->dhcp_enable > 1U) {
+        return 0;
+    }
+    if ((blob->alarm_enable_mask & ~CFG_ALARM_DOSE_DEFAULT) != 0U) {
+        return 0;
+    }
+    if (blob->alarm_volume > 100U) {
+        return 0;
+    }
+    return 1;
+}
+
+static void cfg_upgrade_v5_to_v6(const DeviceCfgBlobV5 *old, DeviceCfgBlob *cur)
+{
+    memset(cur, 0, sizeof(*cur));
+    cur->magic = CFG_MAGIC;
+    cur->version = CFG_VERSION;
+    memcpy(cur->sn, old->sn, sizeof(cur->sn));
+    memcpy(cur->product_model, old->product_model, sizeof(cur->product_model));
+    cur->dev_addr = old->dev_addr;
+    cur->dhcp_enable = old->dhcp_enable;
+    memcpy(cur->static_ip, old->static_ip, sizeof(cur->static_ip));
+    cur->dose_hi_x100 = old->dose_hi_x100;
+    cur->dose_lo_x100 = old->dose_lo_x100;
+    cur->alarm_enable_mask = old->alarm_enable_mask;
+    cur->alarm_volume = old->alarm_volume;
+    memcpy(cur->product_name, old->product_name, sizeof(cur->product_name));
+    cur->language = (uint8_t)DEVICE_CFG_DEFAULT_LANGUAGE;
+    cur->alarm_sound = (uint8_t)DEVICE_CFG_DEFAULT_ALARM_SOUND;
+    cur->alarm_light = (uint8_t)DEVICE_CFG_DEFAULT_ALARM_LIGHT;
+    cfg_refresh_crc(cur);
+}
+
+static uint32_t cfg_calc_crc_v6(const DeviceCfgBlobV6 *blob)
+{
+    DeviceCfgBlobV6 tmp;
+
+    memcpy(&tmp, blob, sizeof(tmp));
+    tmp.crc32 = 0U;
+    return cfg_crc32((const uint8_t *)&tmp.version,
+                     sizeof(DeviceCfgBlobV6) - offsetof(DeviceCfgBlobV6, version));
+}
+
+static int cfg_blob_v6_valid(const DeviceCfgBlobV6 *blob)
+{
+    if (blob->magic != CFG_MAGIC) {
+        return 0;
+    }
+    if (blob->version != CFG_VERSION_V6) {
+        return 0;
+    }
+    if (blob->crc32 != cfg_calc_crc_v6(blob)) {
+        return 0;
+    }
+    if ((blob->dev_addr == 0U) || (blob->dev_addr > 247U)) {
+        return 0;
+    }
+    if (blob->dhcp_enable > 1U) {
+        return 0;
+    }
+    if ((blob->alarm_enable_mask & ~CFG_ALARM_DOSE_DEFAULT) != 0U) {
+        return 0;
+    }
+    if (blob->alarm_volume > 100U) {
+        return 0;
+    }
+    if (blob->language > 1U) {
+        return 0;
+    }
+    return 1;
+}
+
+static void cfg_upgrade_v6_to_v7(const DeviceCfgBlobV6 *old, DeviceCfgBlob *cur)
+{
+    memset(cur, 0, sizeof(*cur));
+    cur->magic = CFG_MAGIC;
+    cur->version = CFG_VERSION;
+    memcpy(cur->sn, old->sn, sizeof(cur->sn));
+    memcpy(cur->product_model, old->product_model, sizeof(cur->product_model));
+    cur->dev_addr = old->dev_addr;
+    cur->dhcp_enable = old->dhcp_enable;
+    memcpy(cur->static_ip, old->static_ip, sizeof(cur->static_ip));
+    cur->dose_hi_x100 = old->dose_hi_x100;
+    cur->dose_lo_x100 = old->dose_lo_x100;
+    cur->alarm_enable_mask = old->alarm_enable_mask;
+    cur->alarm_volume = old->alarm_volume;
+    memcpy(cur->product_name, old->product_name, sizeof(cur->product_name));
+    cur->language = old->language;
+    cur->alarm_sound = (uint8_t)DEVICE_CFG_DEFAULT_ALARM_SOUND;
+    cur->alarm_light = (uint8_t)DEVICE_CFG_DEFAULT_ALARM_LIGHT;
+    cfg_refresh_crc(cur);
+}
+
 static int cfg_blob_valid(const DeviceCfgBlob *blob)
 {
     DeviceCfgBlobV1 v1;
@@ -264,6 +569,18 @@ static int cfg_blob_valid(const DeviceCfgBlob *blob)
     if ((blob->alarm_enable_mask & ~CFG_ALARM_DOSE_DEFAULT) != 0U) {
         return 0;
     }
+    if (blob->alarm_volume > 100U) {
+        return 0;
+    }
+    if (blob->language > 1U) {
+        return 0;
+    }
+    if (blob->alarm_sound > 1U) {
+        return 0;
+    }
+    if (blob->alarm_light > 1U) {
+        return 0;
+    }
     return 1;
 }
 
@@ -271,6 +588,8 @@ static int cfg_blob_normalize(DeviceCfgBlob *blob)
 {
     DeviceCfgBlobV1 v1;
     DeviceCfgBlobV2 v2;
+    DeviceCfgBlobV3 v3;
+    DeviceCfgBlobV4 v4;
 
     if (blob->magic != CFG_MAGIC) {
         return 0;
@@ -295,6 +614,42 @@ static int cfg_blob_normalize(DeviceCfgBlob *blob)
             return 0;
         }
         cfg_upgrade_v2_to_v3(&v2, blob);
+        return 1;
+    }
+    if (blob->version == CFG_VERSION_V3) {
+        memcpy(&v3, blob, sizeof(v3));
+        if (!cfg_blob_v3_valid(&v3)) {
+            return 0;
+        }
+        cfg_upgrade_v3_to_v4(&v3, blob);
+        return 1;
+    }
+    if (blob->version == CFG_VERSION_V4) {
+        memcpy(&v4, blob, sizeof(v4));
+        if (!cfg_blob_v4_valid(&v4)) {
+            return 0;
+        }
+        cfg_upgrade_v4_to_v5(&v4, blob);
+        return 1;
+    }
+    if (blob->version == CFG_VERSION_V5) {
+        DeviceCfgBlobV5 v5;
+
+        memcpy(&v5, blob, sizeof(v5));
+        if (!cfg_blob_v5_valid(&v5)) {
+            return 0;
+        }
+        cfg_upgrade_v5_to_v6(&v5, blob);
+        return 1;
+    }
+    if (blob->version == CFG_VERSION_V6) {
+        DeviceCfgBlobV6 v6;
+
+        memcpy(&v6, blob, sizeof(v6));
+        if (!cfg_blob_v6_valid(&v6)) {
+            return 0;
+        }
+        cfg_upgrade_v6_to_v7(&v6, blob);
         return 1;
     }
     return 0;
@@ -451,11 +806,17 @@ static void cfg_apply_runtime(void)
     }
     Fsy_Dispatch_SetDeviceAddr(s_cfg.dev_addr);
     Fsy_Regmap_ApplyAlarmEnable(s_cfg.alarm_enable_mask);
+    sys_cfg.alarm_volume = s_cfg.alarm_volume;
+    sys_cfg.alarm_sound = s_cfg.alarm_sound;
+    sys_cfg.alarm_light = s_cfg.alarm_light;
+    sys_cfg.th_rh_rate = (float)s_cfg.dose_hi_x100 / 100.0f;
+    sys_cfg.th_rl_rate = (float)s_cfg.dose_lo_x100 / 100.0f;
+    sys_cfg.language = s_cfg.language;
 }
 
 static void cfg_print(void)
 {
-    printf("[CFG] SN=%.*s model=%.*s addr=%u dhcp=%u ip=%u.%u.%u.%u dose_hi=%lu dose_lo=%lu alarm_en=0x%08lX\r\n",
+    printf("[CFG] SN=%.*s model=%.*s addr=%u dhcp=%u ip=%u.%u.%u.%u dose_hi=%lu dose_lo=%lu alarm_en=0x%08lX vol=%u\r\n",
            (int)CFG_SN_FIELD_LEN, s_cfg.sn,
            (int)CFG_MODEL_FIELD_LEN, s_cfg.product_model,
            (unsigned)s_cfg.dev_addr,
@@ -464,7 +825,8 @@ static void cfg_print(void)
            (unsigned)s_cfg.static_ip[2], (unsigned)s_cfg.static_ip[3],
            (unsigned long)s_cfg.dose_hi_x100,
            (unsigned long)s_cfg.dose_lo_x100,
-           (unsigned long)s_cfg.alarm_enable_mask);
+           (unsigned long)s_cfg.alarm_enable_mask,
+           (unsigned)s_cfg.alarm_volume);
 }
 
 static void store_u16_le(uint8_t *p, uint16_t v)
@@ -580,6 +942,38 @@ static int write_model_regs(uint16_t start_reg, const uint8_t *data, uint16_t by
     return cfg_commit();
 }
 
+static int write_name_regs(uint16_t start_reg, const uint8_t *data, uint16_t byte_count)
+{
+    uint16_t i;
+    char name[CFG_MODEL_FIELD_LEN + 1U];
+
+    if (!reg_in_range(start_reg, FSY_REG_PRODUCT_NAME, FSY_REG_PRODUCT_NAME_REGS)) {
+        return -1;
+    }
+    if ((uint16_t)(start_reg - FSY_REG_PRODUCT_NAME) * 2U + byte_count > 16U) {
+        return -1;
+    }
+
+    memcpy(name, s_cfg.product_name, CFG_MODEL_FIELD_LEN);
+    name[CFG_MODEL_FIELD_LEN] = '\0';
+
+    for (i = 0U; i < (uint16_t)(byte_count / 2U); i++) {
+        uint16_t reg = (uint16_t)(start_reg + i);
+        uint16_t off = (uint16_t)((reg - FSY_REG_PRODUCT_NAME) * 2U);
+        uint16_t word = load_u16_le(&data[i * 2U]);
+
+        if (off < CFG_MODEL_FIELD_LEN) {
+            name[off] = (char)(word & 0xFFU);
+        }
+        if ((off + 1U) < CFG_MODEL_FIELD_LEN) {
+            name[off + 1U] = (char)(word >> 8);
+        }
+    }
+
+    cfg_fixed_copy(s_cfg.product_name, CFG_MODEL_FIELD_LEN, name);
+    return cfg_commit();
+}
+
 static int write_addr_reg(uint16_t value)
 {
     if (value == 0U) {
@@ -689,6 +1083,33 @@ static int write_alarm_enable_regs(uint16_t start_reg, const uint8_t *data, uint
     return ret;
 }
 
+static int write_alarm_volume_reg(uint16_t value)
+{
+    if (value > 100U) {
+        return -1;
+    }
+    s_cfg.alarm_volume = (uint8_t)value;
+    sys_cfg.alarm_volume = (uint8_t)value;
+    if (value == 0U) {
+        s_cfg.alarm_sound = 0U;
+        sys_cfg.alarm_sound = 0U;
+    } else if (sys_cfg.alarm_sound == 0U) {
+        s_cfg.alarm_sound = 1U;
+        sys_cfg.alarm_sound = 1U;
+    }
+    return cfg_commit();
+}
+
+static int write_language_reg(uint16_t value)
+{
+    if (value > 1U) {
+        return -1;
+    }
+    s_cfg.language = (uint8_t)value;
+    sys_cfg.language = (uint8_t)value;
+    return cfg_commit();
+}
+
 static int read_ascii_reg_at(const char *text, size_t text_len,
                              uint16_t base_reg, uint16_t reg,
                              uint8_t *out, uint16_t out_cap)
@@ -735,6 +1156,11 @@ const char *DeviceConfig_GetProductModel(void)
     return s_cfg.product_model;
 }
 
+const char *DeviceConfig_GetProductName(void)
+{
+    return s_cfg.product_name;
+}
+
 void DeviceConfig_GetNetwork(uint8_t *dhcp_enable, uint8_t static_ip[4])
 {
     if (dhcp_enable != NULL) {
@@ -746,7 +1172,8 @@ void DeviceConfig_GetNetwork(uint8_t *dhcp_enable, uint8_t static_ip[4])
 }
 
 void DeviceConfig_GetDoseAlarmConfig(uint32_t *hi_x100, uint32_t *lo_x100,
-                                     uint32_t *alarm_enable_mask)
+                                     uint32_t *alarm_enable_mask,
+                                     uint8_t *alarm_volume)
 {
     if (hi_x100 != NULL) {
         *hi_x100 = s_cfg.dose_hi_x100;
@@ -756,6 +1183,9 @@ void DeviceConfig_GetDoseAlarmConfig(uint32_t *hi_x100, uint32_t *lo_x100,
     }
     if (alarm_enable_mask != NULL) {
         *alarm_enable_mask = s_cfg.alarm_enable_mask;
+    }
+    if (alarm_volume != NULL) {
+        *alarm_volume = s_cfg.alarm_volume;
     }
 }
 
@@ -804,14 +1234,14 @@ int DeviceConfig_Init(void)
     flash_fs_unlock();
 
     if (primary_ok) {
-        if (blob.version == CFG_VERSION_V1) {
+        if (blob.version == CFG_VERSION_V1 || blob.version == CFG_VERSION_V5) {
             need_resave = 1;
         }
         (void)cfg_blob_normalize(&blob);
         s_cfg = blob;
     } else if (backup_ok) {
         printf("[CFG] use W25Q backup copy\r\n");
-        if (backup.version == CFG_VERSION_V1) {
+        if (backup.version == CFG_VERSION_V1 || backup.version == CFG_VERSION_V5) {
             need_resave = 1;
         }
         (void)cfg_blob_normalize(&backup);
@@ -862,6 +1292,8 @@ int DeviceConfig_ReadRegBlock(uint16_t start_reg, uint16_t reg_count,
             memcpy(&out[i * 2U], pair, 2U);
         } else if (reg == 121U) {
             store_u16_le(&out[i * 2U], s_cfg.dev_addr);
+        } else if (reg == FSY_REG_ALARM_VOLUME) {
+            store_u16_le(&out[i * 2U], s_cfg.alarm_volume);
         } else if (reg_in_range(reg, FSY_REG_DOSE_HI_TH, FSY_REG_DWORD_REGS)) {
             store_u32_reg_at(&out[i * 2U], s_cfg.dose_hi_x100, FSY_REG_DOSE_HI_TH, reg);
         } else if (reg_in_range(reg, FSY_REG_DOSE_LO_TH, FSY_REG_DWORD_REGS)) {
@@ -873,6 +1305,12 @@ int DeviceConfig_ReadRegBlock(uint16_t start_reg, uint16_t reg_count,
                 return -1;
             }
             memcpy(&out[i * 2U], pair, 2U);
+        } else if (reg_in_range(reg, FSY_REG_PRODUCT_NAME, FSY_REG_PRODUCT_NAME_REGS)) {
+            if (read_ascii_reg_at(s_cfg.product_name, CFG_MODEL_FIELD_LEN,
+                                   FSY_REG_PRODUCT_NAME, reg, pair, sizeof(pair)) < 0) {
+                return -1;
+            }
+            memcpy(&out[i * 2U], pair, 2U);
         } else if (reg_in_range(reg, FSY_REG_STATIC_IP, FSY_REG_STATIC_IP_REGS)) {
             if (read_ip_reg_pair(s_cfg.static_ip, FSY_REG_STATIC_IP, reg, pair, sizeof(pair)) < 0) {
                 return -1;
@@ -880,6 +1318,8 @@ int DeviceConfig_ReadRegBlock(uint16_t start_reg, uint16_t reg_count,
             memcpy(&out[i * 2U], pair, 2U);
         } else if (reg == FSY_REG_DHCP_ENABLE) {
             store_u16_le(&out[i * 2U], s_cfg.dhcp_enable);
+        } else if (reg == FSY_REG_LANGUAGE) {
+            store_u16_le(&out[i * 2U], s_cfg.language);
         } else {
             store_u16_le(&out[i * 2U], 0U);
         }
@@ -906,6 +1346,12 @@ int DeviceConfig_WriteRegBlock(uint16_t start_reg, const uint8_t *data,
     if (reg_in_range(start_reg, 130U, 8U) &&
         reg_in_range((uint16_t)(start_reg + (byte_count / 2U) - 1U), 130U, 8U)) {
         return write_model_regs(start_reg, data, byte_count);
+    }
+
+    if (reg_in_range(start_reg, FSY_REG_PRODUCT_NAME, FSY_REG_PRODUCT_NAME_REGS) &&
+        reg_in_range((uint16_t)(start_reg + (byte_count / 2U) - 1U),
+                     FSY_REG_PRODUCT_NAME, FSY_REG_PRODUCT_NAME_REGS)) {
+        return write_name_regs(start_reg, data, byte_count);
     }
 
     if (reg_in_range(start_reg, FSY_REG_STATIC_IP, FSY_REG_STATIC_IP_REGS) &&
@@ -937,6 +1383,8 @@ int DeviceConfig_WriteRegBlock(uint16_t start_reg, const uint8_t *data,
 
         if (reg == 121U) {
             ret = write_addr_reg(value);
+        } else if (reg == FSY_REG_ALARM_VOLUME) {
+            ret = write_alarm_volume_reg(value);
         } else if (reg_in_range(reg, FSY_REG_DOSE_HI_TH, FSY_REG_DWORD_REGS)) {
             ret = write_u32_pair(reg, &data[i * 2U], 2U,
                                  FSY_REG_DOSE_HI_TH, &s_cfg.dose_hi_x100);
@@ -947,10 +1395,14 @@ int DeviceConfig_WriteRegBlock(uint16_t start_reg, const uint8_t *data,
             ret = write_alarm_enable_regs(reg, &data[i * 2U], 2U);
         } else if (reg == FSY_REG_DHCP_ENABLE) {
             ret = write_dhcp_reg(value);
+        } else if (reg == FSY_REG_LANGUAGE) {
+            ret = write_language_reg(value);
         } else if (reg_in_range(reg, 86U, 8U)) {
             ret = write_sn_regs(reg, &data[i * 2U], 2U);
         } else if (reg_in_range(reg, 130U, 8U)) {
             ret = write_model_regs(reg, &data[i * 2U], 2U);
+        } else if (reg_in_range(reg, FSY_REG_PRODUCT_NAME, FSY_REG_PRODUCT_NAME_REGS)) {
+            ret = write_name_regs(reg, &data[i * 2U], 2U);
         } else if (reg_in_range(reg, FSY_REG_STATIC_IP, FSY_REG_STATIC_IP_REGS)) {
             ret = write_static_ip_regs(reg, &data[i * 2U], 2U);
         } else {
@@ -963,4 +1415,31 @@ int DeviceConfig_WriteRegBlock(uint16_t start_reg, const uint8_t *data,
     }
 
     return 0;
+}
+
+int DeviceConfig_SetAlarmSound(uint8_t on)
+{
+    s_cfg.alarm_sound = (on != 0U) ? 1U : 0U;
+    sys_cfg.alarm_sound = s_cfg.alarm_sound;
+    return cfg_commit();
+}
+
+int DeviceConfig_SetAlarmLight(uint8_t on)
+{
+    s_cfg.alarm_light = (on != 0U) ? 1U : 0U;
+    sys_cfg.alarm_light = s_cfg.alarm_light;
+    return cfg_commit();
+}
+
+void DeviceConfig_GetAlarmOutput(uint8_t *sound, uint8_t *light, uint8_t *volume)
+{
+    if (volume != NULL) {
+        *volume = s_cfg.alarm_volume;
+    }
+    if (sound != NULL) {
+        *sound = s_cfg.alarm_sound;
+    }
+    if (light != NULL) {
+        *light = s_cfg.alarm_light;
+    }
 }

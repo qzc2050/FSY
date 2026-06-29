@@ -40,6 +40,8 @@ static bool Beep_Alternate(uint16_t time,uint8_t cnt,bool ref);
 
 extern uint8_t beep_event;
 extern void Beep_Ctr(uint8_t req_event);
+void Beep_PinEnsure(void);
+void Beep_DebugProbe(void);
 
 
 #endif

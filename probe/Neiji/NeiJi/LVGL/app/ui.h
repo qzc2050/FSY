@@ -8,6 +8,7 @@ extern "C" {
 #include "lvgl.h"
 
 #include "ui_helpers.h"
+#include "language.h"
 #include "components/ui_comp.h"
 #include "components/ui_comp_hook.h"
 

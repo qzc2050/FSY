@@ -18,6 +18,7 @@ import serial.tools.list_ports
 
 from fsy_protocol import (
     CFG_MODEL_MAX_LEN,
+    CFG_PRODUCT_NAME_MAX_BYTES,
     CFG_SN_MAX_LEN,
     FC_ACTIVE_UPLOAD,
     FC_READ_HOLDING_RESP,
@@ -34,6 +35,8 @@ from fsy_protocol import (
     REG_DOSE_LO_TH,
     REG_PRODUCT_MODEL,
     REG_PRODUCT_MODEL_COUNT,
+    REG_PRODUCT_NAME,
+    REG_PRODUCT_NAME_COUNT,
     REG_U32_COUNT,
     REG_SERIALNUM,
     REG_SERIALNUM_COUNT,
@@ -50,8 +53,11 @@ from fsy_protocol import (
     build_write_single,
     datetime_to_time_reg_values,
     describe_frame,
+    format_alarm_status_detail,
     iter_u32_payload,
     reg_payload_to_ascii,
+    reg_payload_to_utf8,
+    utf8_to_reg_values,
     reg_payload_to_ipv4,
     reg_payload_to_time,
     reg_payload_to_u32,
@@ -72,6 +78,7 @@ DISPLAY_REGS = [
     0x000D,
     0x000F,
 ]
+RT_REG_ALARM_STATUS = 0x000D
 
 
 def scan_port_items() -> list[str]:
@@ -307,6 +314,19 @@ class FactoryApp(tk.Tk):
             val_lbl.pack(anchor=tk.W, fill=tk.X)
             self.value_labels[reg] = val_lbl
 
+        detail_frame = ttk.LabelFrame(parent, text="报警 / 故障明细（0x000D）", padding=10)
+        detail_frame.pack(fill=tk.X, pady=(10, 0))
+        self.alarm_detail_lbl = tk.Label(
+            detail_frame,
+            text="—",
+            font=("Microsoft YaHei", 11),
+            fg="#333333",
+            justify=tk.LEFT,
+            anchor=tk.W,
+            wraplength=900,
+        )
+        self.alarm_detail_lbl.pack(fill=tk.X)
+
         ttk.Button(parent, text="手动 0x03 读实时区", command=self.read_registers).pack(
             anchor=tk.W, pady=(8, 0)
         )
@@ -324,16 +344,27 @@ class FactoryApp(tk.Tk):
             row=0, column=2, sticky=tk.W
         )
 
-        ttk.Label(form, text="产品型号 (reg 130):").grid(row=1, column=0, sticky=tk.W, pady=6)
-        self.model_var = tk.StringVar()
-        ttk.Entry(form, textvariable=self.model_var, width=28).grid(
+        ttk.Label(form, text="产品名称 (reg 146):").grid(row=1, column=0, sticky=tk.W, pady=6)
+        self.name_var = tk.StringVar(value="雷沃-探测器")
+        ttk.Entry(form, textvariable=self.name_var, width=28).grid(
             row=1, column=1, sticky=tk.W, padx=8, pady=6
         )
+        ttk.Label(
+            form,
+            text=f"UTF-8，最多 {CFG_PRODUCT_NAME_MAX_BYTES} 字节",
+            foreground="#666",
+        ).grid(row=1, column=2, sticky=tk.W)
+
+        ttk.Label(form, text="产品型号 (reg 130):").grid(row=2, column=0, sticky=tk.W, pady=6)
+        self.model_var = tk.StringVar()
+        ttk.Entry(form, textvariable=self.model_var, width=28).grid(
+            row=2, column=1, sticky=tk.W, padx=8, pady=6
+        )
         ttk.Label(form, text=f"最多 {CFG_MODEL_MAX_LEN} 字符", foreground="#666").grid(
-            row=1, column=2, sticky=tk.W
+            row=2, column=2, sticky=tk.W
         )
 
-        ttk.Label(form, text="协议地址 (reg 121):").grid(row=2, column=0, sticky=tk.W, pady=6)
+        ttk.Label(form, text="协议地址 (reg 121):").grid(row=3, column=0, sticky=tk.W, pady=6)
         self.dev_addr_var = tk.StringVar(value="1")
         ttk.Spinbox(
             form,
@@ -341,41 +372,41 @@ class FactoryApp(tk.Tk):
             to=247,
             textvariable=self.dev_addr_var,
             width=8,
-        ).grid(row=2, column=1, sticky=tk.W, padx=8, pady=6)
-        ttk.Label(form, text="写入后请同步修改顶部「从机地址」", foreground="#666").grid(
-            row=2, column=2, sticky=tk.W
-        )
-
-        ttk.Label(form, text="当前 IP (reg 6):").grid(row=3, column=0, sticky=tk.W, pady=6)
-        self.current_ip_var = tk.StringVar(value="—")
-        ttk.Entry(
-            form, textvariable=self.current_ip_var, width=28, state="readonly"
         ).grid(row=3, column=1, sticky=tk.W, padx=8, pady=6)
-        ttk.Label(form, text="只读，读 W5500 实际 IP", foreground="#666").grid(
+        ttk.Label(form, text="写入后请同步修改顶部「从机地址」", foreground="#666").grid(
             row=3, column=2, sticky=tk.W
         )
 
-        ttk.Label(form, text="剂量率上阈值 (reg 50):").grid(row=4, column=0, sticky=tk.W, pady=6)
-        self.dose_hi_var = tk.StringVar(value="10000.00")
-        ttk.Entry(form, textvariable=self.dose_hi_var, width=28).grid(
-            row=4, column=1, sticky=tk.W, padx=8, pady=6
-        )
-        ttk.Label(form, text="单位 μSv/h，协议值=×100", foreground="#666").grid(
+        ttk.Label(form, text="当前 IP (reg 6):").grid(row=4, column=0, sticky=tk.W, pady=6)
+        self.current_ip_var = tk.StringVar(value="—")
+        ttk.Entry(
+            form, textvariable=self.current_ip_var, width=28, state="readonly"
+        ).grid(row=4, column=1, sticky=tk.W, padx=8, pady=6)
+        ttk.Label(form, text="只读，读 W5500 实际 IP", foreground="#666").grid(
             row=4, column=2, sticky=tk.W
         )
 
-        ttk.Label(form, text="剂量率下阈值 (reg 52):").grid(row=5, column=0, sticky=tk.W, pady=6)
-        self.dose_lo_var = tk.StringVar(value="0.00")
-        ttk.Entry(form, textvariable=self.dose_lo_var, width=28).grid(
+        ttk.Label(form, text="剂量率上阈值 (reg 50):").grid(row=5, column=0, sticky=tk.W, pady=6)
+        self.dose_hi_var = tk.StringVar(value="10000.00")
+        ttk.Entry(form, textvariable=self.dose_hi_var, width=28).grid(
             row=5, column=1, sticky=tk.W, padx=8, pady=6
         )
-        ttk.Label(form, text="0 表示下阈值不触发", foreground="#666").grid(
+        ttk.Label(form, text="单位 μSv/h，协议值=×100", foreground="#666").grid(
             row=5, column=2, sticky=tk.W
         )
 
-        ttk.Label(form, text="报警使能 (reg 82):").grid(row=6, column=0, sticky=tk.W, pady=6)
+        ttk.Label(form, text="剂量率下阈值 (reg 52):").grid(row=6, column=0, sticky=tk.W, pady=6)
+        self.dose_lo_var = tk.StringVar(value="0.00")
+        ttk.Entry(form, textvariable=self.dose_lo_var, width=28).grid(
+            row=6, column=1, sticky=tk.W, padx=8, pady=6
+        )
+        ttk.Label(form, text="0 表示下阈值不触发", foreground="#666").grid(
+            row=6, column=2, sticky=tk.W
+        )
+
+        ttk.Label(form, text="报警使能 (reg 82):").grid(row=7, column=0, sticky=tk.W, pady=6)
         alarm_row = ttk.Frame(form)
-        alarm_row.grid(row=6, column=1, sticky=tk.W, padx=8, pady=6)
+        alarm_row.grid(row=7, column=1, sticky=tk.W, padx=8, pady=6)
         self.alarm_hi_var = tk.IntVar(value=1)
         self.alarm_lo_var = tk.IntVar(value=1)
         ttk.Checkbutton(alarm_row, text="bit0 上阈值", variable=self.alarm_hi_var).pack(
@@ -385,25 +416,25 @@ class FactoryApp(tk.Tk):
             side=tk.LEFT
         )
         ttk.Label(form, text="勾选=允许报警，取消=清报警位", foreground="#666").grid(
-            row=6, column=2, sticky=tk.W
-        )
-
-        ttk.Label(form, text="RTC 时间 (reg 94):").grid(row=7, column=0, sticky=tk.W, pady=6)
-        self.rtc_time_var = tk.StringVar(value="—")
-        ttk.Entry(
-            form, textvariable=self.rtc_time_var, width=28, state="readonly"
-        ).grid(row=7, column=1, sticky=tk.W, padx=8, pady=6)
-        ttk.Label(form, text="读 PCF85063，写入不落 W25Q", foreground="#666").grid(
             row=7, column=2, sticky=tk.W
         )
 
-        ttk.Label(form, text="软件版本 (reg 98):").grid(row=8, column=0, sticky=tk.W, pady=6)
+        ttk.Label(form, text="RTC 时间 (reg 94):").grid(row=8, column=0, sticky=tk.W, pady=6)
+        self.rtc_time_var = tk.StringVar(value="—")
+        ttk.Entry(
+            form, textvariable=self.rtc_time_var, width=28, state="readonly"
+        ).grid(row=8, column=1, sticky=tk.W, padx=8, pady=6)
+        ttk.Label(form, text="读 PCF85063，写入不落 W25Q", foreground="#666").grid(
+            row=8, column=2, sticky=tk.W
+        )
+
+        ttk.Label(form, text="软件版本 (reg 98):").grid(row=9, column=0, sticky=tk.W, pady=6)
         self.sw_version_var = tk.StringVar(value="—")
         ttk.Entry(
             form, textvariable=self.sw_version_var, width=28, state="readonly"
-        ).grid(row=8, column=1, sticky=tk.W, padx=8, pady=6)
+        ).grid(row=9, column=1, sticky=tk.W, padx=8, pady=6)
         ttk.Label(form, text="只读，固件编译期版本", foreground="#666").grid(
-            row=8, column=2, sticky=tk.W
+            row=9, column=2, sticky=tk.W
         )
 
         btn_row = ttk.Frame(parent)
@@ -415,6 +446,9 @@ class FactoryApp(tk.Tk):
             side=tk.LEFT, padx=8
         )
         ttk.Button(btn_row, text="仅写 SN", command=self.write_sn_only, width=10).pack(
+            side=tk.LEFT, padx=8
+        )
+        ttk.Button(btn_row, text="仅写名称", command=self.write_name_only, width=10).pack(
             side=tk.LEFT, padx=8
         )
         ttk.Button(btn_row, text="仅写型号", command=self.write_model_only, width=10).pack(
@@ -588,6 +622,7 @@ class FactoryApp(tk.Tk):
 
         def finish_read() -> None:
             self.sn_var.set(str(results.get("sn", "")))
+            self.name_var.set(str(results.get("name", "")))
             self.model_var.set(str(results.get("model", "")))
             self.dev_addr_var.set(str(results.get("addr", self.dev_addr_var.get())))
             self.current_ip_var.set(str(results.get("current_ip", "—")))
@@ -599,7 +634,7 @@ class FactoryApp(tk.Tk):
             self.rtc_time_var.set(str(results.get("rtc_time", "—")))
             self.sw_version_var.set(str(results.get("sw_version", "—")))
             self.status_var.set("配置读取完成")
-            messagebox.showinfo("完成", "已读取：SN / 型号 / 地址 / 当前 IP / 阈值 / 报警使能 / 时间 / 版本")
+            messagebox.showinfo("完成", "已读取：SN / 名称 / 型号 / 地址 / 当前 IP / 阈值 / 报警使能 / 时间 / 版本")
 
         def read_sw_version_step() -> None:
             req = build_read_holding(
@@ -688,13 +723,26 @@ class FactoryApp(tk.Tk):
 
             self._begin_request(req, FC_READ_HOLDING_RESP, on_ok, self._on_cfg_fail, expect_reg=REG_PRODUCT_MODEL)
 
+        def read_name_step() -> None:
+            req = build_read_holding(
+                self._slave_addr(), REG_PRODUCT_NAME, REG_PRODUCT_NAME_COUNT
+            )
+
+            def on_ok(pf: ParsedFrame) -> None:
+                results["name"] = reg_payload_to_utf8(pf.payload)
+                read_model_step()
+
+            self._begin_request(
+                req, FC_READ_HOLDING_RESP, on_ok, self._on_cfg_fail, expect_reg=REG_PRODUCT_NAME
+            )
+
         def read_addr_step() -> None:
             req = build_read_holding(self._slave_addr(), REG_ADDRESS, 1)
 
             def on_ok(pf: ParsedFrame) -> None:
                 if len(pf.payload) >= 2:
                     results["addr"] = int.from_bytes(pf.payload[:2], "little")
-                read_model_step()
+                read_name_step()
 
             self._begin_request(req, FC_READ_HOLDING_RESP, on_ok, self._on_cfg_fail, expect_reg=REG_ADDRESS)
 
@@ -731,6 +779,23 @@ class FactoryApp(tk.Tk):
             lambda _pf: messagebox.showinfo("完成", f"序列号已写入: {sn}"),
             self._on_cfg_fail,
             expect_reg=REG_SERIALNUM,
+        )
+
+    def write_name_only(self) -> None:
+        if not self._require_connected():
+            return
+        name = self.name_var.get().strip()
+        if not name:
+            messagebox.showwarning("提示", "请输入产品名称")
+            return
+        values = utf8_to_reg_values(name, REG_PRODUCT_NAME_COUNT)
+        req = build_write_multi(self._slave_addr(), REG_PRODUCT_NAME, values)
+        self._begin_request(
+            req,
+            FC_WRITE_MULTI_RESP,
+            lambda _pf: messagebox.showinfo("完成", f"产品名称已写入: {name}"),
+            self._on_cfg_fail,
+            expect_reg=REG_PRODUCT_NAME,
         )
 
     def write_model_only(self) -> None:
@@ -852,9 +917,10 @@ class FactoryApp(tk.Tk):
         if not self._require_connected():
             return
         sn = self.sn_var.get().strip()[:CFG_SN_MAX_LEN]
+        name = self.name_var.get().strip()
         model = self.model_var.get().strip()[:CFG_MODEL_MAX_LEN]
-        if not sn or not model:
-            messagebox.showwarning("提示", "请填写序列号和产品型号")
+        if not sn or not name or not model:
+            messagebox.showwarning("提示", "请填写序列号、产品名称和产品型号")
             return
         try:
             addr = int(self.dev_addr_var.get())
@@ -883,7 +949,7 @@ class FactoryApp(tk.Tk):
             def on_ok(_pf: ParsedFrame) -> None:
                 self.slave_addr_var.set(str(addr))
                 self.status_var.set("配置写入完成")
-                messagebox.showinfo("完成", "SN / 型号 / 地址 / 阈值 / 报警使能已写入 W25Q")
+                messagebox.showinfo("完成", "SN / 名称 / 型号 / 地址 / 阈值 / 报警使能已写入 W25Q")
 
             self._begin_request(
                 req,
@@ -938,13 +1004,24 @@ class FactoryApp(tk.Tk):
                 expect_reg=REG_PRODUCT_MODEL,
             )
 
+        def write_name_step() -> None:
+            values = utf8_to_reg_values(name, REG_PRODUCT_NAME_COUNT)
+            req = build_write_multi(self._slave_addr(), REG_PRODUCT_NAME, values)
+            self._begin_request(
+                req,
+                FC_WRITE_MULTI_RESP,
+                lambda _pf: write_model_step(),
+                self._on_cfg_fail,
+                expect_reg=REG_PRODUCT_NAME,
+            )
+
         def write_sn_step() -> None:
             values = ascii_to_reg_values(sn, REG_SERIALNUM_COUNT)
             req = build_write_multi(self._slave_addr(), REG_SERIALNUM, values)
             self._begin_request(
                 req,
                 FC_WRITE_MULTI_RESP,
-                lambda _pf: write_model_step(),
+                lambda _pf: write_name_step(),
                 self._on_cfg_fail,
                 expect_reg=REG_SERIALNUM,
             )
@@ -1055,6 +1132,17 @@ class FactoryApp(tk.Tk):
         if name_fmt:
             _, fmt = name_fmt
             lbl.configure(text=fmt(raw))
+            if reg_addr == RT_REG_ALARM_STATUS:
+                if raw == 0:
+                    lbl.configure(fg="#0066CC")
+                elif raw & ((1 << ALARM_BIT_DOSE_HI) | (1 << ALARM_BIT_DOSE_LO)):
+                    lbl.configure(fg="#CC3300")
+                else:
+                    lbl.configure(fg="#CC0000")
+                self.alarm_detail_lbl.configure(
+                    text=format_alarm_status_detail(raw),
+                    fg="#CC0000" if raw else "#333333",
+                )
         else:
             lbl.configure(text=str(raw))
 
