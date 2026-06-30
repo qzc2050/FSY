@@ -6,6 +6,7 @@ static float s_sensitivity_cpm_per_usvh = GEIGER_DEFAULT_SENSITIVITY_CPM;
 static GeigerEWMA s_sensor;
 static uint8_t s_dr_input_mode = DR_INPUT_MODE_REAL;
 static uint32_t s_dr_manual_cps = 0U;
+static float s_rate_limit_usvh = 10000.0f;
 
 static void init_ewma_config(void)
 {
@@ -109,6 +110,44 @@ bool DoseRate_SetSensitivity(float sensitivity_cpm_per_usvh)
 
     s_sensitivity_cpm_per_usvh = sensitivity_cpm_per_usvh;
     return true;
+}
+
+bool DoseRate_SetEwmaConfig(const EwmaGlobalConfig *cfg)
+{
+    if (cfg == NULL) {
+        return false;
+    }
+    if ((cfg->threshold_cps < 0) || (cfg->threshold_delta < 0) ||
+        (cfg->boost_duration < 0) ||
+        (cfg->alpha_low <= 0.0f) || (cfg->alpha_low > 1.0f) ||
+        (cfg->alpha_high <= 0.0f) || (cfg->alpha_high > 1.0f)) {
+        return false;
+    }
+
+    s_ewma_config = *cfg;
+    ewma_apply_config(&s_sensor);
+    return true;
+}
+
+void DoseRate_GetEwmaConfig(EwmaGlobalConfig *cfg)
+{
+    if (cfg != NULL) {
+        *cfg = s_ewma_config;
+    }
+}
+
+bool DoseRate_SetRateLimitUsvh(float limit_usvh)
+{
+    if (limit_usvh <= 0.0f) {
+        return false;
+    }
+    s_rate_limit_usvh = limit_usvh;
+    return true;
+}
+
+float DoseRate_GetRateLimitUsvh(void)
+{
+    return s_rate_limit_usvh;
 }
 
 uint8_t DoseRate_GetInputMode(void)

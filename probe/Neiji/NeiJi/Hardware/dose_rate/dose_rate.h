@@ -39,6 +39,12 @@ float DoseRate_GetCurrent(void);
 
 bool DoseRate_SetSensitivity(float sensitivity_cpm_per_usvh);
 
+bool DoseRate_SetEwmaConfig(const EwmaGlobalConfig *cfg);
+void DoseRate_GetEwmaConfig(EwmaGlobalConfig *cfg);
+
+bool DoseRate_SetRateLimitUsvh(float limit_usvh);
+float DoseRate_GetRateLimitUsvh(void);
+
 uint8_t DoseRate_GetInputMode(void);
 bool DoseRate_SetInputMode(uint8_t mode);
 uint32_t DoseRate_GetManualCps(void);

@@ -24,6 +24,8 @@ const char *DeviceConfig_GetSn(void);
 const char *DeviceConfig_GetProductModel(void);
 const char *DeviceConfig_GetProductName(void);
 
+const char *DeviceConfig_GetHwVersion(void);
+
 int DeviceConfig_ReadRegBlock(uint16_t start_reg, uint16_t reg_count,
                               uint8_t *out, uint16_t out_cap);
 int DeviceConfig_WriteRegBlock(uint16_t start_reg, const uint8_t *data,
@@ -37,5 +39,7 @@ void DeviceConfig_GetDoseAlarmConfig(uint32_t *hi_x100, uint32_t *lo_x100,
 int DeviceConfig_SetAlarmSound(uint8_t on);
 int DeviceConfig_SetAlarmLight(uint8_t on);
 void DeviceConfig_GetAlarmOutput(uint8_t *sound, uint8_t *light, uint8_t *volume);
+
+void DeviceConfig_ApplyGeigerAlgorithm(void);
 
 #endif

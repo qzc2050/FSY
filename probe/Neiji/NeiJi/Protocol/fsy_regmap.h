@@ -51,10 +51,6 @@
 #define FSY_REG_ADDRESS           121U
 #define FSY_REG_ALARM_VOLUME      122U
 
-/* 当前 IP（只读，W5500 实际地址） */
-#define FSY_REG_CURRENT_IP        6U
-#define FSY_REG_CURRENT_IP_REGS   2U
-
 /* C 类扩展 */
 
 #define FSY_REG_PRODUCT_MODEL     130U
@@ -68,9 +64,22 @@
 #define FSY_REG_STATIC_IP         138U
 #define FSY_REG_STATIC_IP_REGS    2U
 
+/* 盖革 / EWMA 算法（C 类，每项 uint32 占 2 reg，小端） */
+#define FSY_REG_GEIGER_SENS           154U
+#define FSY_REG_EWMA_THRESHOLD_CPS    156U
+#define FSY_REG_EWMA_THRESHOLD_DELTA  158U
+#define FSY_REG_EWMA_ALPHA_LOW        160U
+#define FSY_REG_EWMA_ALPHA_HIGH       162U
+#define FSY_REG_EWMA_BOOST_DURATION   164U
+#define FSY_REG_RATE_LIMIT            166U
+#define FSY_REG_GEIGER_PARAM_REGS     2U
+
 #define FSY_REG_DHCP_ENABLE       170U
 
 #define FSY_REG_LANGUAGE          174U
+
+#define FSY_REG_HW_VERSION        180U
+#define FSY_REG_HW_VERSION_REGS   8U
 
 void Fsy_Regmap_Init(void);
 

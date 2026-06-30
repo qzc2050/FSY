@@ -1,4 +1,5 @@
 #include "geiger.h"
+#include "dose_rate.h"
 #include "tim.h"
 #include "main.h"
 #include "fsy_regmap.h"
@@ -127,6 +128,7 @@ void Geiger_Init(void)
     
     // 初始化剂量率 EWMA 滤波器
     DoseRate_Init();
+    DeviceConfig_ApplyGeigerAlgorithm();
 
 #if GEIGER_HV_ENABLE
     HAL_GPIO_WritePin(HV_EN_GPIO_Port, HV_EN_Pin, GPIO_PIN_SET);
@@ -216,8 +218,8 @@ void Geiger_Doserate_Calculate(void)
         Alarm_Output_NotifyCps(once_cnt);
         
         // 超过量程限制
-        if(data_var.real_rate > RATE_LIMIT)
-            data_var.real_rate = RATE_LIMIT;
+        if(data_var.real_rate > DoseRate_GetRateLimitUsvh())
+            data_var.real_rate = DoseRate_GetRateLimitUsvh();
         
         // 重置累计计数（为下一秒做准备）
         once_cnt = 0;

@@ -1,7 +1,6 @@
 #include "fsy_regmap.h"
 #include "device_config.h"
 #include "net_config.h"
-#include "w5500_dhcp.h"
 #include "pcf85063.h"
 #include "aht20.h"
 #include "bmp280.h"
@@ -69,32 +68,6 @@ int Fsy_Regmap_ReadU32(uint16_t reg_addr, uint32_t *value)
     index = (uint32_t)(reg_addr - FSY_RT_REG_START);
     *value = s_rt_regs[index];
     return 0;
-}
-
-static int reg_is_current_ip(uint16_t reg)
-{
-    return (reg >= FSY_REG_CURRENT_IP) &&
-           (reg < (uint16_t)(FSY_REG_CURRENT_IP + FSY_REG_CURRENT_IP_REGS));
-}
-
-static int read_current_ip_reg(uint16_t reg, uint8_t *out, uint16_t out_cap)
-{
-    uint8_t ip[4];
-
-    if (out_cap < 2U) {
-        return -1;
-    }
-    if (!reg_is_current_ip(reg)) {
-        return -1;
-    }
-
-    W5500_Get_IP(ip);
-    if (reg == FSY_REG_CURRENT_IP) {
-        store_u16_le(out, (uint16_t)ip[0] | ((uint16_t)ip[1] << 8));
-    } else {
-        store_u16_le(out, (uint16_t)ip[2] | ((uint16_t)ip[3] << 8));
-    }
-    return 2;
 }
 
 static int read_time_reg(uint16_t reg, uint8_t *out, uint16_t out_cap)
@@ -243,13 +216,6 @@ int Fsy_Regmap_ReadBlock(uint16_t start_reg, uint16_t reg_count,
         uint32_t val = 0U;
         uint8_t cfg_pair[2];
 
-        if (reg_is_current_ip(reg)) {
-            if (read_current_ip_reg(reg, &out[(uint16_t)(i * 2U)],
-                                    (uint16_t)(byte_count - (i * 2U))) == 2) {
-                continue;
-            }
-        }
-
         if ((reg >= FSY_REG_TIME) &&
             (reg < (uint16_t)(FSY_REG_TIME + FSY_REG_TIME_REGS))) {
             if (read_time_reg(reg, &out[(uint16_t)(i * 2U)],
@@ -305,6 +271,14 @@ static int reg_is_configurable(uint16_t reg)
         return 1;
     }
     if (reg == FSY_REG_LANGUAGE) {
+        return 1;
+    }
+    if ((reg >= FSY_REG_HW_VERSION) &&
+        (reg < (uint16_t)(FSY_REG_HW_VERSION + FSY_REG_HW_VERSION_REGS))) {
+        return 1;
+    }
+    if ((reg >= FSY_REG_GEIGER_SENS) &&
+        (reg < (uint16_t)(FSY_REG_RATE_LIMIT + FSY_REG_GEIGER_PARAM_REGS))) {
         return 1;
     }
     if ((reg >= FSY_REG_DOSE_HI_TH) &&

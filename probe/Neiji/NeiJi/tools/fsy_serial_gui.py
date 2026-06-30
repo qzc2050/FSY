@@ -18,6 +18,7 @@ import serial.tools.list_ports
 
 from fsy_protocol import (
     CFG_MODEL_MAX_LEN,
+    CFG_HW_VERSION_MAX_LEN,
     CFG_PRODUCT_NAME_MAX_BYTES,
     CFG_SN_MAX_LEN,
     FC_ACTIVE_UPLOAD,
@@ -29,14 +30,25 @@ from fsy_protocol import (
     REG_ADDRESS,
     REG_ALARM_ENABLE,
     REG_ALARM_ENABLE_COUNT,
-    REG_CURRENT_IP,
-    REG_CURRENT_IP_COUNT,
     REG_DOSE_HI_TH,
     REG_DOSE_LO_TH,
     REG_PRODUCT_MODEL,
     REG_PRODUCT_MODEL_COUNT,
     REG_PRODUCT_NAME,
     REG_PRODUCT_NAME_COUNT,
+    REG_STATIC_IP,
+    REG_STATIC_IP_COUNT,
+    REG_GEIGER_SENS,
+    REG_EWMA_THRESHOLD_CPS,
+    REG_EWMA_THRESHOLD_DELTA,
+    REG_EWMA_ALPHA_LOW,
+    REG_EWMA_ALPHA_HIGH,
+    REG_EWMA_BOOST_DURATION,
+    REG_RATE_LIMIT,
+    REG_GEIGER_PARAM_COUNT,
+    REG_HW_VERSION,
+    REG_HW_VERSION_COUNT,
+    REG_LANGUAGE,
     REG_U32_COUNT,
     REG_SERIALNUM,
     REG_SERIALNUM_COUNT,
@@ -59,6 +71,7 @@ from fsy_protocol import (
     reg_payload_to_utf8,
     utf8_to_reg_values,
     reg_payload_to_ipv4,
+    ipv4_to_reg_values,
     reg_payload_to_time,
     reg_payload_to_u32,
     u32_to_reg_values,
@@ -278,11 +291,14 @@ class FactoryApp(tk.Tk):
 
         rt_tab = ttk.Frame(notebook, padding=4)
         cfg_tab = ttk.Frame(notebook, padding=12)
+        geiger_tab = ttk.Frame(notebook, padding=12)
         notebook.add(rt_tab, text="实时参数")
         notebook.add(cfg_tab, text="生产配置")
+        notebook.add(geiger_tab, text="盖革算法")
 
         self._build_rt_tab(rt_tab)
         self._build_cfg_tab(cfg_tab)
+        self._build_geiger_tab(geiger_tab)
 
         log_frame = ttk.LabelFrame(self, text="通信日志", padding=4)
         log_frame.pack(fill=tk.BOTH, expand=True, padx=8, pady=(0, 8))
@@ -364,7 +380,16 @@ class FactoryApp(tk.Tk):
             row=2, column=2, sticky=tk.W
         )
 
-        ttk.Label(form, text="协议地址 (reg 121):").grid(row=3, column=0, sticky=tk.W, pady=6)
+        ttk.Label(form, text="硬件版本 (reg 180):").grid(row=3, column=0, sticky=tk.W, pady=6)
+        self.hw_version_var = tk.StringVar(value="HW1314520168")
+        ttk.Entry(form, textvariable=self.hw_version_var, width=28).grid(
+            row=3, column=1, sticky=tk.W, padx=8, pady=6
+        )
+        ttk.Label(form, text=f"ASCII，最多 {CFG_HW_VERSION_MAX_LEN} 字符", foreground="#666").grid(
+            row=3, column=2, sticky=tk.W
+        )
+
+        ttk.Label(form, text="协议地址 (reg 121):").grid(row=4, column=0, sticky=tk.W, pady=6)
         self.dev_addr_var = tk.StringVar(value="1")
         ttk.Spinbox(
             form,
@@ -372,41 +397,41 @@ class FactoryApp(tk.Tk):
             to=247,
             textvariable=self.dev_addr_var,
             width=8,
-        ).grid(row=3, column=1, sticky=tk.W, padx=8, pady=6)
-        ttk.Label(form, text="写入后请同步修改顶部「从机地址」", foreground="#666").grid(
-            row=3, column=2, sticky=tk.W
-        )
-
-        ttk.Label(form, text="当前 IP (reg 6):").grid(row=4, column=0, sticky=tk.W, pady=6)
-        self.current_ip_var = tk.StringVar(value="—")
-        ttk.Entry(
-            form, textvariable=self.current_ip_var, width=28, state="readonly"
         ).grid(row=4, column=1, sticky=tk.W, padx=8, pady=6)
-        ttk.Label(form, text="只读，读 W5500 实际 IP", foreground="#666").grid(
+        ttk.Label(form, text="写入后请同步修改顶部「从机地址」", foreground="#666").grid(
             row=4, column=2, sticky=tk.W
         )
 
-        ttk.Label(form, text="剂量率上阈值 (reg 50):").grid(row=5, column=0, sticky=tk.W, pady=6)
-        self.dose_hi_var = tk.StringVar(value="10000.00")
-        ttk.Entry(form, textvariable=self.dose_hi_var, width=28).grid(
+        ttk.Label(form, text="静态 IP (reg 138):").grid(row=5, column=0, sticky=tk.W, pady=6)
+        self.static_ip_var = tk.StringVar(value="192.168.2.100")
+        ttk.Entry(form, textvariable=self.static_ip_var, width=28).grid(
             row=5, column=1, sticky=tk.W, padx=8, pady=6
         )
-        ttk.Label(form, text="单位 μSv/h，协议值=×100", foreground="#666").grid(
+        ttk.Label(form, text="落 W25Q；静态模式生效", foreground="#666").grid(
             row=5, column=2, sticky=tk.W
         )
 
-        ttk.Label(form, text="剂量率下阈值 (reg 52):").grid(row=6, column=0, sticky=tk.W, pady=6)
-        self.dose_lo_var = tk.StringVar(value="0.00")
-        ttk.Entry(form, textvariable=self.dose_lo_var, width=28).grid(
+        ttk.Label(form, text="剂量率上阈值 (reg 50):").grid(row=6, column=0, sticky=tk.W, pady=6)
+        self.dose_hi_var = tk.StringVar(value="10000.00")
+        ttk.Entry(form, textvariable=self.dose_hi_var, width=28).grid(
             row=6, column=1, sticky=tk.W, padx=8, pady=6
         )
-        ttk.Label(form, text="0 表示下阈值不触发", foreground="#666").grid(
+        ttk.Label(form, text="单位 μSv/h，协议值=×100", foreground="#666").grid(
             row=6, column=2, sticky=tk.W
         )
 
-        ttk.Label(form, text="报警使能 (reg 82):").grid(row=7, column=0, sticky=tk.W, pady=6)
+        ttk.Label(form, text="剂量率下阈值 (reg 52):").grid(row=7, column=0, sticky=tk.W, pady=6)
+        self.dose_lo_var = tk.StringVar(value="0.00")
+        ttk.Entry(form, textvariable=self.dose_lo_var, width=28).grid(
+            row=7, column=1, sticky=tk.W, padx=8, pady=6
+        )
+        ttk.Label(form, text="0 表示下阈值不触发", foreground="#666").grid(
+            row=7, column=2, sticky=tk.W
+        )
+
+        ttk.Label(form, text="报警使能 (reg 82):").grid(row=8, column=0, sticky=tk.W, pady=6)
         alarm_row = ttk.Frame(form)
-        alarm_row.grid(row=7, column=1, sticky=tk.W, padx=8, pady=6)
+        alarm_row.grid(row=8, column=1, sticky=tk.W, padx=8, pady=6)
         self.alarm_hi_var = tk.IntVar(value=1)
         self.alarm_lo_var = tk.IntVar(value=1)
         ttk.Checkbutton(alarm_row, text="bit0 上阈值", variable=self.alarm_hi_var).pack(
@@ -416,25 +441,38 @@ class FactoryApp(tk.Tk):
             side=tk.LEFT
         )
         ttk.Label(form, text="勾选=允许报警，取消=清报警位", foreground="#666").grid(
-            row=7, column=2, sticky=tk.W
-        )
-
-        ttk.Label(form, text="RTC 时间 (reg 94):").grid(row=8, column=0, sticky=tk.W, pady=6)
-        self.rtc_time_var = tk.StringVar(value="—")
-        ttk.Entry(
-            form, textvariable=self.rtc_time_var, width=28, state="readonly"
-        ).grid(row=8, column=1, sticky=tk.W, padx=8, pady=6)
-        ttk.Label(form, text="读 PCF85063，写入不落 W25Q", foreground="#666").grid(
             row=8, column=2, sticky=tk.W
         )
 
-        ttk.Label(form, text="软件版本 (reg 98):").grid(row=9, column=0, sticky=tk.W, pady=6)
+        ttk.Label(form, text="RTC 时间 (reg 94):").grid(row=9, column=0, sticky=tk.W, pady=6)
+        self.rtc_time_var = tk.StringVar(value="—")
+        ttk.Entry(
+            form, textvariable=self.rtc_time_var, width=28, state="readonly"
+        ).grid(row=9, column=1, sticky=tk.W, padx=8, pady=6)
+        ttk.Label(form, text="读 PCF85063，写入不落 W25Q", foreground="#666").grid(
+            row=9, column=2, sticky=tk.W
+        )
+
+        ttk.Label(form, text="软件版本 (reg 98):").grid(row=10, column=0, sticky=tk.W, pady=6)
         self.sw_version_var = tk.StringVar(value="—")
         ttk.Entry(
             form, textvariable=self.sw_version_var, width=28, state="readonly"
-        ).grid(row=9, column=1, sticky=tk.W, padx=8, pady=6)
+        ).grid(row=10, column=1, sticky=tk.W, padx=8, pady=6)
         ttk.Label(form, text="只读，固件编译期版本", foreground="#666").grid(
-            row=9, column=2, sticky=tk.W
+            row=10, column=2, sticky=tk.W
+        )
+
+        ttk.Label(form, text="语言 (reg 174):").grid(row=11, column=0, sticky=tk.W, pady=6)
+        self.language_var = tk.StringVar(value="0 中文")
+        ttk.Combobox(
+            form,
+            textvariable=self.language_var,
+            values=("0 中文", "1 English"),
+            width=26,
+            state="readonly",
+        ).grid(row=11, column=1, sticky=tk.W, padx=8, pady=6)
+        ttk.Label(form, text="0=中文，1=英文，落 W25Q", foreground="#666").grid(
+            row=11, column=2, sticky=tk.W
         )
 
         btn_row = ttk.Frame(parent)
@@ -457,6 +495,12 @@ class FactoryApp(tk.Tk):
         ttk.Button(btn_row, text="仅写地址", command=self.write_addr_only, width=10).pack(
             side=tk.LEFT, padx=8
         )
+        ttk.Button(btn_row, text="仅写 IP", command=self.write_ip_only, width=10).pack(
+            side=tk.LEFT, padx=8
+        )
+        ttk.Button(btn_row, text="仅写语言", command=self.write_language_only, width=10).pack(
+            side=tk.LEFT, padx=8
+        )
         ttk.Button(btn_row, text="仅写阈值/报警", command=self.write_alarm_only, width=14).pack(
             side=tk.LEFT, padx=8
         )
@@ -466,12 +510,154 @@ class FactoryApp(tk.Tk):
 
         hint = ttk.Label(
             parent,
-            text="配置写入后落 W25Q，断电保持。当前 IP 需网络就绪后读取。"
+            text="配置写入后落 W25Q，断电保持。静态 IP 见 reg 138；"
             "修改协议地址后需用新地址通信。",
             foreground="#444",
             wraplength=820,
         )
         hint.pack(anchor=tk.W, pady=(8, 0))
+
+    def _language_reg_value(self) -> int | None:
+        text = self.language_var.get().strip()
+        if text.startswith("1"):
+            return 1
+        if text.startswith("0"):
+            return 0
+        messagebox.showwarning("提示", "语言无效，请选择 0 中文 或 1 English")
+        return None
+
+    def _set_language_from_reg(self, value: int) -> None:
+        self.language_var.set("1 English" if value else "0 中文")
+
+    def _build_geiger_tab(self, parent: ttk.Frame) -> None:
+        form = ttk.LabelFrame(parent, text="盖革 / EWMA（reg 154–167，每项 uint32 占 2 reg）", padding=12)
+        form.pack(fill=tk.X)
+
+        rows = [
+            ("灵敏度 (reg 154)", "geiger_sens_var", "120.00", "cpm/(μSv/h)，协议值×100"),
+            ("EWMA threshold_cps (156)", "ewma_cps_var", "100", "CPS"),
+            ("EWMA threshold_delta (158)", "ewma_delta_var", "10", ""),
+            ("EWMA alpha_low (160)", "ewma_alpha_lo_var", "0.03", "协议值×100"),
+            ("EWMA alpha_high (162)", "ewma_alpha_hi_var", "0.35", "协议值×100"),
+            ("EWMA boost_duration (164)", "ewma_boost_var", "20", "秒"),
+            ("剂量率量程上限 (166)", "rate_limit_var", "10000.00", "μSv/h，协议值×100"),
+        ]
+        self.geiger_sens_var = tk.StringVar(value="120.00")
+        self.ewma_cps_var = tk.StringVar(value="100")
+        self.ewma_delta_var = tk.StringVar(value="10")
+        self.ewma_alpha_lo_var = tk.StringVar(value="0.03")
+        self.ewma_alpha_hi_var = tk.StringVar(value="0.35")
+        self.ewma_boost_var = tk.StringVar(value="20")
+        self.rate_limit_var = tk.StringVar(value="10000.00")
+
+        for i, (label, attr, _default, hint) in enumerate(rows):
+            ttk.Label(form, text=label).grid(row=i, column=0, sticky=tk.W, pady=4)
+            var = getattr(self, attr)
+            ttk.Entry(form, textvariable=var, width=20).grid(
+                row=i, column=1, sticky=tk.W, padx=8, pady=4
+            )
+            if hint:
+                ttk.Label(form, text=hint, foreground="#666").grid(
+                    row=i, column=2, sticky=tk.W, pady=4
+                )
+
+        btn_row = ttk.Frame(parent)
+        btn_row.pack(fill=tk.X, pady=(12, 0))
+        ttk.Button(btn_row, text="读取盖革参数", command=self.read_geiger_cfg, width=14).pack(
+            side=tk.LEFT, padx=(0, 8)
+        )
+        ttk.Button(btn_row, text="写入盖革参数", command=self.write_geiger_cfg, width=14).pack(
+            side=tk.LEFT
+        )
+
+    def _geiger_form_u32_values(self) -> list[tuple[int, list[int]]] | None:
+        try:
+            items = [
+                (REG_GEIGER_SENS, int(float(self.geiger_sens_var.get()) * 100.0)),
+                (REG_EWMA_THRESHOLD_CPS, int(self.ewma_cps_var.get())),
+                (REG_EWMA_THRESHOLD_DELTA, int(self.ewma_delta_var.get())),
+                (REG_EWMA_ALPHA_LOW, int(float(self.ewma_alpha_lo_var.get()) * 100.0)),
+                (REG_EWMA_ALPHA_HIGH, int(float(self.ewma_alpha_hi_var.get()) * 100.0)),
+                (REG_EWMA_BOOST_DURATION, int(self.ewma_boost_var.get())),
+                (REG_RATE_LIMIT, int(float(self.rate_limit_var.get()) * 100.0)),
+            ]
+        except ValueError:
+            messagebox.showwarning("提示", "盖革参数格式无效")
+            return None
+
+        out: list[tuple[int, list[int]]] = []
+        for reg, val in items:
+            if val < 0:
+                messagebox.showwarning("提示", "盖革参数不能为负")
+                return None
+            out.append((reg, u32_to_reg_values(val)))
+        return out
+
+    def read_geiger_cfg(self) -> None:
+        if not self._require_connected():
+            return
+
+        results: dict[str, int] = {}
+        chain = [
+            (REG_GEIGER_SENS, "sens"),
+            (REG_EWMA_THRESHOLD_CPS, "cps"),
+            (REG_EWMA_THRESHOLD_DELTA, "delta"),
+            (REG_EWMA_ALPHA_LOW, "alpha_lo"),
+            (REG_EWMA_ALPHA_HIGH, "alpha_hi"),
+            (REG_EWMA_BOOST_DURATION, "boost"),
+            (REG_RATE_LIMIT, "rate_limit"),
+        ]
+
+        def finish() -> None:
+            self.geiger_sens_var.set(f"{results.get('sens', 0) / 100.0:.2f}")
+            self.ewma_cps_var.set(str(results.get("cps", 0)))
+            self.ewma_delta_var.set(str(results.get("delta", 0)))
+            self.ewma_alpha_lo_var.set(f"{results.get('alpha_lo', 0) / 100.0:.2f}")
+            self.ewma_alpha_hi_var.set(f"{results.get('alpha_hi', 0) / 100.0:.2f}")
+            self.ewma_boost_var.set(str(results.get("boost", 0)))
+            self.rate_limit_var.set(f"{results.get('rate_limit', 0) / 100.0:.2f}")
+            self.status_var.set("盖革参数读取完成")
+            messagebox.showinfo("完成", "已读取盖革 / EWMA 参数（reg 154–167）")
+
+        def make_step(idx: int) -> None:
+            reg, key = chain[idx]
+
+            def on_ok(pf: ParsedFrame) -> None:
+                results[key] = reg_payload_to_u32(pf.payload)
+                if idx + 1 < len(chain):
+                    make_step(idx + 1)
+                else:
+                    finish()
+
+            req = build_read_holding(self._slave_addr(), reg, REG_GEIGER_PARAM_COUNT)
+            self._begin_request(
+                req, FC_READ_HOLDING_RESP, on_ok, self._on_cfg_fail, expect_reg=reg
+            )
+
+        make_step(0)
+
+    def write_geiger_cfg(self) -> None:
+        if not self._require_connected():
+            return
+        items = self._geiger_form_u32_values()
+        if items is None:
+            return
+
+        def make_step(idx: int) -> None:
+            reg, values = items[idx]
+
+            def on_ok(_pf: ParsedFrame) -> None:
+                if idx + 1 < len(items):
+                    make_step(idx + 1)
+                else:
+                    messagebox.showinfo("完成", "盖革 / EWMA 参数已写入 W25Q")
+
+            req = build_write_multi(self._slave_addr(), reg, values)
+            self._begin_request(
+                req, FC_WRITE_MULTI_RESP, on_ok, self._on_cfg_fail, expect_reg=reg
+            )
+
+        make_step(0)
 
     def _slave_addr(self) -> int:
         try:
@@ -624,8 +810,9 @@ class FactoryApp(tk.Tk):
             self.sn_var.set(str(results.get("sn", "")))
             self.name_var.set(str(results.get("name", "")))
             self.model_var.set(str(results.get("model", "")))
+            self.hw_version_var.set(str(results.get("hw_version", "")))
             self.dev_addr_var.set(str(results.get("addr", self.dev_addr_var.get())))
-            self.current_ip_var.set(str(results.get("current_ip", "—")))
+            self.static_ip_var.set(str(results.get("static_ip", self.static_ip_var.get())))
             self.dose_hi_var.set(str(results.get("dose_hi", self.dose_hi_var.get())))
             self.dose_lo_var.set(str(results.get("dose_lo", self.dose_lo_var.get())))
             alarm_enable = int(results.get("alarm_enable", 0))
@@ -633,8 +820,13 @@ class FactoryApp(tk.Tk):
             self.alarm_lo_var.set(1 if (alarm_enable & (1 << ALARM_BIT_DOSE_LO)) else 0)
             self.rtc_time_var.set(str(results.get("rtc_time", "—")))
             self.sw_version_var.set(str(results.get("sw_version", "—")))
+            self._set_language_from_reg(int(results.get("language", 0)))
             self.status_var.set("配置读取完成")
-            messagebox.showinfo("完成", "已读取：SN / 名称 / 型号 / 地址 / 当前 IP / 阈值 / 报警使能 / 时间 / 版本")
+            messagebox.showinfo(
+                "完成",
+                "已读取：SN / 名称 / 型号 / 硬件版本 / 地址 / 静态 IP / 阈值 / "
+                "报警使能 / 时间 / 语言 / 版本",
+            )
 
         def read_sw_version_step() -> None:
             req = build_read_holding(
@@ -643,7 +835,7 @@ class FactoryApp(tk.Tk):
 
             def on_ok(pf: ParsedFrame) -> None:
                 results["sw_version"] = reg_payload_to_ascii(pf.payload)
-                finish_read()
+                read_language_step()
 
             self._begin_request(
                 req,
@@ -653,15 +845,40 @@ class FactoryApp(tk.Tk):
                 expect_reg=REG_SOFTWARE_VERSION,
             )
 
+        def read_language_step() -> None:
+            req = build_read_holding(self._slave_addr(), REG_LANGUAGE, 1)
+
+            def on_ok(pf: ParsedFrame) -> None:
+                if len(pf.payload) >= 2:
+                    results["language"] = int.from_bytes(pf.payload[:2], "little")
+                finish_read()
+
+            self._begin_request(
+                req, FC_READ_HOLDING_RESP, on_ok, self._on_cfg_fail, expect_reg=REG_LANGUAGE
+            )
+
         def read_time_step() -> None:
             req = build_read_holding(self._slave_addr(), REG_TIME, REG_TIME_COUNT)
 
             def on_ok(pf: ParsedFrame) -> None:
                 results["rtc_time"] = reg_payload_to_time(pf.payload)
-                read_sw_version_step()
+                read_hw_version_step()
 
             self._begin_request(
                 req, FC_READ_HOLDING_RESP, on_ok, self._on_cfg_fail, expect_reg=REG_TIME
+            )
+
+        def read_hw_version_step() -> None:
+            req = build_read_holding(
+                self._slave_addr(), REG_HW_VERSION, REG_HW_VERSION_COUNT
+            )
+
+            def on_ok(pf: ParsedFrame) -> None:
+                results["hw_version"] = reg_payload_to_ascii(pf.payload)
+                read_sw_version_step()
+
+            self._begin_request(
+                req, FC_READ_HOLDING_RESP, on_ok, self._on_cfg_fail, expect_reg=REG_HW_VERSION
             )
 
         def read_alarm_enable_step() -> None:
@@ -699,17 +916,17 @@ class FactoryApp(tk.Tk):
                 req, FC_READ_HOLDING_RESP, on_ok, self._on_cfg_fail, expect_reg=REG_DOSE_HI_TH
             )
 
-        def read_current_ip_step() -> None:
+        def read_static_ip_step() -> None:
             req = build_read_holding(
-                self._slave_addr(), REG_CURRENT_IP, REG_CURRENT_IP_COUNT
+                self._slave_addr(), REG_STATIC_IP, REG_STATIC_IP_COUNT
             )
 
             def on_ok(pf: ParsedFrame) -> None:
-                results["current_ip"] = reg_payload_to_ipv4(pf.payload)
+                results["static_ip"] = reg_payload_to_ipv4(pf.payload)
                 read_dose_hi_step()
 
             self._begin_request(
-                req, FC_READ_HOLDING_RESP, on_ok, self._on_cfg_fail, expect_reg=REG_CURRENT_IP
+                req, FC_READ_HOLDING_RESP, on_ok, self._on_cfg_fail, expect_reg=REG_STATIC_IP
             )
 
         def read_model_step() -> None:
@@ -719,7 +936,7 @@ class FactoryApp(tk.Tk):
 
             def on_ok(pf: ParsedFrame) -> None:
                 results["model"] = reg_payload_to_ascii(pf.payload)
-                read_current_ip_step()
+                read_static_ip_step()
 
             self._begin_request(req, FC_READ_HOLDING_RESP, on_ok, self._on_cfg_fail, expect_reg=REG_PRODUCT_MODEL)
 
@@ -835,6 +1052,44 @@ class FactoryApp(tk.Tk):
 
         self._begin_request(req, FC_WRITE_SINGLE_RESP, on_ok, self._on_cfg_fail, expect_reg=REG_ADDRESS)
 
+    def _parse_static_ip(self) -> list[int] | None:
+        try:
+            return ipv4_to_reg_values(self.static_ip_var.get().strip())
+        except ValueError:
+            messagebox.showwarning("提示", "静态 IP 格式无效")
+            return None
+
+    def write_ip_only(self) -> None:
+        if not self._require_connected():
+            return
+        values = self._parse_static_ip()
+        if values is None:
+            return
+        req = build_write_multi(self._slave_addr(), REG_STATIC_IP, values)
+
+        def on_ok(_pf: ParsedFrame) -> None:
+            messagebox.showinfo("完成", f"静态 IP 已写入 W25Q: {self.static_ip_var.get().strip()}")
+
+        self._begin_request(
+            req, FC_WRITE_MULTI_RESP, on_ok, self._on_cfg_fail, expect_reg=REG_STATIC_IP
+        )
+
+    def write_language_only(self) -> None:
+        if not self._require_connected():
+            return
+        lang = self._language_reg_value()
+        if lang is None:
+            return
+        req = build_write_single(self._slave_addr(), REG_LANGUAGE, lang)
+        label = self.language_var.get()
+
+        def on_ok(_pf: ParsedFrame) -> None:
+            messagebox.showinfo("完成", f"语言已写入 W25Q: {label} (reg 174)")
+
+        self._begin_request(
+            req, FC_WRITE_SINGLE_RESP, on_ok, self._on_cfg_fail, expect_reg=REG_LANGUAGE
+        )
+
     def _alarm_form_values(self) -> tuple[int, int, int] | None:
         try:
             dose_hi_x100 = max(0, int(float(self.dose_hi_var.get()) * 100.0))
@@ -919,8 +1174,9 @@ class FactoryApp(tk.Tk):
         sn = self.sn_var.get().strip()[:CFG_SN_MAX_LEN]
         name = self.name_var.get().strip()
         model = self.model_var.get().strip()[:CFG_MODEL_MAX_LEN]
-        if not sn or not name or not model:
-            messagebox.showwarning("提示", "请填写序列号、产品名称和产品型号")
+        hw_version = self.hw_version_var.get().strip()[:CFG_HW_VERSION_MAX_LEN]
+        if not sn or not name or not model or not hw_version:
+            messagebox.showwarning("提示", "请填写序列号、产品名称、产品型号和硬件版本")
             return
         try:
             addr = int(self.dev_addr_var.get())
@@ -928,6 +1184,9 @@ class FactoryApp(tk.Tk):
             messagebox.showwarning("提示", "协议地址无效")
             return
         addr = max(1, min(247, addr))
+        ip_values = self._parse_static_ip()
+        if ip_values is None:
+            return
         try:
             dose_hi_x100 = max(0, int(float(self.dose_hi_var.get()) * 100.0))
             dose_lo_x100 = max(0, int(float(self.dose_lo_var.get()) * 100.0))
@@ -949,7 +1208,10 @@ class FactoryApp(tk.Tk):
             def on_ok(_pf: ParsedFrame) -> None:
                 self.slave_addr_var.set(str(addr))
                 self.status_var.set("配置写入完成")
-                messagebox.showinfo("完成", "SN / 名称 / 型号 / 地址 / 阈值 / 报警使能已写入 W25Q")
+                messagebox.showinfo(
+                    "完成",
+                    "SN / 名称 / 型号 / 硬件版本 / 地址 / 静态 IP / 阈值 / 语言 / 报警使能已写入 W25Q",
+                )
 
             self._begin_request(
                 req,
@@ -959,6 +1221,30 @@ class FactoryApp(tk.Tk):
                 expect_reg=REG_ALARM_ENABLE,
             )
 
+        def write_language_step() -> None:
+            lang = self._language_reg_value()
+            if lang is None:
+                return
+            req = build_write_single(self._slave_addr(), REG_LANGUAGE, lang)
+            self._begin_request(
+                req,
+                FC_WRITE_SINGLE_RESP,
+                lambda _pf: write_alarm_enable_step(),
+                self._on_cfg_fail,
+                expect_reg=REG_LANGUAGE,
+            )
+
+        def write_hw_version_step() -> None:
+            values = ascii_to_reg_values(hw_version, REG_HW_VERSION_COUNT)
+            req = build_write_multi(self._slave_addr(), REG_HW_VERSION, values)
+            self._begin_request(
+                req,
+                FC_WRITE_MULTI_RESP,
+                lambda _pf: write_language_step(),
+                self._on_cfg_fail,
+                expect_reg=REG_HW_VERSION,
+            )
+
         def write_dose_lo_step() -> None:
             req = build_write_multi(
                 self._slave_addr(), REG_DOSE_LO_TH, u32_to_reg_values(dose_lo_x100)
@@ -966,7 +1252,7 @@ class FactoryApp(tk.Tk):
             self._begin_request(
                 req,
                 FC_WRITE_MULTI_RESP,
-                lambda _pf: write_alarm_enable_step(),
+                lambda _pf: write_hw_version_step(),
                 self._on_cfg_fail,
                 expect_reg=REG_DOSE_LO_TH,
             )
@@ -988,9 +1274,19 @@ class FactoryApp(tk.Tk):
             self._begin_request(
                 req,
                 FC_WRITE_SINGLE_RESP,
-                lambda _pf: write_dose_hi_step(),
+                lambda _pf: write_static_ip_step(),
                 self._on_cfg_fail,
                 expect_reg=REG_ADDRESS,
+            )
+
+        def write_static_ip_step() -> None:
+            req = build_write_multi(self._slave_addr(), REG_STATIC_IP, ip_values)
+            self._begin_request(
+                req,
+                FC_WRITE_MULTI_RESP,
+                lambda _pf: write_dose_hi_step(),
+                self._on_cfg_fail,
+                expect_reg=REG_STATIC_IP,
             )
 
         def write_model_step() -> None:
