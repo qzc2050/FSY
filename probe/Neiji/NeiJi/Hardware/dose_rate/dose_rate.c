@@ -10,9 +10,9 @@ static float s_rate_limit_usvh = 10000.0f;
 
 static void init_ewma_config(void)
 {
-    s_ewma_config.threshold_cps = 100;
-    s_ewma_config.threshold_delta = 10;
-    s_ewma_config.alpha_low = 0.03f;
+    s_ewma_config.threshold_cps = 200;
+    s_ewma_config.threshold_delta = 100;
+    s_ewma_config.alpha_low = 0.01f;
     s_ewma_config.alpha_high = 0.35f;
     s_ewma_config.boost_duration = 20;
 }
@@ -100,6 +100,19 @@ float DoseRate_UpdateFromCps(uint32_t cps)
 float DoseRate_GetCurrent(void)
 {
     return s_sensor.current_dose_rate;
+}
+
+uint32_t DoseRate_GetLastRawCps(void)
+{
+    if (s_sensor.last_raw_cps < 0) {
+        return 0U;
+    }
+    return (uint32_t)s_sensor.last_raw_cps;
+}
+
+float DoseRate_GetAvgCps(void)
+{
+    return s_sensor.current_avg_cps;
 }
 
 bool DoseRate_SetSensitivity(float sensitivity_cpm_per_usvh)

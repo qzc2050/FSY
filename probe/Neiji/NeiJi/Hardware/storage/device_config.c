@@ -12,6 +12,7 @@
 #include "sys_cfg_defaults.h"
 #include "geiger.h"
 #include "dose_rate.h"
+#include "lcd_backlight.h"
 
 #include "cmsis_os.h"
 
@@ -42,10 +43,10 @@
 #define CFG_ALARM_DOSE_DEFAULT    ((1UL << FSY_ALARM_BIT_DOSE_HI) | \
                                    (1UL << FSY_ALARM_BIT_DOSE_LO))
 
-#define CFG_GEIGER_SENS_X100_DEFAULT       12000UL
-#define CFG_EWMA_THRESHOLD_CPS_DEFAULT     100UL
-#define CFG_EWMA_THRESHOLD_DELTA_DEFAULT   10UL
-#define CFG_EWMA_ALPHA_LOW_X100_DEFAULT    3UL
+#define CFG_GEIGER_SENS_X100_DEFAULT       60000UL
+#define CFG_EWMA_THRESHOLD_CPS_DEFAULT     200UL
+#define CFG_EWMA_THRESHOLD_DELTA_DEFAULT   100UL
+#define CFG_EWMA_ALPHA_LOW_X100_DEFAULT    1UL
 #define CFG_EWMA_ALPHA_HIGH_X100_DEFAULT   35UL
 #define CFG_EWMA_BOOST_DURATION_DEFAULT    20UL
 #define CFG_RATE_LIMIT_X100_DEFAULT        (10000UL * 100UL)
@@ -1170,12 +1171,17 @@ static void cfg_apply_runtime(void)
     sys_cfg.alarm_volume = s_cfg.alarm_volume;
     sys_cfg.alarm_sound = s_cfg.alarm_sound;
     sys_cfg.alarm_light = s_cfg.alarm_light;
+    if (sys_cfg.display_enable == 0U) {
+        sys_cfg.display_enable = (uint8_t)DEVICE_CFG_DEFAULT_DISPLAY;
+    }
+    LcdBacklight_ApplyDisplayEnable(sys_cfg.display_enable, sys_cfg.bright_sz);
     sys_cfg.th_rh_rate = (float)s_cfg.dose_hi_x100 / 100.0f;
     sys_cfg.th_rl_rate = (float)s_cfg.dose_lo_x100 / 100.0f;
     sys_cfg.language = s_cfg.language;
     memset(sys_cfg.hw_version, 0, sizeof(sys_cfg.hw_version));
     memcpy(sys_cfg.hw_version, s_cfg.hw_version, CFG_MODEL_FIELD_LEN);
     cfg_apply_geiger_runtime();
+    Fsy_Regmap_SyncStatusBitFromCtrl();
 }
 
 void DeviceConfig_ApplyGeigerAlgorithm(void)
@@ -1484,8 +1490,20 @@ static int write_alarm_enable_regs(uint16_t start_reg, const uint8_t *data, uint
     if (ret == 0) {
         s_cfg.alarm_enable_mask &= CFG_ALARM_DOSE_DEFAULT;
         Fsy_Regmap_ApplyAlarmEnable(s_cfg.alarm_enable_mask);
+        if ((s_cfg.alarm_enable_mask & (1UL << FSY_ALARM_BIT_DOSE_HI)) == 0U) {
+            sys_cfg.alarm_status &= ~(1UL << RATE_HIGH_ALARM_BIT);
+        }
+        if ((s_cfg.alarm_enable_mask & (1UL << FSY_ALARM_BIT_DOSE_LO)) == 0U) {
+            sys_cfg.alarm_status &= ~(1UL << RATE_LOW_ALARM_BIT);
+        }
     }
     return ret;
+}
+
+static void cfg_sync_dose_threshold_runtime(void)
+{
+    sys_cfg.th_rh_rate = (float)s_cfg.dose_hi_x100 / 100.0f;
+    sys_cfg.th_rl_rate = (float)s_cfg.dose_lo_x100 / 100.0f;
 }
 
 static int write_alarm_volume_reg(uint16_t value)
@@ -1503,6 +1521,58 @@ static int write_alarm_volume_reg(uint16_t value)
         sys_cfg.alarm_sound = 1U;
     }
     return cfg_commit();
+}
+
+static uint32_t cfg_build_control_bit2(void)
+{
+    uint32_t value = 0U;
+
+    if (sys_cfg.alarm_light != 0U) {
+        value |= (1UL << FSY_CTRL2_BIT_ALARM_LIGHT);
+    }
+    if (sys_cfg.display_enable != 0U) {
+        value |= (1UL << FSY_CTRL2_BIT_SCREEN);
+    }
+    return value;
+}
+
+uint32_t DeviceConfig_GetControlBit2Mirror(void)
+{
+    return cfg_build_control_bit2();
+}
+
+static int cfg_apply_control_bit2(uint32_t value)
+{
+    uint8_t light_on = ((value >> FSY_CTRL2_BIT_ALARM_LIGHT) & 1U) ? 1U : 0U;
+    uint8_t screen_on = ((value >> FSY_CTRL2_BIT_SCREEN) & 1U) ? 1U : 0U;
+    int ret = 0;
+
+    if (sys_cfg.alarm_light != light_on) {
+        ret = DeviceConfig_SetAlarmLight(light_on);
+        if (ret != 0) {
+            return ret;
+        }
+    }
+    sys_cfg.display_enable = screen_on;
+    LcdBacklight_ApplyDisplayEnable(screen_on, sys_cfg.bright_sz);
+    Fsy_Regmap_SyncStatusBitFromCtrl();
+    return 0;
+}
+
+static int write_control_bit2_block(uint16_t start_reg, const uint8_t *data,
+                                    uint16_t byte_count)
+{
+    uint32_t value;
+
+    if (!reg_in_range(start_reg, FSY_REG_CONTROL_BIT2, FSY_REG_CONTROL_BIT2_REGS)) {
+        return -1;
+    }
+    if (byte_count < 4U) {
+        return -1;
+    }
+    value = load_u32_le(data);
+    value &= ~(1UL << FSY_CTRL2_BIT_EXT_ALARM);
+    return cfg_apply_control_bit2(value);
 }
 
 static int write_language_reg(uint16_t value)
@@ -1704,6 +1774,9 @@ int DeviceConfig_ReadRegBlock(uint16_t start_reg, uint16_t reg_count,
             store_u16_le(&out[i * 2U], s_cfg.dev_addr);
         } else if (reg == FSY_REG_ALARM_VOLUME) {
             store_u16_le(&out[i * 2U], s_cfg.alarm_volume);
+        } else if (reg_in_range(reg, FSY_REG_CONTROL_BIT2, FSY_REG_CONTROL_BIT2_REGS)) {
+            store_u32_reg_at(&out[i * 2U], cfg_build_control_bit2(),
+                             FSY_REG_CONTROL_BIT2, reg);
         } else if (reg_in_range(reg, FSY_REG_DOSE_HI_TH, FSY_REG_DWORD_REGS)) {
             store_u32_reg_at(&out[i * 2U], s_cfg.dose_hi_x100, FSY_REG_DOSE_HI_TH, reg);
         } else if (reg_in_range(reg, FSY_REG_DOSE_LO_TH, FSY_REG_DWORD_REGS)) {
@@ -1882,6 +1955,12 @@ int DeviceConfig_WriteRegBlock(uint16_t start_reg, const uint8_t *data,
         return ret;
     }
 
+    if (reg_in_range(start_reg, FSY_REG_CONTROL_BIT2, FSY_REG_CONTROL_BIT2_REGS) &&
+        reg_in_range((uint16_t)(start_reg + (byte_count / 2U) - 1U),
+                     FSY_REG_CONTROL_BIT2, FSY_REG_CONTROL_BIT2_REGS)) {
+        return write_control_bit2_block(start_reg, data, byte_count);
+    }
+
     for (i = 0U; i < (byte_count / 2U); i++) {
         uint16_t reg = (uint16_t)(start_reg + i);
         uint16_t value = load_u16_le(&data[i * 2U]);
@@ -1893,9 +1972,15 @@ int DeviceConfig_WriteRegBlock(uint16_t start_reg, const uint8_t *data,
         } else if (reg_in_range(reg, FSY_REG_DOSE_HI_TH, FSY_REG_DWORD_REGS)) {
             ret = write_u32_pair(reg, &data[i * 2U], 2U,
                                  FSY_REG_DOSE_HI_TH, &s_cfg.dose_hi_x100);
+            if (ret == 0) {
+                cfg_sync_dose_threshold_runtime();
+            }
         } else if (reg_in_range(reg, FSY_REG_DOSE_LO_TH, FSY_REG_DWORD_REGS)) {
             ret = write_u32_pair(reg, &data[i * 2U], 2U,
                                  FSY_REG_DOSE_LO_TH, &s_cfg.dose_lo_x100);
+            if (ret == 0) {
+                cfg_sync_dose_threshold_runtime();
+            }
         } else if (reg_in_range(reg, FSY_REG_ALARM_ENABLE, FSY_REG_ALARM_ENABLE_REGS)) {
             ret = write_alarm_enable_regs(reg, &data[i * 2U], 2U);
         } else if (reg == FSY_REG_DHCP_ENABLE) {
@@ -1933,9 +2018,15 @@ int DeviceConfig_SetAlarmSound(uint8_t on)
 
 int DeviceConfig_SetAlarmLight(uint8_t on)
 {
+    int ret;
+
     s_cfg.alarm_light = (on != 0U) ? 1U : 0U;
     sys_cfg.alarm_light = s_cfg.alarm_light;
-    return cfg_commit();
+    ret = cfg_commit();
+    if (ret == 0) {
+        Fsy_Regmap_SyncStatusBitFromCtrl();
+    }
+    return ret;
 }
 
 void DeviceConfig_GetAlarmOutput(uint8_t *sound, uint8_t *light, uint8_t *volume)

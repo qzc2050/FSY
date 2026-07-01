@@ -55,9 +55,7 @@ private val FormLabelSp = 20.sp
 private val FormFieldSp = 19.sp
 private val FormDataDetailSp = 22.sp
 private val FormActionSp = 18.sp
-private val FormThresholdLabelSp = 18.sp
 private val FormUnitSp = 16.sp
-private val FormAlarmSp = 18.sp
 private val FormToggleLabelSp = 20.sp
 private val FormSwitchLabelGap = 14.dp
 private val FormSwitchRowMinHeight = 52.dp
@@ -134,6 +132,7 @@ fun ProbeManageEditorPage(
                     checked = draft.slaveScreenOn,
                     onCheckedChange = { onDraftChange(draft.copy(slaveScreenOn = it)) },
                     contentAlignment = Alignment.CenterStart,
+                    enabled = draft.isTcpOnline,
                 )
             },
         )
@@ -155,6 +154,7 @@ fun ProbeManageEditorPage(
                     checked = draft.alarmLightOn,
                     onCheckedChange = { onDraftChange(draft.copy(alarmLightOn = it)) },
                     contentAlignment = Alignment.CenterStart,
+                    enabled = draft.isTcpOnline,
                 )
             },
         )
@@ -321,7 +321,7 @@ private fun ProbeLabeledFieldCell(
     }
 }
 
-/** 报警阈值行：1/4 数值+单位，1/4 报警开关，1/2 尾部（上限行放报警灯光并居中） */
+/** 报警阈值行：无尾部时左半阈值输入、右半报警开关（与从机屏幕/报警灯光同列对齐）；有尾部时 1/4 + 1/4 + 1/2 */
 @Composable
 private fun ProbeThresholdAlarmRow(
     thresholdLabel: String,
@@ -331,6 +331,28 @@ private fun ProbeThresholdAlarmRow(
     onAlarmChange: (Boolean) -> Unit,
     trailingHalf: (@Composable () -> Unit)?,
 ) {
+    if (trailingHalf == null) {
+        ProbeFormGridRow(
+            gap = FormColumnGap,
+            left = {
+                ThresholdValueCell(
+                    label = thresholdLabel,
+                    value = value,
+                    onValueChange = onValueChange,
+                )
+            },
+            right = {
+                ToggleCell(
+                    label = "报警",
+                    checked = alarmOn,
+                    onCheckedChange = onAlarmChange,
+                    contentAlignment = Alignment.CenterStart,
+                )
+            },
+        )
+        return
+    }
+
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(FormColumnGap),
@@ -341,7 +363,7 @@ private fun ProbeThresholdAlarmRow(
                 .weight(1f)
                 .fillMaxWidth(),
         ) {
-            ThresholdValueQuarterCell(
+            ThresholdValueCell(
                 label = thresholdLabel,
                 value = value,
                 onValueChange = onValueChange,
@@ -352,11 +374,13 @@ private fun ProbeThresholdAlarmRow(
                 .weight(1f)
                 .fillMaxWidth()
                 .heightIn(min = FormSwitchRowMinHeight),
-            contentAlignment = Alignment.Center,
+            contentAlignment = Alignment.CenterStart,
         ) {
-            AlarmToggleQuarterCell(
+            ToggleCell(
+                label = "报警",
                 checked = alarmOn,
                 onCheckedChange = onAlarmChange,
+                contentAlignment = Alignment.CenterStart,
             )
         }
         Box(
@@ -366,13 +390,13 @@ private fun ProbeThresholdAlarmRow(
                 .heightIn(min = FormSwitchRowMinHeight),
             contentAlignment = Alignment.Center,
         ) {
-            trailingHalf?.invoke()
+            trailingHalf()
         }
     }
 }
 
 @Composable
-private fun ThresholdValueQuarterCell(
+private fun ThresholdValueCell(
     label: String,
     value: String,
     onValueChange: (String) -> Unit,
@@ -381,19 +405,13 @@ private fun ThresholdValueQuarterCell(
         modifier = Modifier.fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text(
-            text = label,
-            color = NetShieldTextSecondary,
-            fontSize = FormThresholdLabelSp,
-            modifier = Modifier.width(96.dp),
-            maxLines = 2,
-        )
+        FormLabel(text = label, width = FormLabelWidth)
         ProbeValueField(
             value = value,
             onValueChange = onValueChange,
             modifier = Modifier
                 .weight(1f)
-                .padding(horizontal = 4.dp),
+                .padding(end = 6.dp),
         )
         Text(
             text = "μSv/h",
@@ -405,25 +423,12 @@ private fun ThresholdValueQuarterCell(
 }
 
 @Composable
-private fun AlarmToggleQuarterCell(
-    checked: Boolean,
-    onCheckedChange: (Boolean) -> Unit,
-) {
-    ProbeToggleRow(
-        label = "报警",
-        labelFontSize = FormAlarmSp,
-        checked = checked,
-        onCheckedChange = onCheckedChange,
-        horizontalArrangement = Arrangement.Center,
-    )
-}
-
-@Composable
 private fun ToggleCell(
     label: String,
     checked: Boolean,
     onCheckedChange: (Boolean) -> Unit,
     contentAlignment: Alignment = Alignment.CenterEnd,
+    enabled: Boolean = true,
 ) {
     Box(
         modifier = Modifier
@@ -435,6 +440,7 @@ private fun ToggleCell(
             label = label,
             checked = checked,
             onCheckedChange = onCheckedChange,
+            enabled = enabled,
             horizontalArrangement = if (contentAlignment == Alignment.CenterStart) {
                 Arrangement.Start
             } else {
@@ -453,6 +459,7 @@ private fun ProbeToggleRow(
     labelFontSize: TextUnit = FormToggleLabelSp,
     horizontalArrangement: Arrangement.Horizontal = Arrangement.End,
     modifier: Modifier = Modifier,
+    enabled: Boolean = true,
 ) {
     Row(
         modifier = modifier
@@ -463,13 +470,13 @@ private fun ProbeToggleRow(
     ) {
         Text(
             text = label,
-            color = NetShieldTextSecondary,
+            color = if (enabled) NetShieldTextSecondary else NetShieldTextSecondary.copy(alpha = 0.45f),
             fontSize = labelFontSize,
             maxLines = 1,
             softWrap = false,
         )
         Spacer(modifier = Modifier.width(FormSwitchLabelGap))
-        ProbeSwitch(checked = checked, onCheckedChange = onCheckedChange)
+        ProbeSwitch(checked = checked, onCheckedChange = onCheckedChange, enabled = enabled)
     }
 }
 
@@ -518,9 +525,10 @@ private fun ProbeValueField(
         textStyle = TextStyle(color = FieldTextColor, fontSize = FormFieldSp),
         cursorBrush = SolidColor(NetShieldAccentBlue),
         modifier = modifier
+            .defaultMinSize(minWidth = 96.dp, minHeight = 44.dp)
             .clip(RoundedCornerShape(6.dp))
             .background(Color.White)
-            .padding(horizontal = 12.dp, vertical = 9.dp),
+            .padding(horizontal = 12.dp, vertical = 10.dp),
         singleLine = true,
     )
 }
@@ -529,15 +537,22 @@ private fun ProbeValueField(
 private fun ProbeSwitch(
     checked: Boolean,
     onCheckedChange: (Boolean) -> Unit,
+    enabled: Boolean = true,
 ) {
     val switchInteraction = remember { MutableInteractionSource() }
     Box(
         modifier = Modifier
             .defaultMinSize(minWidth = 56.dp, minHeight = FormSwitchRowMinHeight)
-            .clickable(
-                interactionSource = switchInteraction,
-                indication = null,
-                onClick = { onCheckedChange(!checked) },
+            .then(
+                if (enabled) {
+                    Modifier.clickable(
+                        interactionSource = switchInteraction,
+                        indication = null,
+                        onClick = { onCheckedChange(!checked) },
+                    )
+                } else {
+                    Modifier
+                },
             )
             .padding(horizontal = 4.dp),
         contentAlignment = Alignment.Center,
@@ -545,6 +560,7 @@ private fun ProbeSwitch(
         Switch(
             checked = checked,
             onCheckedChange = onCheckedChange,
+            enabled = enabled,
             modifier = Modifier.graphicsLayer(scaleX = 1.3f, scaleY = 1.3f),
             colors = SwitchDefaults.colors(
                 checkedThumbColor = NetShieldTextPrimary,

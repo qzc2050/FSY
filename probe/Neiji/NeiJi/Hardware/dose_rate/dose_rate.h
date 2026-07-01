@@ -4,7 +4,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#define GEIGER_DEFAULT_SENSITIVITY_CPM  120.0f
+#define GEIGER_DEFAULT_SENSITIVITY_CPM  600.0f
 
 typedef enum {
     DR_INPUT_MODE_REAL = 0,
@@ -36,6 +36,8 @@ void DoseRate_Init(void);
 void DoseRate_ResetFilter(void);
 float DoseRate_UpdateFromCps(uint32_t cps);
 float DoseRate_GetCurrent(void);
+uint32_t DoseRate_GetLastRawCps(void);
+float DoseRate_GetAvgCps(void);
 
 bool DoseRate_SetSensitivity(float sensitivity_cpm_per_usvh);
 

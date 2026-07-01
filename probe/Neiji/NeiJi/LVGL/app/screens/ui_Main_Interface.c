@@ -5,6 +5,7 @@
 
 #include "../ui.h"
 #include "language.h"
+#include "lcd_backlight.h"
 #include "lv_port_indev.h"
 #include "device_config.h"
 #include "fsy_regmap.h"
@@ -30,9 +31,7 @@ static bool ui_language_skip_next_ok;
 
 static void neiji_modify_bright(float bright)
 {
-    if (bright >= 0.0f && bright <= 100.0f) {
-        __HAL_TIM_SET_COMPARE(&htim12, TIM_CHANNEL_1, bright * 1000.0f / 100.0f);
-    }
+    LcdBacklight_SetPercent(bright);
 }
 
 static void neiji_modify_volume(float volume)
@@ -574,6 +573,7 @@ static void neiji_event_alarm_setting(lv_event_t *e)
     lv_event_code_t code = lv_event_get_code(e);
 
     if (code == LV_EVENT_FOCUSED) {
+        ui_main_bind_settings();
         neiji_show_only_panel(ui_Panel_alarm_set);
     } else if (code == LV_EVENT_CLICKED) {
         /* 仅吞掉「开菜单」同一颗 OK 触发的 CLICKED 余震；真正进入用 KEY ENTER */

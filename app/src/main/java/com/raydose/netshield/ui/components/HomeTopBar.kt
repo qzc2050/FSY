@@ -28,7 +28,7 @@ fun HomeTopBar(
         Text(
             text = systemName,
             color = NetShieldTextPrimary,
-            fontSize = 26.sp,
+            fontSize = ScreenSpec.HOME_TOP_BAR_TITLE_SP.sp,
             fontWeight = FontWeight.SemiBold,
             modifier = Modifier.align(Alignment.CenterStart),
         )

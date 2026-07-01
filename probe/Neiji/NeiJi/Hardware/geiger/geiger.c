@@ -5,6 +5,7 @@
 #include "fsy_regmap.h"
 #include "dose_rate.h"
 #include "alarm_output.h"
+#include "device_config.h"
 
 #define Dev_Tk_Wait(ms, tk_var)  ((uint32_t)((HAL_GetTick() - (tk_var)) >= (ms)))
 #define Dev_Tk_Init(tk_ptr)      do { *(tk_ptr) = HAL_GetTick(); } while (0)
@@ -349,25 +350,31 @@ float dose_rate_adaptive_ema(float current_count) {
 ***************************************************************************************************/
 void Dose_Rate_TH_Alarm(void)
 {
-    if(data_var.real_rate >= (float)RATE_LIMIT)
-    {
-        Alarm_Status_Update(RATE_HIGH_ALARM_BIT, true);
+    uint32_t hi_x100 = 0U;
+    uint32_t lo_x100 = 0U;
+    uint32_t alarm_enable = 0U;
+    uint8_t hi_alarm = 0U;
+    uint8_t lo_alarm = 0U;
+
+    DeviceConfig_GetDoseAlarmConfig(&hi_x100, &lo_x100, &alarm_enable, NULL);
+
+    if (((alarm_enable & (1UL << RATE_HIGH_ALARM_BIT)) != 0U) &&
+        (data_var.real_rate >= (float)RATE_LIMIT)) {
+        hi_alarm = 1U;
+    } else if (((alarm_enable & (1UL << RATE_HIGH_ALARM_BIT)) != 0U) &&
+               (hi_x100 > 0U) && (sys_cfg.th_rh_rate > 0.0f) &&
+               (data_var.real_rate >= sys_cfg.th_rh_rate)) {
+        hi_alarm = 1U;
     }
-    else if(sys_cfg.th_rh_rate > 0.0f &&
-             (data_var.real_rate >= sys_cfg.th_rh_rate))
-    {
-        Alarm_Status_Update(RATE_HIGH_ALARM_BIT, true);
+
+    if (((alarm_enable & (1UL << RATE_LOW_ALARM_BIT)) != 0U) &&
+        (lo_x100 > 0U) && (sys_cfg.th_rl_rate > 0.0f) &&
+        (data_var.real_rate < sys_cfg.th_rl_rate)) {
+        lo_alarm = 1U;
     }
-    else if(sys_cfg.th_rl_rate > 0.0f &&
-             (data_var.real_rate < sys_cfg.th_rl_rate))
-    {
-        Alarm_Status_Update(RATE_LOW_ALARM_BIT, true);
-    }
-    else
-    {
-        Alarm_Status_Update(RATE_HIGH_ALARM_BIT, false);
-        Alarm_Status_Update(RATE_LOW_ALARM_BIT, false);
-    }
+
+    Alarm_Status_Update(RATE_HIGH_ALARM_BIT, hi_alarm != 0U);
+    Alarm_Status_Update(RATE_LOW_ALARM_BIT, lo_alarm != 0U);
 }
 
 /********************************************************************************************
@@ -391,9 +398,14 @@ void Alarm_Status_Update(uint8_t bit_pos, bool is_alarm)
     else
         sys_cfg.alarm_status &= ~(1U << bit_pos);  // 清除报警位
     
-    /* 只有报警状态真正变化时才同步到寄存器表 */
-    if(sys_cfg.alarm_status != old_status)
-        Fsy_Regmap_SyncAlarmStatus(sys_cfg.alarm_status);
+    /* 剂量 bit 局部更新，避免覆盖 0x23 中环境传感器离线位 */
+    if (sys_cfg.alarm_status != old_status) {
+        if (bit_pos <= RATE_LOW_ALARM_BIT) {
+            Fsy_Regmap_PatchDoseAlarmBit(bit_pos, is_alarm);
+        } else {
+            Fsy_Regmap_SyncAlarmStatus(sys_cfg.alarm_status);
+        }
+    }
 }
 
 /********************************************************************************************

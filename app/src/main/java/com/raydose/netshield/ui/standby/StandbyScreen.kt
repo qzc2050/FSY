@@ -2,6 +2,7 @@ package com.raydose.netshield.ui.standby
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -50,6 +51,7 @@ import com.raydose.netshield.ui.theme.NetShieldTextPrimary
 import com.raydose.netshield.ui.theme.NetShieldTextSecondary
 import com.raydose.netshield.ui.theme.NetShieldTheme
 import com.raydose.netshield.ui.theme.ScreenSpec
+import com.raydose.netshield.ui.theme.TabletFormFactor
 import com.raydose.netshield.ui.theme.rememberTabletFormFactor
 import java.util.Date
 
@@ -70,6 +72,8 @@ fun StandbyScreen(
     val displayListKey = remember(displayProbes) { probeDisplayListKey(displayProbes) }
     val pagerState = rememberPagerState(pageCount = { pagerConfig.pageCount.coerceAtLeast(1) })
     val showStandbyMessages = albumSettings.showStandbyMessages
+    val formFactor = rememberTabletFormFactor()
+    val envReadings = state.hostEnvReadings.map { it.label to it.value }
     val latestMessages = remember(messages) {
         messages.sortedByDescending { it.createdAtMillis }.take(3)
     }
@@ -111,7 +115,7 @@ fun StandbyScreen(
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .fillMaxHeight(ScreenSpec.STANDBY_HEADER_SECTION_FRACTION),
+                        .fillMaxHeight(ScreenSpec.standbyHeaderSectionFraction(formFactor)),
                 ) {
                     HomeTopBar(
                         systemName = state.systemName,
@@ -119,14 +123,15 @@ fun StandbyScreen(
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .weight(1f),
+                            .weight(1f)
+                            .padding(horizontal = ScreenSpec.homeHorizontalPadding),
                         horizontalAlignment = Alignment.CenterHorizontally,
                         verticalArrangement = Arrangement.Center,
                     ) {
                         Text(
                             text = clockLines.dateLine.ifBlank { "—" },
                             color = NetShieldTextSecondary,
-                            fontSize = ScreenSpec.HOME_DATE_SP.sp,
+                            fontSize = ScreenSpec.standbyDateSp(formFactor).sp,
                             fontWeight = FontWeight.Light,
                             textAlign = TextAlign.Center,
                         )
@@ -138,26 +143,25 @@ fun StandbyScreen(
                             Text(
                                 text = clockLines.timeLine.ifBlank { "—" },
                                 color = NetShieldTextPrimary,
-                                fontSize = ScreenSpec.HOME_TIME_SP.sp,
+                                fontSize = ScreenSpec.standbyTimeSp(formFactor).sp,
                                 fontWeight = FontWeight.Light,
                                 textAlign = TextAlign.Center,
                                 modifier = Modifier.align(Alignment.Center),
                             )
                             DoorStatusChip(
                                 doorState = state.doorState,
-                                modifier = Modifier
-                                    .align(Alignment.CenterEnd)
-                                    .padding(end = ScreenSpec.homeHorizontalPadding),
+                                modifier = Modifier.align(Alignment.CenterEnd),
                             )
                         }
                         StandbyHostEnvRow(
-                            readings = state.hostEnvReadings.map { it.label to it.value },
+                            readings = envReadings,
+                            formFactor = formFactor,
                             modifier = Modifier.padding(top = 10.dp),
                         )
                     }
                 }
 
-                val bottomSectionHeight = screenHeight * ScreenSpec.STANDBY_BOTTOM_SECTION_FRACTION
+                val bottomSectionHeight = screenHeight * ScreenSpec.standbyBottomSectionFraction(formFactor)
                 val probeCardHeight = minOf(
                     screenHeight * ScreenSpec.HOME_CARD_HEIGHT_FRACTION,
                     bottomSectionHeight,
@@ -239,21 +243,29 @@ fun StandbyScreen(
 @Composable
 private fun StandbyHostEnvRow(
     readings: List<Pair<String, String>>,
+    formFactor: TabletFormFactor,
     modifier: Modifier = Modifier,
 ) {
     if (readings.isEmpty()) return
-    Row(
+    val envSp = ScreenSpec.STANDBY_HOST_ENV_ROW_SP
+    val gap = ScreenSpec.standbyHostEnvRowGap(formFactor)
+    Box(
         modifier = modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(28.dp, Alignment.CenterHorizontally),
-        verticalAlignment = Alignment.CenterVertically,
+        contentAlignment = Alignment.Center,
     ) {
-        readings.forEach { (label, value) ->
-            Text(
-                text = "$label $value",
-                color = NetShieldTextPrimary,
-                fontSize = ScreenSpec.HOME_CARD_ENV_SP.sp,
-                maxLines = 1,
-            )
+        Row(
+            modifier = Modifier.horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(gap),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            readings.forEach { (label, value) ->
+                Text(
+                    text = "$label $value",
+                    color = NetShieldTextPrimary,
+                    fontSize = envSp.sp,
+                    maxLines = 1,
+                )
+            }
         }
     }
 }

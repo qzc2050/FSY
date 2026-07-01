@@ -13,6 +13,7 @@
 #include "pm25.h"
 
 #include <stdint.h>
+#include <stdbool.h>
 
 
 
@@ -23,6 +24,12 @@
 #define FSY_RT_REG_COUNT          11U
 
 #define FSY_RT_REG_DATA_BYTES     (FSY_RT_REG_COUNT * 4U)
+
+/** 0x23 第 8 项 / 0x03 reg15(0x000F)：设备状态，镜像 reg123 的 bit13/14 */
+#define FSY_RT_REG_STATUS_BIT     15U
+
+/** s_rt_regs[] 下标：与 0x23 从 reg1 起第 8 个 u32 对齐（协议亦称 reg15） */
+#define FSY_RT_IDX_STATUS_BIT     7U
 
 
 
@@ -50,6 +57,13 @@
 
 #define FSY_REG_ADDRESS           121U
 #define FSY_REG_ALARM_VOLUME      122U
+#define FSY_REG_CONTROL_BIT2      123U
+#define FSY_REG_CONTROL_BIT2_REGS 2U
+
+/** reg123 u32：bit13 光报警，bit14 背光开，bit15 外置报警在线（只读） */
+#define FSY_CTRL2_BIT_ALARM_LIGHT 13U
+#define FSY_CTRL2_BIT_SCREEN      14U
+#define FSY_CTRL2_BIT_EXT_ALARM   15U
 
 /* C 类扩展 */
 
@@ -80,6 +94,14 @@
 
 #define FSY_REG_HW_VERSION        180U
 #define FSY_REG_HW_VERSION_REGS   8U
+
+/* 调试：上一秒盖革原始计数 CPS（只读，uint32 占 2 reg，不落 Flash） */
+#define FSY_REG_GEIGER_SEC_CPS    190U
+#define FSY_REG_GEIGER_SEC_CPS_REGS 2U
+
+/* 当前在线 IP（只读，W5500 SIPR，2 reg IPv4，不落 Flash） */
+#define FSY_REG_CURRENT_IP        192U
+#define FSY_REG_CURRENT_IP_REGS   2U
 
 void Fsy_Regmap_Init(void);
 
@@ -113,9 +135,17 @@ void Fsy_Regmap_UpdateEnv(const AHT20_Data_t *aht, const BMP280_Data_t *bmp,
 
 void Fsy_Regmap_UpdateDoseRate(float rate_usv_h);
 
+void Fsy_Regmap_SetGeigerSecCps(uint32_t cps);
+
 void Fsy_Regmap_ApplyAlarmEnable(uint32_t enable_mask);
 
+/** 仅更新剂量报警 bit0/1，保留环境传感器离线等其它位 */
+void Fsy_Regmap_PatchDoseAlarmBit(uint8_t bit_pos, bool is_alarm);
+
 void Fsy_Regmap_SyncAlarmStatus(uint32_t alarm_status);
+
+/** 将 reg123 bit13/14 同步到 0x23 reg15（s_rt_regs[7]） */
+void Fsy_Regmap_SyncStatusBitFromCtrl(void);
 
 uint32_t Fsy_Regmap_GetAlarmStatus(void);
 

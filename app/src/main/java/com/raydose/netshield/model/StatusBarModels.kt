@@ -22,4 +22,6 @@ data class SystemAlertLog(
     val timeText: String,
     val message: String,
     val kind: AlertLogKind = AlertLogKind.Info,
+    /** 用于 24h 窗口过滤；旧数据可为 0 */
+    val timestampMillis: Long = 0L,
 )

@@ -16,6 +16,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.raydose.netshield.ui.theme.NetShieldTextPrimary
@@ -34,11 +35,13 @@ fun HostEnvScrollPanel(
     readings: List<Pair<String, String>>,
     autoScroll: Boolean = false,
     modifier: Modifier = Modifier,
+    fontSizeSp: Int = ScreenSpec.HOME_HOST_ENV_SP,
+    panelHeight: Dp = ScreenSpec.homeHostEnvPanelHeight,
 ) {
     if (readings.isEmpty()) return
 
-    val envFontSize = ScreenSpec.HOME_HOST_ENV_SP.sp
-    val lineHeight = (ScreenSpec.HOME_HOST_ENV_SP + 10).sp
+    val envFontSize = fontSizeSp.sp
+    val lineHeight = (fontSizeSp + 10).sp
     val pages = readings.chunked(ScreenSpec.HOME_HOST_ENV_ITEMS_PER_PAGE)
     val pagerState = rememberPagerState(pageCount = { pages.size.coerceAtLeast(1) })
 
@@ -55,7 +58,7 @@ fun HostEnvScrollPanel(
         modifier = modifier
             .wrapContentWidth(Alignment.End)
             .widthIn(min = 260.dp)
-            .height(ScreenSpec.homeHostEnvPanelHeight),
+            .height(panelHeight),
         userScrollEnabled = pages.size > 1,
     ) { page ->
         Column(

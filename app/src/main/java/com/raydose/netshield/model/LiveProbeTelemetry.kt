@@ -16,12 +16,12 @@ data class LiveProbeTelemetry(
     /** 0x23 第 7 项 alarm_bit */
     val alarmBit: Long? = null,
     val externalAlarmConnected: Boolean = false,
-    /** 0x40 辐射上/下（×100 μSv/h），仅前 2 项 */
+    /** reg 50/52 辐射上/下（×100 μSv/h） */
     val doseUpperUsv: String? = null,
     val doseLowerUsv: String? = null,
     val radiationUpperAlarmOn: Boolean? = null,
     val radiationLowerAlarmOn: Boolean? = null,
-    /** 0x7A 音量 0~100 */
+    /** reg 122 音量 0~100 */
     val volume: Float? = null,
     val slaveScreenOn: Boolean? = null,
     val alarmLightOn: Boolean? = null,

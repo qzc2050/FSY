@@ -211,8 +211,8 @@ fun HomeScreen(
             val footerBottomInset = screenHeight * ScreenSpec.HOME_FOOTER_BOTTOM_FRACTION
             val drawerGapWidth = screenWidth * ScreenSpec.homeSideDrawerWidthFraction()
             val drawerWidth = drawerGapWidth * ScreenSpec.SIDE_DRAWER_WIDTH_RATIO_OF_GAP
-            val drawerHeight = cardHeight * ScreenSpec.SIDE_DRAWER_HEIGHT_RATIO_OF_CARD
-            val drawerTopInset = cardHeight * ScreenSpec.SIDE_DRAWER_TOP_INSET_RATIO_OF_CARD
+            val drawerHeight = cardHeight * ScreenSpec.sideDrawerHeightRatioOfCard(screenHeight)
+            val drawerTopInset = cardHeight * ScreenSpec.sideDrawerTopInsetRatioOfCard(screenHeight)
             val drawerPanelWidthPx = with(density) { drawerWidth.toPx() }
             val drawerOpenThresholdPx = with(density) { 56.dp.toPx() }
             val messageBarWidthFraction = 0.60f

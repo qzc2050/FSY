@@ -1,6 +1,7 @@
 #include "fsy_regmap.h"
 #include "device_config.h"
 #include "net_config.h"
+#include "w5500.h"
 #include "pcf85063.h"
 #include "aht20.h"
 #include "bmp280.h"
@@ -11,6 +12,7 @@
 
 static uint32_t s_rt_regs[FSY_RT_REG_COUNT];
 static uint32_t s_alarm_status;
+static uint32_t s_geiger_sec_cps;
 static uint8_t s_time_write_buf[8];
 
 static const char *cfg_software_version_text(void)
@@ -35,6 +37,23 @@ static void store_u32_le(uint8_t *p, uint32_t v)
     p[3] = (uint8_t)(v >> 24);
 }
 
+static int reg_in_range(uint16_t reg, uint16_t base, uint16_t count)
+{
+    return (reg >= base) && (reg < (uint16_t)(base + count));
+}
+
+static void store_u32_reg_at(uint8_t *out, uint32_t value, uint16_t base_reg, uint16_t reg)
+{
+    uint16_t word;
+
+    if (reg == base_reg) {
+        word = (uint16_t)(value & 0xFFFFU);
+    } else {
+        word = (uint16_t)((value >> 16) & 0xFFFFU);
+    }
+    store_u16_le(out, word);
+}
+
 static void update_alarm_status(uint32_t set_mask, uint32_t clear_mask)
 {
     s_alarm_status |= set_mask;
@@ -46,7 +65,7 @@ void Fsy_Regmap_Init(void)
 {
     static const uint32_t template[FSY_RT_REG_COUNT] = {
         0x00000000U, 0x00000130U, 0x00018D7FU, 0x00000020U,
-        0x00000604U, 0x00000172U, 0x00000000U, 0x000003BEU,
+        0x00000604U, 0x00000172U, 0x00000000U, 0x00006000U,
         0x00000000U, 0x00000000U, 0x00000000U,
     };
 
@@ -60,6 +79,11 @@ int Fsy_Regmap_ReadU32(uint16_t reg_addr, uint32_t *value)
     if (value == NULL) {
         return -1;
     }
+    if (reg_addr == FSY_RT_REG_STATUS_BIT) {
+        Fsy_Regmap_SyncStatusBitFromCtrl();
+        *value = s_rt_regs[FSY_RT_IDX_STATUS_BIT];
+        return 0;
+    }
     if ((reg_addr < FSY_RT_REG_START) ||
         (reg_addr >= (FSY_RT_REG_START + FSY_RT_REG_COUNT))) {
         return -1;
@@ -68,6 +92,25 @@ int Fsy_Regmap_ReadU32(uint16_t reg_addr, uint32_t *value)
     index = (uint32_t)(reg_addr - FSY_RT_REG_START);
     *value = s_rt_regs[index];
     return 0;
+}
+
+/*
+ * Neiji reg15（0x23 第 8 项 / 0x03 读 0x000F）：reg123 的只读镜像。
+ * - 仅 bit13=光报警使能、bit14=背光使能（与 reg123 一致）
+ * - bit15 外置报警在线：未接 IO，恒 0
+ * - 其余 bit 恒 0，非 GPIO 采样
+ */
+void Fsy_Regmap_SyncStatusBitFromCtrl(void)
+{
+    uint32_t mirror;
+
+    if (DeviceConfig_IsReady() != 0U) {
+        mirror = DeviceConfig_GetControlBit2Mirror();
+    } else {
+        /* 配置未就绪：默认 bit13+14=1 */
+        mirror = (1UL << FSY_CTRL2_BIT_ALARM_LIGHT) | (1UL << FSY_CTRL2_BIT_SCREEN);
+    }
+    s_rt_regs[FSY_RT_IDX_STATUS_BIT] = mirror;
 }
 
 static int read_time_reg(uint16_t reg, uint8_t *out, uint16_t out_cap)
@@ -96,6 +139,26 @@ static int read_time_reg(uint16_t reg, uint8_t *out, uint16_t out_cap)
 
     off = (uint16_t)((reg - FSY_REG_TIME) * 2U);
     store_u16_le(out, (uint16_t)bytes[off] | ((uint16_t)bytes[off + 1U] << 8));
+    return 2;
+}
+
+static int read_current_ip_reg(uint16_t reg, uint8_t *out, uint16_t out_cap)
+{
+    uint8_t ip[4];
+
+    if (out_cap < 2U) {
+        return -1;
+    }
+    if (!reg_in_range(reg, FSY_REG_CURRENT_IP, FSY_REG_CURRENT_IP_REGS)) {
+        return -1;
+    }
+
+    getSIPR(ip);
+    if (reg == FSY_REG_CURRENT_IP) {
+        store_u16_le(out, (uint16_t)ip[0] | ((uint16_t)ip[1] << 8));
+    } else {
+        store_u16_le(out, (uint16_t)ip[2] | ((uint16_t)ip[3] << 8));
+    }
     return 2;
 }
 
@@ -237,6 +300,19 @@ int Fsy_Regmap_ReadBlock(uint16_t start_reg, uint16_t reg_count,
             continue;
         }
 
+        if (reg_in_range(reg, FSY_REG_GEIGER_SEC_CPS, FSY_REG_GEIGER_SEC_CPS_REGS)) {
+            store_u32_reg_at(&out[(uint16_t)(i * 2U)], s_geiger_sec_cps,
+                             FSY_REG_GEIGER_SEC_CPS, reg);
+            continue;
+        }
+
+        if (reg_in_range(reg, FSY_REG_CURRENT_IP, FSY_REG_CURRENT_IP_REGS)) {
+            if (read_current_ip_reg(reg, &out[(uint16_t)(i * 2U)],
+                                    (uint16_t)(byte_count - (i * 2U))) == 2) {
+                continue;
+            }
+        }
+
         if ((DeviceConfig_IsReady() != 0U) &&
             (DeviceConfig_ReadRegBlock(reg, 1U, cfg_pair, sizeof(cfg_pair)) == 2)) {
             out[(uint16_t)(i * 2U)] = cfg_pair[0];
@@ -253,6 +329,13 @@ static int reg_is_configurable(uint16_t reg)
         return 1;
     }
     if (reg == FSY_REG_ADDRESS) {
+        return 1;
+    }
+    if (reg == FSY_REG_ALARM_VOLUME) {
+        return 1;
+    }
+    if ((reg >= FSY_REG_CONTROL_BIT2) &&
+        (reg < (uint16_t)(FSY_REG_CONTROL_BIT2 + FSY_REG_CONTROL_BIT2_REGS))) {
         return 1;
     }
     if ((reg >= FSY_REG_PRODUCT_MODEL) &&
@@ -350,6 +433,8 @@ int Fsy_Regmap_BuildRtPayload(uint8_t *out, uint16_t out_cap)
         return -1;
     }
 
+    Fsy_Regmap_SyncStatusBitFromCtrl();
+
     for (i = 0U; i < FSY_RT_REG_COUNT; i++) {
         store_u32_le(&out[(uint16_t)(i * 4U)], s_rt_regs[i]);
     }
@@ -387,10 +472,15 @@ void Fsy_Regmap_UpdateEnv(const AHT20_Data_t *aht, const BMP280_Data_t *bmp,
 
     s_alarm_status = (s_alarm_status & ~FSY_ALARM_ENV_MASK) | alarm;
     s_rt_regs[6] = s_alarm_status;
-    s_rt_regs[7] = 0U;
+    Fsy_Regmap_SyncStatusBitFromCtrl();
     s_rt_regs[8] = 0U;
     s_rt_regs[9] = 0U;
     s_rt_regs[10] = 0U;
+}
+
+void Fsy_Regmap_SetGeigerSecCps(uint32_t cps)
+{
+    s_geiger_sec_cps = cps;
 }
 
 void Fsy_Regmap_UpdateDoseRate(float rate_usv_h)
@@ -449,4 +539,21 @@ void Fsy_Regmap_ApplyAlarmEnable(uint32_t enable_mask)
     }
 
     update_alarm_status(0U, clear_mask);
+}
+
+void Fsy_Regmap_PatchDoseAlarmBit(uint8_t bit_pos, bool is_alarm)
+{
+    uint32_t set_mask = 0U;
+    uint32_t clear_mask = 0U;
+
+    if (bit_pos > FSY_ALARM_BIT_DOSE_LO) {
+        return;
+    }
+
+    if (is_alarm) {
+        set_mask = (1UL << bit_pos);
+    } else {
+        clear_mask = (1UL << bit_pos);
+    }
+    update_alarm_status(set_mask, clear_mask);
 }

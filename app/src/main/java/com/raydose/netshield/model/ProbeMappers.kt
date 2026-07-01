@@ -43,23 +43,30 @@ fun LiveProbeTelemetry.applyRealtimeUpload(values: List<Long>): LiveProbeTelemet
         pm25 = "%.1f μg/m³".format(pm25),
         hasAlarm = isRadiationDoseAlarmActive(alarmBit),
         alarmBit = alarmBit,
-        externalAlarmConnected = isExternalAlarmConnected(alarmBit),
         doorOpen = doorOpen,
         controlBit2Value = statusBit,
         slaveScreenOn = screenOn,
         alarmLightOn = lightOn,
+        externalAlarmConnected = isExternalAlarmConnectedFromCtrl2(statusBit),
     )
 }
 
 fun LiveProbeTelemetry.applyParsedFrame(frame: ParsedFsyFrame): LiveProbeTelemetry {
     var next = this
     frame.uploadValues?.takeIf { it.size >= 8 }?.let { next = next.applyRealtimeUpload(it) }
-    frame.thresholdValues?.takeIf { it.size >= 2 }?.let { thr ->
-        next = next.copy(
-            isOnline = true,
-            doseUpperUsv = doseX100ToUsvText(thr[0]),
-            doseLowerUsv = doseX100ToUsvText(thr[1]),
-        )
+    frame.thresholdValues?.let { thr ->
+        if (thr.isNotEmpty()) {
+            next = next.copy(doseUpperUsv = doseX100ToUsvText(thr[0]))
+        }
+        if (thr.size >= 2) {
+            next = next.copy(doseLowerUsv = doseX100ToUsvText(thr[1]))
+        }
+    }
+    frame.doseHiX100?.let { hi ->
+        next = next.copy(isOnline = true, doseUpperUsv = doseX100ToUsvText(hi))
+    }
+    frame.doseLoX100?.let { lo ->
+        next = next.copy(isOnline = true, doseLowerUsv = doseX100ToUsvText(lo))
     }
     frame.alarmEnableValue?.let { enable ->
         next = next.copy(
@@ -78,20 +85,18 @@ fun LiveProbeTelemetry.applyParsedFrame(frame: ParsedFsyFrame): LiveProbeTelemet
             controlBit2Value = ctrl,
             alarmLightOn = light,
             slaveScreenOn = screen,
+            externalAlarmConnected = isExternalAlarmConnectedFromCtrl2(ctrl),
         )
     }
     frame.statusBitValue?.let { status ->
         val doorOpen = (status and 1L) != 0L
-        val (_, light, screen) = controlEnablesFromBit(status)
         next = next.copy(
             isOnline = true,
             doorOpen = doorOpen,
-            controlBit2Value = status,
-            alarmLightOn = light,
-            slaveScreenOn = screen,
         )
     }
     if (frame.uploadValues == null && frame.thresholdValues == null &&
+        frame.doseHiX100 == null && frame.doseLoX100 == null &&
         frame.alarmEnableValue == null && frame.controlBit1Volume == null &&
         frame.controlBit2Value == null && frame.statusBitValue == null
     ) {
@@ -121,6 +126,14 @@ fun ProbeManageDraft.mergeConfigFromTelemetry(telemetry: LiveProbeTelemetry?): P
         radiationUpperAlarmOn = t.radiationUpperAlarmOn ?: radiationUpperAlarmOn,
         radiationLowerAlarmOn = t.radiationLowerAlarmOn ?: radiationLowerAlarmOn,
         volume = t.volume ?: volume,
+        slaveScreenOn = t.slaveScreenOn ?: slaveScreenOn,
+        alarmLightOn = t.alarmLightOn ?: alarmLightOn,
+        externalAlarmConnected = if (t.controlBit2Value != null) {
+            isExternalAlarmConnectedFromCtrl2(t.controlBit2Value)
+        } else {
+            externalAlarmConnected
+        },
+        controlBit2Raw = t.controlBit2Value ?: controlBit2Raw,
     )
 }
 

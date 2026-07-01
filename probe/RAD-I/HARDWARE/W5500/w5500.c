@@ -1,19 +1,19 @@
 /***********************************************************************************
-³É¶¼ºÆÈ»µç×ÓÓÐÏÞ¹«Ë¾
-WIZnet¹Ù·½´úÀíÉÌ£¬09ÄêÆðÒ»Ö±²õÁª×î¼Ñ´úÀíÉÌ£¬Îª¿Í»§Ìá¹©¼¼Êõ¡¢²úÆ·¡¢ÊÛºóµÈÈ«·½Î»·þÎñ
-µç»°£º028-86127089     0755-86066647
-´«Õæ£º028-86127039
-ÍøÖ·£ºhttp://www.hschip.com
-ÈÕÆÚ£º2016-01
+ï¿½É¶ï¿½ï¿½ï¿½È»ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Þ¹ï¿½Ë¾
+WIZnetï¿½Ù·ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ì£ï¿½09ï¿½ï¿½ï¿½ï¿½Ò»Ö±ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ñ´ï¿½ï¿½ï¿½ï¿½Ì£ï¿½Îªï¿½Í»ï¿½ï¿½á¹©ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Æ·ï¿½ï¿½ï¿½Ûºï¿½ï¿½È«ï¿½ï¿½Î»ï¿½ï¿½ï¿½ï¿½
+ï¿½ç»°ï¿½ï¿½028-86127089     0755-86066647
+ï¿½ï¿½ï¿½æ£º028-86127039
+ï¿½ï¿½Ö·ï¿½ï¿½http://www.hschip.com
+ï¿½ï¿½ï¿½Ú£ï¿½2016-01
 
-Ó²¼þÆ½Ì¨£º ºÆÈ»µç×ÓÆÀ¹À°å  HS-EVBW5500 /STM32
-W5500 ¼¼Êõ½»Á÷QQÈº£º 722479032
-WIZnet¼¼Êõ½»Á÷QQÈº£º 290473222
+Ó²ï¿½ï¿½Æ½Ì¨ï¿½ï¿½ ï¿½ï¿½È»ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½  HS-EVBW5500 /STM32
+W5500 ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½QQÈºï¿½ï¿½ 722479032
+WIZnetï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½QQÈºï¿½ï¿½ 290473222
 										 
-SPIÄ£Ê½1»òSPIÄ£Ê½2Í¨¹ýw5500.h ÎÄ¼þµÄ
-#define MODE_SPI  1     // Ñ¡ÔñSPI1  
-#define MODE_SPI  2     // Ñ¡ÔñSPI2
-À´½øÐÐÑ¡Ôñ
+SPIÄ£Ê½1ï¿½ï¿½SPIÄ£Ê½2Í¨ï¿½ï¿½w5500.h ï¿½Ä¼ï¿½ï¿½ï¿½
+#define MODE_SPI  1     // Ñ¡ï¿½ï¿½SPI1  
+#define MODE_SPI  2     // Ñ¡ï¿½ï¿½SPI2
+ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ñ¡ï¿½ï¿½
 ***********************************************************************************/
 
 
@@ -26,9 +26,9 @@ SPIÄ£Ê½1»òSPIÄ£Ê½2Í¨¹ýw5500.h ÎÄ¼þµÄ
 extern SPI_HandleTypeDef hspi1;
 
 /*
- * W5500 SPI ¶ÌÁÙ½ç£ºÓÃ ulPortRaiseBASEPRI / »Ö¸´£¬²»µ÷ÓÃ taskENTER_CRITICAL¡£
- * ·ñÔòÓë vPortEnterCritical ¹²ÓÃ uxCriticalNesting£¬Ò×Óë printf/¶Ñ/Çý¶¯ÁÙ½çÇø
- * ½»²æ´íÎ»£¬´¥·¢ vPortExitCritical(port.c:450)¡£
+ * W5500 SPI ï¿½ï¿½ï¿½Ù½ç£ºï¿½ï¿½ ulPortRaiseBASEPRI / ï¿½Ö¸ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ taskENTER_CRITICALï¿½ï¿½
+ * ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ vPortEnterCritical ï¿½ï¿½ï¿½ï¿½ uxCriticalNestingï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ printf/ï¿½ï¿½/ï¿½ï¿½ï¿½ï¿½ï¿½Ù½ï¿½ï¿½ï¿½
+ * ï¿½ï¿½ï¿½ï¿½ï¿½Î»ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ vPortExitCritical(port.c:450)ï¿½ï¿½
  */
 static uint32_t s_iinchip_spi_saved_basepri;
 
@@ -137,17 +137,17 @@ uint16 wiz_read_buf(uint32 addrbsb, uint8* buf,uint16 len)
 
   IINCHIP_ISR_DISABLE();
   IINCHIP_CSoff();
-  IINCHIP_SpiSendData( (addrbsb & 0x00FF0000)>>16);		// Í¨¹ýSPI·¢ËÍ16Î»µØÖ·¶Î¸øMCU
+  IINCHIP_SpiSendData( (addrbsb & 0x00FF0000)>>16);		// Í¨ï¿½ï¿½SPIï¿½ï¿½ï¿½ï¿½16Î»ï¿½ï¿½Ö·ï¿½Î¸ï¿½MCU
   IINCHIP_SpiSendData( (addrbsb & 0x0000FF00)>> 8);		// 
-  IINCHIP_SpiSendData( (addrbsb & 0x000000F8));    		// ÉèÖÃSPIÎª¶Á²Ù×÷
-  for(idx = 0; idx < len; idx++)                    	// ½«bufÖÐµÄÊý¾ÝÍ¨¹ýSPI·¢ËÍ¸øMCU
+  IINCHIP_SpiSendData( (addrbsb & 0x000000F8));    		// ï¿½ï¿½ï¿½ï¿½SPIÎªï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
+  for(idx = 0; idx < len; idx++)                    	// ï¿½ï¿½bufï¿½Ðµï¿½ï¿½ï¿½ï¿½ï¿½Í¨ï¿½ï¿½SPIï¿½ï¿½ï¿½Í¸ï¿½MCU
   {
     buf[idx] = IINCHIP_SpiSendData(0x00);
   }
   IINCHIP_CSon();
   IINCHIP_ISR_ENABLE();
   
-  return len;																					// ·µ»ØÒÑ½ÓÊÕÊý¾ÝµÄ³¤¶ÈÖµ
+  return len;																					// ï¿½ï¿½ï¿½ï¿½ï¿½Ñ½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ÝµÄ³ï¿½ï¿½ï¿½Öµ
 }
 
 
@@ -204,56 +204,56 @@ void sysinit( uint8 * tx_size, uint8 * rx_size  )
     SSIZE[i] = (int16)(0);
     RSIZE[i] = (int16)(0);
 
-// W5500ÓÐ8¸öSocket£¬Ã¿¸öSocketÓÐ¶ÔÓ¦¶ÀÁ¢µÄÊÕ·¢»º´æÇø¡£
-// Ã¿¸öSocketµÄ·¢ËÍ/½ÓÊÕ»º´æÇø¶¼ÔÚÒ»¸ö16KBµÄÎïÀí·¢ËÍÄÚ´æÖÐ£¬³õÊ¼»¯·ÖÅäÎª2KB¡£
-// ÎÞÂÛ¸øÃ¿¸öSocket·ÖÅä¶à´óµÄÊÕ/·¢»º´æ£¬¶¼±ØÐëÔÚ16KBÒÔÄÚ¡£
+// W5500ï¿½ï¿½8ï¿½ï¿½Socketï¿½ï¿½Ã¿ï¿½ï¿½Socketï¿½Ð¶ï¿½Ó¦ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Õ·ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
+// Ã¿ï¿½ï¿½Socketï¿½Ä·ï¿½ï¿½ï¿½/ï¿½ï¿½ï¿½Õ»ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ò»ï¿½ï¿½16KBï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ú´ï¿½ï¿½Ð£ï¿½ï¿½ï¿½Ê¼ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Îª2KBï¿½ï¿½
+// ï¿½ï¿½ï¿½Û¸ï¿½Ã¿ï¿½ï¿½Socketï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½/ï¿½ï¿½ï¿½ï¿½ï¿½æ£¬ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½16KBï¿½ï¿½ï¿½Ú¡ï¿½
 
-    if (ssum <= 16384)										// ÉèÖÃSocket·¢ËÍ»º´æ¿Õ¼äµÄ´óÐ¡
+    if (ssum <= 16384)										// ï¿½ï¿½ï¿½ï¿½Socketï¿½ï¿½ï¿½Í»ï¿½ï¿½ï¿½Õ¼ï¿½Ä´ï¿½Ð¡
     {
        switch( tx_size[i] )
 				{
 					case 1:
-						SSIZE[i] = (int16)(1024);			// i=1£¬tx_size=1KB
+						SSIZE[i] = (int16)(1024);			// i=1ï¿½ï¿½tx_size=1KB
 					break;
 					case 2:
-						SSIZE[i] = (int16)(2048);			// i=2£¬tx_size=2KB
+						SSIZE[i] = (int16)(2048);			// i=2ï¿½ï¿½tx_size=2KB
 					break;
 					case 4:
-						SSIZE[i] = (int16)(4096);			// i=4£¬tx_size=4KB
+						SSIZE[i] = (int16)(4096);			// i=4ï¿½ï¿½tx_size=4KB
 					break;
 					case 8:
-						SSIZE[i] = (int16)(8192);			// i=8£¬tx_size=8KB
+						SSIZE[i] = (int16)(8192);			// i=8ï¿½ï¿½tx_size=8KB
 					break;
 					case 16:
-						SSIZE[i] = (int16)(16384);		// i=16£¬tx_size=16KB
+						SSIZE[i] = (int16)(16384);		// i=16ï¿½ï¿½tx_size=16KB
 					break;
 					default :
-						RSIZE[i] = (int16)(2048);			// Ä¬ÈÏi=2£¬tx_size=2KB
+						RSIZE[i] = (int16)(2048);			// Ä¬ï¿½ï¿½i=2ï¿½ï¿½tx_size=2KB
 					break;
 				}
 		}
 
-			if (rsum <= 16384)									// ÉèÖÃSocket½ÓÊÕ»º´æ¿Õ¼äµÄ´óÐ¡
+			if (rsum <= 16384)									// ï¿½ï¿½ï¿½ï¿½Socketï¿½ï¿½ï¿½Õ»ï¿½ï¿½ï¿½Õ¼ï¿½Ä´ï¿½Ð¡
 			{
 					switch( rx_size[i] )				
 					{
 						case 1:
-							RSIZE[i] = (int16)(1024);		// i=1£¬rx_size=1KB
+							RSIZE[i] = (int16)(1024);		// i=1ï¿½ï¿½rx_size=1KB
 						break;
 						case 2:
-							RSIZE[i] = (int16)(2048);		// i=2£¬rx_size=2KB
+							RSIZE[i] = (int16)(2048);		// i=2ï¿½ï¿½rx_size=2KB
 						break;
 						case 4:
-							RSIZE[i] = (int16)(4096);		// i=4£¬rx_size=4KB
+							RSIZE[i] = (int16)(4096);		// i=4ï¿½ï¿½rx_size=4KB
 						break;
 						case 8:
-							RSIZE[i] = (int16)(8192);		// i=8£¬rx_size=8KB
+							RSIZE[i] = (int16)(8192);		// i=8ï¿½ï¿½rx_size=8KB
 						break;
 						case 16:
-							RSIZE[i] = (int16)(16384);	// i=16£¬rx_size=16KB
+							RSIZE[i] = (int16)(16384);	// i=16ï¿½ï¿½rx_size=16KB
 						break;
 						default :
-							RSIZE[i] = (int16)(2048);		// Ä¬ÈÏi=2£¬rx_size=2K
+							RSIZE[i] = (int16)(2048);		// Ä¬ï¿½ï¿½i=2ï¿½ï¿½rx_size=2K
 						break;
 					}
 			}
@@ -312,7 +312,7 @@ void setSIPR(
 }
 
 /**
-@brief  W5500ÐÄÌø¼ì²â³ÌÐò£¬ÉèÖÃSocketÔÚÏßÊ±¼ä¼Ä´æÆ÷Sn_KPALVTR£¬µ¥Î»Îª5s
+@brief  W5500ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Socketï¿½ï¿½ï¿½ï¿½Ê±ï¿½ï¿½Ä´ï¿½ï¿½ï¿½Sn_KPALVTRï¿½ï¿½ï¿½ï¿½Î»Îª5s
 */
 void setkeepalive(SOCKET s)
 { 
@@ -456,20 +456,20 @@ uint16 getSn_TX_FSR(SOCKET s)
 
 This gives size of received data in receive buffer.
 */
-uint16 getSn_RX_RSR(SOCKET s)														// »ñÈ¡¿ÕÏÐ½ÓÊÕ»º´æ¼Ä´æÆ÷µÄÖµ
+uint16 getSn_RX_RSR(SOCKET s)														// ï¿½ï¿½È¡ï¿½ï¿½ï¿½Ð½ï¿½ï¿½Õ»ï¿½ï¿½ï¿½Ä´ï¿½ï¿½ï¿½ï¿½ï¿½Öµ
 {
   uint16 val=0,val1=0;
   do
   {
-    val1 = IINCHIP_READ(Sn_RX_RSR0(s));									// MCU¶ÁSn_RX_RSRµÄµÍ8Î»£¬²¢¸³¸øval1
-    val1 = (val1 << 8) + IINCHIP_READ(Sn_RX_RSR1(s));		// ¶Á¸ß8Î»£¬²¢ÓëµÍ8Î»Ïà¼Ó¸³¸øval1
-    if(val1 != 0)																				// ÈôSn_RX_RSRµÄÖµ²»Îª0£¬½«Æä¸³¸øval
+    val1 = IINCHIP_READ(Sn_RX_RSR0(s));									// MCUï¿½ï¿½Sn_RX_RSRï¿½Äµï¿½8Î»ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½val1
+    val1 = (val1 << 8) + IINCHIP_READ(Sn_RX_RSR1(s));		// ï¿½ï¿½ï¿½ï¿½8Î»ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½8Î»ï¿½ï¿½Ó¸ï¿½ï¿½ï¿½val1
+    if(val1 != 0)																				// ï¿½ï¿½Sn_RX_RSRï¿½ï¿½Öµï¿½ï¿½Îª0ï¿½ï¿½ï¿½ï¿½ï¿½ä¸³ï¿½ï¿½val
     {
         val = IINCHIP_READ(Sn_RX_RSR0(s));
         val = (val << 8) + IINCHIP_READ(Sn_RX_RSR1(s));
     }
-  } while (val != val1);																// ÅÐ¶ÏvalÓëval1ÊÇ·ñÏàµÈ£¬Èô²»µÈ£¬ÖØÐÂ·µ»ØdoÑ­»·£¬ÈôÏàµÈ£¬Ìø³öÑ­»·
-   return val;																					// ½«valµÄÖµ·µ»Ø¸øgetSn_RX_RSR
+  } while (val != val1);																// ï¿½Ð¶ï¿½valï¿½ï¿½val1ï¿½Ç·ï¿½ï¿½ï¿½È£ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½È£ï¿½ï¿½ï¿½ï¿½Â·ï¿½ï¿½ï¿½doÑ­ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½È£ï¿½ï¿½ï¿½ï¿½ï¿½Ñ­ï¿½ï¿½
+   return val;																					// ï¿½ï¿½valï¿½ï¿½Öµï¿½ï¿½ï¿½Ø¸ï¿½getSn_RX_RSR
 }
 
 
@@ -520,15 +520,15 @@ void recv_data_processing(SOCKET s, uint8 *data, uint16 len)
   
   
   
-	// MCU¶ÁÈ¡Sn_RX_RD½ÓÊÕÐ´Ö¸Õë¼Ä´æÆ÷µÄÖµ£¬²¢¸³¸øptr
-	// Sn_RX_RD±£´æ½ÓÊÕ»º´æÖÐÊý¾ÝµÄÊ×µØÖ·£¬ÈôÓÐÊý¾Ý½ÓÊÕ£¬Ôò½ÓÊÕÍêºó¸Ã¼Ä´æÆ÷ÖµÒª¸üÐÂ
+	// MCUï¿½ï¿½È¡Sn_RX_RDï¿½ï¿½ï¿½ï¿½Ð´Ö¸ï¿½ï¿½Ä´ï¿½ï¿½ï¿½ï¿½ï¿½Öµï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ptr
+	// Sn_RX_RDï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Õ»ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ýµï¿½ï¿½×µï¿½Ö·ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ý½ï¿½ï¿½Õ£ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ã¼Ä´ï¿½ï¿½ï¿½ÖµÒªï¿½ï¿½ï¿½ï¿½
   ptr = IINCHIP_READ( Sn_RX_RD0(s) );
   ptr = ((ptr & 0x00ff) << 8) + IINCHIP_READ( Sn_RX_RD1(s) );
 	
-  addrbsb = (uint32)(ptr<<8) + (s<<5) + 0x18;		// »ñÈ¡½ÓÊÕµ½µÄÊý¾ÝµÄ¾ø¶ÔµØÖ·
-  wiz_read_buf(addrbsb, data, len);							// Í¨¹ý¾ø¶ÔµØÖ·£¬½«½ÓÊÕµ½µÄÊý¾Ý·¢¸øMCU
+  addrbsb = (uint32)(ptr<<8) + (s<<5) + 0x18;		// ï¿½ï¿½È¡ï¿½ï¿½ï¿½Õµï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ÝµÄ¾ï¿½ï¿½Ôµï¿½Ö·
+  wiz_read_buf(addrbsb, data, len);							// Í¨ï¿½ï¿½ï¿½ï¿½ï¿½Ôµï¿½Ö·ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Õµï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ý·ï¿½ï¿½ï¿½MCU
   
-	// ¸üÐÂSn_RX_RD¼Ä´æÆ÷µÄÖµ
+	// ï¿½ï¿½ï¿½ï¿½Sn_RX_RDï¿½Ä´ï¿½ï¿½ï¿½ï¿½ï¿½Öµ
 	ptr += len;														// 
   IINCHIP_WRITE( Sn_RX_RD0(s), (uint8)((ptr & 0xff00) >> 8));
   IINCHIP_WRITE( Sn_RX_RD1(s), (uint8)(ptr & 0x00ff));

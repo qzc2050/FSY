@@ -42,6 +42,8 @@ KNOWN_FC = frozenset(
 )
 
 DEFAULT_SLAVE_ADDR = 0x01
+DEFAULT_TCP_PORT = 5001
+
 RT_REG_START = 0x0001
 RT_REG_COUNT = 11
 RT_PAYLOAD_BYTES = RT_REG_COUNT * 4
@@ -49,6 +51,13 @@ RT_PAYLOAD_BYTES = RT_REG_COUNT * 4
 REG_SERIALNUM = 86
 REG_SERIALNUM_COUNT = 8
 REG_ADDRESS = 121
+REG_ALARM_VOLUME = 122
+REG_CONTROL_BIT2 = 123
+REG_CONTROL_BIT2_COUNT = 2
+CTRL2_BIT_ALARM_LIGHT = 13
+CTRL2_BIT_SCREEN = 14
+CTRL2_BIT_EXT_ALARM = 15
+NEIJI_CTRL2_DEFAULT = (1 << CTRL2_BIT_ALARM_LIGHT) | (1 << CTRL2_BIT_SCREEN)
 REG_PRODUCT_MODEL = 130
 REG_PRODUCT_MODEL_COUNT = 8
 REG_PRODUCT_NAME = 146
@@ -85,6 +94,10 @@ REG_DHCP_ENABLE = 170
 REG_LANGUAGE = 174
 REG_HW_VERSION = 180
 REG_HW_VERSION_COUNT = 8
+REG_GEIGER_SEC_CPS = 190
+REG_GEIGER_SEC_CPS_COUNT = 2
+REG_CURRENT_IP = 192
+REG_CURRENT_IP_COUNT = 2
 CFG_SN_MAX_LEN = 12
 CFG_MODEL_MAX_LEN = 12
 CFG_HW_VERSION_MAX_LEN = 16
@@ -290,6 +303,25 @@ def reg_payload_to_u32(payload: bytes) -> int:
     if len(payload) < 4:
         return 0
     return struct.unpack("<I", payload[:4])[0]
+
+
+def merge_control_bit2(current: int, screen_on: bool, light_on: bool) -> int:
+    value = current & ~(1 << CTRL2_BIT_EXT_ALARM)
+    if light_on:
+        value |= 1 << CTRL2_BIT_ALARM_LIGHT
+    else:
+        value &= ~(1 << CTRL2_BIT_ALARM_LIGHT)
+    if screen_on:
+        value |= 1 << CTRL2_BIT_SCREEN
+    else:
+        value &= ~(1 << CTRL2_BIT_SCREEN)
+    return value & 0xFFFFFFFF
+
+
+def control_bit2_enables(value: int) -> Tuple[bool, bool]:
+    light_on = bool(value & (1 << CTRL2_BIT_ALARM_LIGHT))
+    screen_on = bool(value & (1 << CTRL2_BIT_SCREEN))
+    return light_on, screen_on
 
 
 def u32_to_reg_values(value: int) -> List[int]:

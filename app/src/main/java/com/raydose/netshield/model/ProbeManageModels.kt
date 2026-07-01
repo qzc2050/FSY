@@ -8,13 +8,15 @@ data class ProbeManageDraft(
     val externalAlarmConnected: Boolean = false,
     val doseUpperUsv: String = "10.00",
     val doseLowerUsv: String = "0.10",
-    /** 0x52 bit0：1=禁止上限报警；开=启用 */
+    /** reg 82 bit0=上阈值报警使能，bit1=下阈值报警使能（Neiji：1=启用） */
     val radiationUpperAlarmOn: Boolean = true,
-    /** 0x52 bit1：1=禁止下限报警；开=启用 */
+    /** reg 82 bit1 */
     val radiationLowerAlarmOn: Boolean = true,
     val volume: Float = 0.5f,
     val slaveScreenOn: Boolean = true,
     val alarmLightOn: Boolean = true,
+    /** 最近一次读到的 reg123 原值，写时保留 bit15 等未编辑位 */
+    val controlBit2Raw: Long = NEIJI_CTRL2_DEFAULT,
 ) {
     val id: String get() = savedProbe.id
     val displayName: String get() = savedProbe.displayName

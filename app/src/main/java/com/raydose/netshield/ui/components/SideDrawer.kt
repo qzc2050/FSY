@@ -6,6 +6,8 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -192,6 +194,12 @@ private fun SideDrawerPanelContent(
 ) {
     val density = LocalDensity.current
     val panelWidthPx = with(density) { layout.panelWidth.toPx() }
+    val compactDrawer = layout.panelHeight < 360.dp
+    val iconSize = if (compactDrawer) 36.dp else ScreenSpec.sideDrawerIconSize
+    val labelSp = if (compactDrawer) 13 else ScreenSpec.SIDE_DRAWER_LABEL_SP
+    val itemVPad = if (compactDrawer) 4.dp else 8.dp
+    val columnVPad = if (compactDrawer) 10.dp else 16.dp
+    val scrollState = rememberScrollState()
     val scope = rememberCoroutineScope()
     var dragDismissX by remember { mutableFloatStateOf(0f) }
     val slideOffset = remember(panelWidthPx) { Animatable(panelWidthPx) }
@@ -227,7 +235,8 @@ private fun SideDrawerPanelContent(
                 .height(layout.panelHeight)
                 .clip(RoundedCornerShape(20.dp))
                 .background(Color(0xE61A1B3A))
-                .padding(vertical = 16.dp, horizontal = 6.dp)
+                .padding(vertical = columnVPad, horizontal = 6.dp)
+                .verticalScroll(scrollState)
                 .pointerInput(draggable) {
                     if (!draggable) return@pointerInput
                     detectHorizontalDragGestures(
@@ -247,19 +256,19 @@ private fun SideDrawerPanelContent(
                         },
                     )
                 },
-            verticalArrangement = Arrangement.SpaceEvenly,
+            verticalArrangement = Arrangement.spacedBy(if (compactDrawer) 4.dp else 8.dp, Alignment.CenterVertically),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            DrawerItem(R.drawable.ic_sidebar_music, "音乐播放") {
+            DrawerItem(R.drawable.ic_sidebar_music, "音乐播放", iconSize, labelSp, itemVPad) {
                 onDestinationClick(SideDrawerDestination.Music)
             }
-            DrawerItem(R.drawable.ic_sidebar_album, "电子相册") {
+            DrawerItem(R.drawable.ic_sidebar_album, "电子相册", iconSize, labelSp, itemVPad) {
                 onDestinationClick(SideDrawerDestination.Album)
             }
-            DrawerItem(R.drawable.ic_sidebar_folder, "本地文件") {
+            DrawerItem(R.drawable.ic_sidebar_folder, "本地文件", iconSize, labelSp, itemVPad) {
                 onDestinationClick(SideDrawerDestination.Files)
             }
-            DrawerItem(R.drawable.ic_sidebar_settings, "系统设置") {
+            DrawerItem(R.drawable.ic_sidebar_settings, "系统设置", iconSize, labelSp, itemVPad) {
                 onDestinationClick(SideDrawerDestination.Settings)
             }
         }
@@ -270,26 +279,29 @@ private fun SideDrawerPanelContent(
 private fun DrawerItem(
     @DrawableRes iconRes: Int,
     label: String,
+    iconSize: Dp,
+    labelSp: Int,
+    verticalPadding: Dp,
     onClick: () -> Unit,
 ) {
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
         modifier = Modifier
             .clickable(onClick = onClick)
-            .padding(vertical = 8.dp, horizontal = 4.dp),
+            .padding(vertical = verticalPadding, horizontal = 4.dp),
     ) {
         Icon(
             painter = painterResource(iconRes),
             contentDescription = label,
             tint = SideDrawerIconTint,
-            modifier = Modifier.size(ScreenSpec.sideDrawerIconSize),
+            modifier = Modifier.size(iconSize),
         )
         Text(
             text = label,
             color = NetShieldTextPrimary,
-            fontSize = ScreenSpec.SIDE_DRAWER_LABEL_SP.sp,
+            fontSize = labelSp.sp,
             textAlign = TextAlign.Center,
-            modifier = Modifier.padding(top = 8.dp),
+            modifier = Modifier.padding(top = if (verticalPadding <= 4.dp) 4.dp else 8.dp),
         )
     }
 }

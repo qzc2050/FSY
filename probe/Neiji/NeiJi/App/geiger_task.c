@@ -2,6 +2,7 @@
 #include "geiger.h"
 #include "beep.h"
 #include "alarm_output.h"
+#include "dose_rate.h"
 #include "fsy_regmap.h"
 #include "main.h"
 #include "cmsis_os.h"
@@ -39,6 +40,7 @@ static void GeigerTask(void *argument)
         Dose_Rate_TH_Alarm();
         Alarm_Output_Update();
         Beep_Ctr(beep_event);
+        Fsy_Regmap_SetGeigerSecCps(DoseRate_GetLastRawCps());
         Fsy_Regmap_UpdateDoseRate(data_var.real_rate);
         osDelay(GEIGER_TASK_MS);
     }

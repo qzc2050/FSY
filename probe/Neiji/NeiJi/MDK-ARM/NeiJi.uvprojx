@@ -870,6 +870,11 @@
               <FilePath>../Hardware/lcd/lcd_rgb.c</FilePath>
             </File>
             <File>
+              <FileName>lcd_backlight.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../Hardware/lcd/lcd_backlight.c</FilePath>
+            </File>
+            <File>
               <FileName>key.c</FileName>
               <FileType>1</FileType>
               <FilePath>../Hardware/key/key.c</FilePath>

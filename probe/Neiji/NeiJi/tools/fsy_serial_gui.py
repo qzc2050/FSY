@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""NeiJi 工厂生产 — 串口选择 + 实时参数 + 生产配置读写。"""
+"""NeiJi 工厂生产 — 串口 / TCP + 实时参数 + 生产配置读写。"""
 from __future__ import annotations
 
+import csv
 import json
 import os
 import threading
@@ -10,7 +11,7 @@ import time
 import tkinter as tk
 from dataclasses import dataclass
 from datetime import datetime
-from tkinter import messagebox, scrolledtext, ttk
+from tkinter import filedialog, messagebox, scrolledtext, simpledialog, ttk
 from typing import Callable, Optional
 
 import serial
@@ -21,6 +22,7 @@ from fsy_protocol import (
     CFG_HW_VERSION_MAX_LEN,
     CFG_PRODUCT_NAME_MAX_BYTES,
     CFG_SN_MAX_LEN,
+    DEFAULT_TCP_PORT,
     FC_ACTIVE_UPLOAD,
     FC_READ_HOLDING_RESP,
     FC_WRITE_MULTI_RESP,
@@ -30,15 +32,25 @@ from fsy_protocol import (
     REG_ADDRESS,
     REG_ALARM_ENABLE,
     REG_ALARM_ENABLE_COUNT,
+    REG_ALARM_VOLUME,
+    REG_CONTROL_BIT2,
+    REG_CONTROL_BIT2_COUNT,
+    NEIJI_CTRL2_DEFAULT,
+    control_bit2_enables,
+    merge_control_bit2,
     REG_DOSE_HI_TH,
     REG_DOSE_LO_TH,
     REG_PRODUCT_MODEL,
     REG_PRODUCT_MODEL_COUNT,
     REG_PRODUCT_NAME,
     REG_PRODUCT_NAME_COUNT,
+    REG_CURRENT_IP,
+    REG_CURRENT_IP_COUNT,
     REG_STATIC_IP,
     REG_STATIC_IP_COUNT,
     REG_GEIGER_SENS,
+    REG_GEIGER_SEC_CPS,
+    REG_GEIGER_SEC_CPS_COUNT,
     REG_EWMA_THRESHOLD_CPS,
     REG_EWMA_THRESHOLD_DELTA,
     REG_EWMA_ALPHA_LOW,
@@ -76,10 +88,12 @@ from fsy_protocol import (
     reg_payload_to_u32,
     u32_to_reg_values,
 )
+from fsy_tcp_worker import TcpWorker
 
-APP_TITLE = "NeiJi 生产测试 — 串口协议"
+APP_TITLE = "NeiJi 生产测试 — 串口 / TCP"
 DEFAULT_BAUD = 115200
-CONFIG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".last_port.json")
+CONFIG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".last_conn.json")
+LEGACY_PORT_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".last_port.json")
 
 DISPLAY_REGS = [
     0x0001,
@@ -91,6 +105,21 @@ DISPLAY_REGS = [
     0x000D,
     0x000F,
 ]
+
+CPS_CSV_ROOT = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "geiger_cps_logs"
+)
+
+
+def cps_csv_path_for_time(base_dir: str, when: datetime | None = None) -> str:
+    """按 日期/小时 分目录，每小时一个 cps.csv。"""
+    when = when or datetime.now()
+    hour_dir = os.path.join(
+        base_dir,
+        when.strftime("%Y-%m-%d"),
+        when.strftime("%H"),
+    )
+    return os.path.join(hour_dir, "cps.csv")
 RT_REG_ALARM_STATUS = 0x000D
 
 
@@ -107,23 +136,73 @@ def port_from_combo(text: str) -> str:
     return text.split(" — ")[0].strip()
 
 
-def load_last_port() -> str:
+def load_conn_config() -> dict:
+    default = {
+        "mode": "serial",
+        "port": "",
+        "baud": DEFAULT_BAUD,
+        "host": "192.168.2.100",
+        "tcp_port": DEFAULT_TCP_PORT,
+    }
     try:
         if os.path.isfile(CONFIG_FILE):
             with open(CONFIG_FILE, "r", encoding="utf-8") as f:
                 data = json.load(f)
-            return str(data.get("port", ""))
+            if isinstance(data, dict):
+                default.update({k: data[k] for k in default if k in data})
+        elif os.path.isfile(LEGACY_PORT_FILE):
+            with open(LEGACY_PORT_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            if isinstance(data, dict) and data.get("port"):
+                default["port"] = str(data["port"])
     except (OSError, json.JSONDecodeError, TypeError):
         pass
-    return ""
+    try:
+        default["baud"] = int(default["baud"])
+        default["tcp_port"] = int(default["tcp_port"])
+    except (TypeError, ValueError):
+        default["baud"] = DEFAULT_BAUD
+        default["tcp_port"] = DEFAULT_TCP_PORT
+    return default
+
+
+def save_conn_config(
+    mode: str,
+    *,
+    port: str = "",
+    baud: int = DEFAULT_BAUD,
+    host: str = "",
+    tcp_port: int = DEFAULT_TCP_PORT,
+) -> None:
+    try:
+        with open(CONFIG_FILE, "w", encoding="utf-8") as f:
+            json.dump(
+                {
+                    "mode": mode,
+                    "port": port,
+                    "baud": baud,
+                    "host": host,
+                    "tcp_port": tcp_port,
+                },
+                f,
+            )
+    except OSError:
+        pass
+
+
+def load_last_port() -> str:
+    return str(load_conn_config().get("port", ""))
 
 
 def save_last_port(port: str) -> None:
-    try:
-        with open(CONFIG_FILE, "w", encoding="utf-8") as f:
-            json.dump({"port": port}, f)
-    except OSError:
-        pass
+    cfg = load_conn_config()
+    save_conn_config(
+        "serial",
+        port=port,
+        baud=int(cfg.get("baud", DEFAULT_BAUD)),
+        host=str(cfg.get("host", "192.168.2.100")),
+        tcp_port=int(cfg.get("tcp_port", DEFAULT_TCP_PORT)),
+    )
 
 
 @dataclass
@@ -136,6 +215,7 @@ class PendingRequest:
     slave_addr: Optional[int] = None
     retries_left: int = 0
     tx_frame: bytes = b""
+    config_mode: bool = True
 
 
 class SerialWorker:
@@ -215,67 +295,118 @@ class FactoryApp(tk.Tk):
     def __init__(self) -> None:
         super().__init__()
         self.title(APP_TITLE)
-        self.geometry("960x760")
-        self.minsize(860, 620)
+        self.geometry("1080x1080")
+        self.minsize(860, 640)
 
-        self.worker = SerialWorker(
-            on_data=lambda d: self.after(0, lambda: self._on_serial_data(d)),
-            on_error=lambda e: self.after(0, lambda: self._on_serial_error(e)),
-            on_closed=lambda: self.after(0, self._on_serial_closed),
-        )
-        self.scanner = FrameScanner(slave_filter=None)
+        cfg = load_conn_config()
+        self._conn_mode = tk.StringVar(value=str(cfg.get("mode", "serial")))
+
+        link_cb = {
+            "on_data": lambda d: self.after(0, lambda: self._on_link_data(d)),
+            "on_error": lambda e: self.after(0, lambda: self._on_link_error(e)),
+            "on_closed": lambda: self.after(0, self._on_link_closed),
+        }
+        self.serial_worker = SerialWorker(**link_cb)
+        self.tcp_worker = TcpWorker(**link_cb)
+        self.worker: SerialWorker | TcpWorker = self.serial_worker
         self.connected = False
+        self._link_kind = "serial"
         self.frame_count = 0
         self.value_labels: dict[int, tk.Label] = {}
         self._pending: Optional[PendingRequest] = None
         self._poll_after_id: Optional[str] = None
         self._cfg_busy = False
+        self._cps_poll_after_id: Optional[str] = None
+        self._cps_csv_base_dir = CPS_CSV_ROOT
+        self._cps_csv_path = cps_csv_path_for_time(self._cps_csv_base_dir)
+        self.scanner = FrameScanner(slave_filter=None)
 
         self._build_ui()
         self.refresh_ports()
+        self._apply_conn_mode_ui()
         self.protocol("WM_DELETE_WINDOW", self._on_close)
 
     def _build_ui(self) -> None:
+        conn_bar = ttk.Frame(self, padding=(8, 8, 8, 0))
+        conn_bar.pack(fill=tk.X)
+
+        ttk.Label(conn_bar, text="连接:").pack(side=tk.LEFT, padx=(0, 6))
+        self.rb_serial = ttk.Radiobutton(
+            conn_bar,
+            text="串口",
+            variable=self._conn_mode,
+            value="serial",
+            command=self._apply_conn_mode_ui,
+        )
+        self.rb_serial.pack(side=tk.LEFT)
+        self.rb_tcp = ttk.Radiobutton(
+            conn_bar,
+            text="TCP",
+            variable=self._conn_mode,
+            value="tcp",
+            command=self._apply_conn_mode_ui,
+        )
+        self.rb_tcp.pack(side=tk.LEFT, padx=(8, 0))
+
         top = ttk.Frame(self, padding=8)
         top.pack(fill=tk.X)
 
-        ttk.Label(top, text="串口:").pack(side=tk.LEFT, padx=(0, 4))
+        cfg = load_conn_config()
+
+        self.serial_frame = ttk.Frame(top)
+        self.serial_frame.pack(side=tk.LEFT, fill=tk.X, expand=True)
+
+        ttk.Label(self.serial_frame, text="串口:").pack(side=tk.LEFT, padx=(0, 4))
         self.port_var = tk.StringVar()
         self.port_combo = ttk.Combobox(
-            top, textvariable=self.port_var, width=38, state="readonly"
+            self.serial_frame, textvariable=self.port_var, width=34, state="readonly"
         )
         self.port_combo.pack(side=tk.LEFT, padx=4)
-
-        ttk.Button(top, text="刷新", command=self.refresh_ports, width=6).pack(
-            side=tk.LEFT, padx=4
+        self.btn_refresh_ports = ttk.Button(
+            self.serial_frame, text="刷新", command=self.refresh_ports, width=6
         )
-
-        ttk.Label(top, text="波特率:").pack(side=tk.LEFT, padx=(12, 4))
-        self.baud_var = tk.StringVar(value=str(DEFAULT_BAUD))
-        ttk.Combobox(
-            top,
+        self.btn_refresh_ports.pack(side=tk.LEFT, padx=4)
+        ttk.Label(self.serial_frame, text="波特率:").pack(side=tk.LEFT, padx=(12, 4))
+        self.baud_var = tk.StringVar(value=str(cfg.get("baud", DEFAULT_BAUD)))
+        self.baud_combo = ttk.Combobox(
+            self.serial_frame,
             textvariable=self.baud_var,
             values=["9600", "115200", "921600"],
             width=8,
             state="readonly",
-        ).pack(side=tk.LEFT, padx=4)
+        )
+        self.baud_combo.pack(side=tk.LEFT, padx=4)
 
-        ttk.Label(top, text="从机地址:").pack(side=tk.LEFT, padx=(12, 4))
+        self.tcp_frame = ttk.Frame(top)
+        ttk.Label(self.tcp_frame, text="IP:").pack(side=tk.LEFT, padx=(0, 4))
+        self.tcp_host_var = tk.StringVar(value=str(cfg.get("host", "192.168.2.100")))
+        self.tcp_host_entry = ttk.Entry(self.tcp_frame, textvariable=self.tcp_host_var, width=18)
+        self.tcp_host_entry.pack(side=tk.LEFT, padx=4)
+        ttk.Label(self.tcp_frame, text="端口:").pack(side=tk.LEFT, padx=(12, 4))
+        self.tcp_port_var = tk.StringVar(value=str(cfg.get("tcp_port", DEFAULT_TCP_PORT)))
+        self.tcp_port_entry = ttk.Entry(self.tcp_frame, textvariable=self.tcp_port_var, width=8)
+        self.tcp_port_entry.pack(side=tk.LEFT, padx=4)
+        ttk.Label(self.tcp_frame, text=f"(默认 {DEFAULT_TCP_PORT})", foreground="#666").pack(
+            side=tk.LEFT, padx=(4, 0)
+        )
+
+        ctrl = ttk.Frame(top)
+        ctrl.pack(side=tk.RIGHT)
+        ttk.Label(ctrl, text="从机地址:").pack(side=tk.LEFT, padx=(0, 4))
         self.slave_addr_var = tk.StringVar(value="1")
-        ttk.Spinbox(
-            top,
+        self.slave_spin = ttk.Spinbox(
+            ctrl,
             from_=1,
             to=247,
             textvariable=self.slave_addr_var,
             width=5,
-        ).pack(side=tk.LEFT, padx=4)
-
+        )
+        self.slave_spin.pack(side=tk.LEFT, padx=4)
         self.btn_connect = ttk.Button(
-            top, text="连接", command=self.toggle_connect, width=10
+            ctrl, text="连接", command=self.toggle_connect, width=10
         )
         self.btn_connect.pack(side=tk.LEFT, padx=(12, 4))
-
-        ttk.Button(top, text="清空日志", command=self.clear_log, width=8).pack(
+        ttk.Button(ctrl, text="清空日志", command=self.clear_log, width=8).pack(
             side=tk.LEFT, padx=4
         )
 
@@ -347,49 +478,66 @@ class FactoryApp(tk.Tk):
             anchor=tk.W, pady=(8, 0)
         )
 
+    def _cfg_write_btn(self, form: ttk.Frame, row: int, command: Callable[[], None], text: str = "写入") -> None:
+        ttk.Button(form, text=text, width=8, command=command).grid(
+            row=row, column=3, sticky=tk.W, padx=4, pady=6
+        )
+
     def _build_cfg_tab(self, parent: ttk.Frame) -> None:
         form = ttk.Frame(parent)
         form.pack(fill=tk.X)
+        form.columnconfigure(1, weight=1)
 
-        ttk.Label(form, text="序列号 (reg 86):").grid(row=0, column=0, sticky=tk.W, pady=6)
+        self._control_bit2_raw = NEIJI_CTRL2_DEFAULT
+
+        row = 0
+        ttk.Label(form, text="序列号 (reg 86):").grid(row=row, column=0, sticky=tk.W, pady=6)
         self.sn_var = tk.StringVar()
         ttk.Entry(form, textvariable=self.sn_var, width=28).grid(
-            row=0, column=1, sticky=tk.W, padx=8, pady=6
+            row=row, column=1, sticky=tk.W, padx=8, pady=6
         )
         ttk.Label(form, text=f"最多 {CFG_SN_MAX_LEN} 字符", foreground="#666").grid(
-            row=0, column=2, sticky=tk.W
+            row=row, column=2, sticky=tk.W
         )
+        self._cfg_write_btn(form, row, self.write_sn_only)
+        row += 1
 
-        ttk.Label(form, text="产品名称 (reg 146):").grid(row=1, column=0, sticky=tk.W, pady=6)
+        ttk.Label(form, text="产品名称 (reg 146):").grid(row=row, column=0, sticky=tk.W, pady=6)
         self.name_var = tk.StringVar(value="雷沃-探测器")
         ttk.Entry(form, textvariable=self.name_var, width=28).grid(
-            row=1, column=1, sticky=tk.W, padx=8, pady=6
+            row=row, column=1, sticky=tk.W, padx=8, pady=6
         )
         ttk.Label(
             form,
             text=f"UTF-8，最多 {CFG_PRODUCT_NAME_MAX_BYTES} 字节",
             foreground="#666",
-        ).grid(row=1, column=2, sticky=tk.W)
+        ).grid(row=row, column=2, sticky=tk.W)
+        self._cfg_write_btn(form, row, self.write_name_only)
+        row += 1
 
-        ttk.Label(form, text="产品型号 (reg 130):").grid(row=2, column=0, sticky=tk.W, pady=6)
+        ttk.Label(form, text="产品型号 (reg 130):").grid(row=row, column=0, sticky=tk.W, pady=6)
         self.model_var = tk.StringVar()
         ttk.Entry(form, textvariable=self.model_var, width=28).grid(
-            row=2, column=1, sticky=tk.W, padx=8, pady=6
+            row=row, column=1, sticky=tk.W, padx=8, pady=6
         )
         ttk.Label(form, text=f"最多 {CFG_MODEL_MAX_LEN} 字符", foreground="#666").grid(
-            row=2, column=2, sticky=tk.W
+            row=row, column=2, sticky=tk.W
         )
+        self._cfg_write_btn(form, row, self.write_model_only)
+        row += 1
 
-        ttk.Label(form, text="硬件版本 (reg 180):").grid(row=3, column=0, sticky=tk.W, pady=6)
+        ttk.Label(form, text="硬件版本 (reg 180):").grid(row=row, column=0, sticky=tk.W, pady=6)
         self.hw_version_var = tk.StringVar(value="HW1314520168")
         ttk.Entry(form, textvariable=self.hw_version_var, width=28).grid(
-            row=3, column=1, sticky=tk.W, padx=8, pady=6
+            row=row, column=1, sticky=tk.W, padx=8, pady=6
         )
         ttk.Label(form, text=f"ASCII，最多 {CFG_HW_VERSION_MAX_LEN} 字符", foreground="#666").grid(
-            row=3, column=2, sticky=tk.W
+            row=row, column=2, sticky=tk.W
         )
+        self._cfg_write_btn(form, row, self.write_hw_version_only)
+        row += 1
 
-        ttk.Label(form, text="协议地址 (reg 121):").grid(row=4, column=0, sticky=tk.W, pady=6)
+        ttk.Label(form, text="协议地址 (reg 121):").grid(row=row, column=0, sticky=tk.W, pady=6)
         self.dev_addr_var = tk.StringVar(value="1")
         ttk.Spinbox(
             form,
@@ -397,41 +545,49 @@ class FactoryApp(tk.Tk):
             to=247,
             textvariable=self.dev_addr_var,
             width=8,
-        ).grid(row=4, column=1, sticky=tk.W, padx=8, pady=6)
+        ).grid(row=row, column=1, sticky=tk.W, padx=8, pady=6)
         ttk.Label(form, text="写入后请同步修改顶部「从机地址」", foreground="#666").grid(
-            row=4, column=2, sticky=tk.W
+            row=row, column=2, sticky=tk.W
         )
+        self._cfg_write_btn(form, row, self.write_addr_only)
+        row += 1
 
-        ttk.Label(form, text="静态 IP (reg 138):").grid(row=5, column=0, sticky=tk.W, pady=6)
-        self.static_ip_var = tk.StringVar(value="192.168.2.100")
-        ttk.Entry(form, textvariable=self.static_ip_var, width=28).grid(
-            row=5, column=1, sticky=tk.W, padx=8, pady=6
+        ttk.Label(form, text="当前 IP (reg 192):").grid(row=row, column=0, sticky=tk.W, pady=6)
+        self.current_ip_var = tk.StringVar(value="—")
+        ttk.Entry(
+            form, textvariable=self.current_ip_var, width=28, state="readonly"
+        ).grid(row=row, column=1, sticky=tk.W, padx=8, pady=6)
+        ttk.Label(form, text="只读；静态 IP 写 reg 138", foreground="#666").grid(
+            row=row, column=2, sticky=tk.W
         )
-        ttk.Label(form, text="落 W25Q；静态模式生效", foreground="#666").grid(
-            row=5, column=2, sticky=tk.W
-        )
+        self._cfg_write_btn(form, row, self.write_ip_only, text="写静态IP")
+        row += 1
 
-        ttk.Label(form, text="剂量率上阈值 (reg 50):").grid(row=6, column=0, sticky=tk.W, pady=6)
+        ttk.Label(form, text="剂量率上阈值 (reg 50):").grid(row=row, column=0, sticky=tk.W, pady=6)
         self.dose_hi_var = tk.StringVar(value="10000.00")
         ttk.Entry(form, textvariable=self.dose_hi_var, width=28).grid(
-            row=6, column=1, sticky=tk.W, padx=8, pady=6
+            row=row, column=1, sticky=tk.W, padx=8, pady=6
         )
         ttk.Label(form, text="单位 μSv/h，协议值=×100", foreground="#666").grid(
-            row=6, column=2, sticky=tk.W
+            row=row, column=2, sticky=tk.W
         )
+        self._cfg_write_btn(form, row, self.write_dose_hi_only)
+        row += 1
 
-        ttk.Label(form, text="剂量率下阈值 (reg 52):").grid(row=7, column=0, sticky=tk.W, pady=6)
+        ttk.Label(form, text="剂量率下阈值 (reg 52):").grid(row=row, column=0, sticky=tk.W, pady=6)
         self.dose_lo_var = tk.StringVar(value="0.00")
         ttk.Entry(form, textvariable=self.dose_lo_var, width=28).grid(
-            row=7, column=1, sticky=tk.W, padx=8, pady=6
+            row=row, column=1, sticky=tk.W, padx=8, pady=6
         )
         ttk.Label(form, text="0 表示下阈值不触发", foreground="#666").grid(
-            row=7, column=2, sticky=tk.W
+            row=row, column=2, sticky=tk.W
         )
+        self._cfg_write_btn(form, row, self.write_dose_lo_only)
+        row += 1
 
-        ttk.Label(form, text="报警使能 (reg 82):").grid(row=8, column=0, sticky=tk.W, pady=6)
+        ttk.Label(form, text="报警使能 (reg 82):").grid(row=row, column=0, sticky=tk.W, pady=6)
         alarm_row = ttk.Frame(form)
-        alarm_row.grid(row=8, column=1, sticky=tk.W, padx=8, pady=6)
+        alarm_row.grid(row=row, column=1, sticky=tk.W, padx=8, pady=6)
         self.alarm_hi_var = tk.IntVar(value=1)
         self.alarm_lo_var = tk.IntVar(value=1)
         ttk.Checkbutton(alarm_row, text="bit0 上阈值", variable=self.alarm_hi_var).pack(
@@ -440,29 +596,69 @@ class FactoryApp(tk.Tk):
         ttk.Checkbutton(alarm_row, text="bit1 下阈值", variable=self.alarm_lo_var).pack(
             side=tk.LEFT
         )
-        ttk.Label(form, text="勾选=允许报警，取消=清报警位", foreground="#666").grid(
-            row=8, column=2, sticky=tk.W
+        ttk.Label(form, text="勾选=允许报警", foreground="#666").grid(
+            row=row, column=2, sticky=tk.W
         )
+        self._cfg_write_btn(form, row, self.write_alarm_enable_only)
+        row += 1
 
-        ttk.Label(form, text="RTC 时间 (reg 94):").grid(row=9, column=0, sticky=tk.W, pady=6)
+        ttk.Label(form, text="报警音量 (reg 122):").grid(row=row, column=0, sticky=tk.W, pady=6)
+        vol_row = ttk.Frame(form)
+        vol_row.grid(row=row, column=1, sticky=tk.W, padx=8, pady=6)
+        self.alarm_volume_var = tk.IntVar(value=50)
+        ttk.Spinbox(
+            vol_row,
+            from_=0,
+            to=100,
+            textvariable=self.alarm_volume_var,
+            width=8,
+        ).pack(side=tk.LEFT)
+        ttk.Label(vol_row, text="  (0~100)").pack(side=tk.LEFT)
+        ttk.Label(form, text="与 App 探头管理音量一致", foreground="#666").grid(
+            row=row, column=2, sticky=tk.W
+        )
+        self._cfg_write_btn(form, row, self.write_volume_only)
+        row += 1
+
+        ttk.Label(form, text="屏/光控制 (reg 123):").grid(row=row, column=0, sticky=tk.W, pady=6)
+        ctrl_row = ttk.Frame(form)
+        ctrl_row.grid(row=row, column=1, sticky=tk.W, padx=8, pady=6)
+        self.screen_on_var = tk.IntVar(value=1)
+        self.light_on_var = tk.IntVar(value=1)
+        ttk.Checkbutton(ctrl_row, text="从机屏幕 bit14", variable=self.screen_on_var).pack(
+            side=tk.LEFT, padx=(0, 12)
+        )
+        ttk.Checkbutton(ctrl_row, text="报警灯光 bit13", variable=self.light_on_var).pack(
+            side=tk.LEFT
+        )
+        ttk.Label(form, text="bit15 外置在线只读", foreground="#666").grid(
+            row=row, column=2, sticky=tk.W
+        )
+        self._cfg_write_btn(form, row, self.write_control_bit2_only)
+        row += 1
+
+        ttk.Label(form, text="RTC 时间 (reg 94):").grid(row=row, column=0, sticky=tk.W, pady=6)
         self.rtc_time_var = tk.StringVar(value="—")
         ttk.Entry(
             form, textvariable=self.rtc_time_var, width=28, state="readonly"
-        ).grid(row=9, column=1, sticky=tk.W, padx=8, pady=6)
+        ).grid(row=row, column=1, sticky=tk.W, padx=8, pady=6)
         ttk.Label(form, text="读 PCF85063，写入不落 W25Q", foreground="#666").grid(
-            row=9, column=2, sticky=tk.W
+            row=row, column=2, sticky=tk.W
         )
+        self._cfg_write_btn(form, row, self.sync_current_time, text="同步时间")
+        row += 1
 
-        ttk.Label(form, text="软件版本 (reg 98):").grid(row=10, column=0, sticky=tk.W, pady=6)
+        ttk.Label(form, text="软件版本 (reg 98):").grid(row=row, column=0, sticky=tk.W, pady=6)
         self.sw_version_var = tk.StringVar(value="—")
         ttk.Entry(
             form, textvariable=self.sw_version_var, width=28, state="readonly"
-        ).grid(row=10, column=1, sticky=tk.W, padx=8, pady=6)
+        ).grid(row=row, column=1, sticky=tk.W, padx=8, pady=6)
         ttk.Label(form, text="只读，固件编译期版本", foreground="#666").grid(
-            row=10, column=2, sticky=tk.W
+            row=row, column=2, sticky=tk.W
         )
+        row += 1
 
-        ttk.Label(form, text="语言 (reg 174):").grid(row=11, column=0, sticky=tk.W, pady=6)
+        ttk.Label(form, text="语言 (reg 174):").grid(row=row, column=0, sticky=tk.W, pady=6)
         self.language_var = tk.StringVar(value="0 中文")
         ttk.Combobox(
             form,
@@ -470,10 +666,12 @@ class FactoryApp(tk.Tk):
             values=("0 中文", "1 English"),
             width=26,
             state="readonly",
-        ).grid(row=11, column=1, sticky=tk.W, padx=8, pady=6)
+        ).grid(row=row, column=1, sticky=tk.W, padx=8, pady=6)
         ttk.Label(form, text="0=中文，1=英文，落 W25Q", foreground="#666").grid(
-            row=11, column=2, sticky=tk.W
+            row=row, column=2, sticky=tk.W
         )
+        self._cfg_write_btn(form, row, self.write_language_only)
+        row += 1
 
         btn_row = ttk.Frame(parent)
         btn_row.pack(fill=tk.X, pady=(16, 8))
@@ -483,35 +681,11 @@ class FactoryApp(tk.Tk):
         ttk.Button(btn_row, text="写入全部", command=self.write_factory_cfg, width=12).pack(
             side=tk.LEFT, padx=8
         )
-        ttk.Button(btn_row, text="仅写 SN", command=self.write_sn_only, width=10).pack(
-            side=tk.LEFT, padx=8
-        )
-        ttk.Button(btn_row, text="仅写名称", command=self.write_name_only, width=10).pack(
-            side=tk.LEFT, padx=8
-        )
-        ttk.Button(btn_row, text="仅写型号", command=self.write_model_only, width=10).pack(
-            side=tk.LEFT, padx=8
-        )
-        ttk.Button(btn_row, text="仅写地址", command=self.write_addr_only, width=10).pack(
-            side=tk.LEFT, padx=8
-        )
-        ttk.Button(btn_row, text="仅写 IP", command=self.write_ip_only, width=10).pack(
-            side=tk.LEFT, padx=8
-        )
-        ttk.Button(btn_row, text="仅写语言", command=self.write_language_only, width=10).pack(
-            side=tk.LEFT, padx=8
-        )
-        ttk.Button(btn_row, text="仅写阈值/报警", command=self.write_alarm_only, width=14).pack(
-            side=tk.LEFT, padx=8
-        )
-        ttk.Button(btn_row, text="同步当前时间", command=self.sync_current_time, width=14).pack(
-            side=tk.LEFT, padx=8
-        )
 
         hint = ttk.Label(
             parent,
-            text="配置写入后落 W25Q，断电保持。静态 IP 见 reg 138；"
-            "修改协议地址后需用新地址通信。",
+            text="各字段右侧可单独写入；「读取配置 / 写入全部」一次操作全部项。"
+            "配置写入后落 W25Q，断电保持。",
             foreground="#444",
             wraplength=820,
         )
@@ -529,23 +703,122 @@ class FactoryApp(tk.Tk):
     def _set_language_from_reg(self, value: int) -> None:
         self.language_var.set("1 English" if value else "0 中文")
 
+    def _control_bit2_from_ui(self) -> int:
+        light_on = bool(self.light_on_var.get())
+        screen_on = bool(self.screen_on_var.get())
+        return merge_control_bit2(self._control_bit2_raw, screen_on, light_on)
+
+    def _set_control_bit2_from_reg(self, value: int) -> None:
+        self._control_bit2_raw = value & 0xFFFFFFFF
+        light_on, screen_on = control_bit2_enables(value)
+        self.light_on_var.set(1 if light_on else 0)
+        self.screen_on_var.set(1 if screen_on else 0)
+
+    def _alarm_enable_from_ui(self) -> int:
+        alarm_enable = 0
+        if self.alarm_hi_var.get():
+            alarm_enable |= 1 << ALARM_BIT_DOSE_HI
+        if self.alarm_lo_var.get():
+            alarm_enable |= 1 << ALARM_BIT_DOSE_LO
+        return alarm_enable
+
+    def _parse_dose_hi_x100(self) -> int | None:
+        try:
+            return max(0, int(float(self.dose_hi_var.get()) * 100.0))
+        except ValueError:
+            messagebox.showwarning("提示", "剂量率上阈值无效")
+            return None
+
+    def _parse_dose_lo_x100(self) -> int | None:
+        try:
+            return max(0, int(float(self.dose_lo_var.get()) * 100.0))
+        except ValueError:
+            messagebox.showwarning("提示", "剂量率下阈值无效")
+            return None
+
+    def _parse_alarm_volume(self) -> int | None:
+        try:
+            return max(0, min(100, int(self.alarm_volume_var.get())))
+        except (ValueError, tk.TclError):
+            messagebox.showwarning("提示", "报警音量无效（0~100）")
+            return None
+
     def _build_geiger_tab(self, parent: ttk.Frame) -> None:
+        poll_frame = ttk.LabelFrame(
+            parent,
+            text="每秒计数 CPS（reg 190，0x03 轮询；串口 / TCP 均可）",
+            padding=12,
+        )
+        poll_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 8))
+
+        ctrl = ttk.Frame(poll_frame)
+        ctrl.pack(fill=tk.X)
+
+        self.cps_poll_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(
+            ctrl,
+            text="启用每秒读取 reg190",
+            variable=self.cps_poll_var,
+            command=self._on_cps_poll_toggled,
+        ).pack(side=tk.LEFT)
+
+        ttk.Button(ctrl, text="立即读一次", command=self.read_geiger_cps_once, width=12).pack(
+            side=tk.LEFT, padx=(12, 4)
+        )
+        ttk.Button(ctrl, text="选择 CSV 目录", command=self._pick_cps_csv_dir, width=14).pack(
+            side=tk.LEFT, padx=4
+        )
+        ttk.Button(ctrl, text="清空列表", command=self._clear_cps_table, width=10).pack(
+            side=tk.LEFT, padx=4
+        )
+
+        info = ttk.Frame(poll_frame)
+        info.pack(fill=tk.X, pady=(10, 6))
+        ttk.Label(info, text="当前 CPS:").pack(side=tk.LEFT)
+        self.cps_current_lbl = tk.Label(
+            info, text="—", font=("Microsoft YaHei", 22, "bold"), fg="#0066CC"
+        )
+        self.cps_current_lbl.pack(side=tk.LEFT, padx=(8, 24))
+        ttk.Label(info, text="最近采样:").pack(side=tk.LEFT)
+        self.cps_time_lbl = ttk.Label(info, text="—")
+        self.cps_time_lbl.pack(side=tk.LEFT, padx=(8, 0))
+
+        self.cps_csv_path_var = tk.StringVar(value=self._cps_csv_path)
+        ttk.Label(poll_frame, textvariable=self.cps_csv_path_var, foreground="#666").pack(
+            anchor=tk.W, pady=(0, 6)
+        )
+
+        table_wrap = ttk.Frame(poll_frame)
+        table_wrap.pack(fill=tk.BOTH, expand=True)
+        cols = ("time", "cps")
+        self.cps_tree = ttk.Treeview(
+            table_wrap, columns=cols, show="headings", height=12
+        )
+        self.cps_tree.heading("time", text="时间")
+        self.cps_tree.heading("cps", text="CPS")
+        self.cps_tree.column("time", width=200, anchor=tk.W)
+        self.cps_tree.column("cps", width=100, anchor=tk.E)
+        scroll = ttk.Scrollbar(table_wrap, orient=tk.VERTICAL, command=self.cps_tree.yview)
+        self.cps_tree.configure(yscrollcommand=scroll.set)
+        self.cps_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scroll.pack(side=tk.RIGHT, fill=tk.Y)
+
         form = ttk.LabelFrame(parent, text="盖革 / EWMA（reg 154–167，每项 uint32 占 2 reg）", padding=12)
-        form.pack(fill=tk.X)
+        form.pack(fill=tk.X, pady=(0, 0))
 
         rows = [
-            ("灵敏度 (reg 154)", "geiger_sens_var", "120.00", "cpm/(μSv/h)，协议值×100"),
-            ("EWMA threshold_cps (156)", "ewma_cps_var", "100", "CPS"),
-            ("EWMA threshold_delta (158)", "ewma_delta_var", "10", ""),
-            ("EWMA alpha_low (160)", "ewma_alpha_lo_var", "0.03", "协议值×100"),
+            ("灵敏度 (reg 154)", "geiger_sens_var", "600.00", "cpm/(μSv/h)，协议值×100"),
+            ("EWMA threshold_cps (156)", "ewma_cps_var", "200", "CPS"),
+            ("EWMA threshold_delta (158)", "ewma_delta_var", "100", ""),
+            ("EWMA alpha_low (160)", "ewma_alpha_lo_var", "0.01", "协议值×100"),
             ("EWMA alpha_high (162)", "ewma_alpha_hi_var", "0.35", "协议值×100"),
             ("EWMA boost_duration (164)", "ewma_boost_var", "20", "秒"),
             ("剂量率量程上限 (166)", "rate_limit_var", "10000.00", "μSv/h，协议值×100"),
         ]
-        self.geiger_sens_var = tk.StringVar(value="120.00")
-        self.ewma_cps_var = tk.StringVar(value="100")
-        self.ewma_delta_var = tk.StringVar(value="10")
-        self.ewma_alpha_lo_var = tk.StringVar(value="0.03")
+        self.geiger_sens_var = tk.StringVar(value="600.00")
+        self.ewma_cps_var = tk.StringVar(value="200")
+        self.ewma_delta_var = tk.StringVar(value="100")
+        self.ewma_alpha_lo_var = tk.StringVar(value="0.01")
         self.ewma_alpha_hi_var = tk.StringVar(value="0.35")
         self.ewma_boost_var = tk.StringVar(value="20")
         self.rate_limit_var = tk.StringVar(value="10000.00")
@@ -568,6 +841,125 @@ class FactoryApp(tk.Tk):
         )
         ttk.Button(btn_row, text="写入盖革参数", command=self.write_geiger_cfg, width=14).pack(
             side=tk.LEFT
+        )
+
+    def _pick_cps_csv_dir(self) -> None:
+        path = filedialog.askdirectory(
+            title="CPS 记录根目录（其下按 日期/小时 分文件夹）",
+            initialdir=self._cps_csv_base_dir,
+        )
+        if path:
+            self._cps_csv_base_dir = path
+            self._cps_csv_path = cps_csv_path_for_time(self._cps_csv_base_dir)
+            self.cps_csv_path_var.set(self._cps_csv_path)
+
+    def _resolve_cps_csv_path(self, time_text: str) -> str:
+        try:
+            when = datetime.strptime(time_text, "%Y-%m-%d %H:%M:%S")
+        except ValueError:
+            when = datetime.now()
+        return cps_csv_path_for_time(self._cps_csv_base_dir, when)
+
+    def _clear_cps_table(self) -> None:
+        for item in self.cps_tree.get_children():
+            self.cps_tree.delete(item)
+
+    def _ensure_cps_csv_header(self, path: str | None = None) -> None:
+        path = path or cps_csv_path_for_time(self._cps_csv_base_dir)
+        self._cps_csv_path = path
+        self.cps_csv_path_var.set(path)
+        if os.path.isfile(path) and os.path.getsize(path) > 0:
+            return
+        os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+        with open(path, "w", encoding="utf-8-sig", newline="") as f:
+            csv.writer(f).writerow(["time", "cps"])
+
+    def _append_cps_csv(self, time_text: str, cps: int) -> None:
+        try:
+            path = self._resolve_cps_csv_path(time_text)
+            if path != self._cps_csv_path:
+                self._cps_csv_path = path
+                self.cps_csv_path_var.set(path)
+            if not os.path.isfile(path) or os.path.getsize(path) == 0:
+                self._ensure_cps_csv_header(path)
+            with open(path, "a", encoding="utf-8-sig", newline="") as f:
+                csv.writer(f).writerow([time_text, cps])
+        except OSError as exc:
+            self._log(f"WARN CPS CSV 写入失败: {exc}")
+
+    def _append_cps_row(self, time_text: str, cps: int) -> None:
+        self.cps_current_lbl.configure(text=str(cps))
+        self.cps_time_lbl.configure(text=time_text)
+        self.cps_tree.insert("", 0, values=(time_text, cps))
+        children = self.cps_tree.get_children()
+        if len(children) > 500:
+            for item in children[500:]:
+                self.cps_tree.delete(item)
+        self._append_cps_csv(time_text, cps)
+
+    def _on_cps_poll_toggled(self) -> None:
+        if self.cps_poll_var.get():
+            if not self.connected:
+                self.cps_poll_var.set(False)
+                messagebox.showinfo("提示", "请先连接（串口或 TCP）")
+                return
+            self._ensure_cps_csv_header()
+            self._schedule_cps_poll(delay_ms=0)
+        else:
+            self._stop_cps_poll()
+
+    def _stop_cps_poll(self) -> None:
+        if self._cps_poll_after_id is not None:
+            try:
+                self.after_cancel(self._cps_poll_after_id)
+            except tk.TclError:
+                pass
+            self._cps_poll_after_id = None
+
+    def _schedule_cps_poll(self, delay_ms: int = 1000) -> None:
+        self._stop_cps_poll()
+        if not self.cps_poll_var.get() or not self.connected:
+            return
+        self._cps_poll_after_id = self.after(delay_ms, self._cps_poll_tick)
+
+    def _cps_poll_tick(self) -> None:
+        self._cps_poll_after_id = None
+        if not self.cps_poll_var.get() or not self.connected:
+            return
+        if self._pending is not None:
+            self._schedule_cps_poll(delay_ms=200)
+            return
+        self.read_geiger_cps_once(schedule_next=self.cps_poll_var.get())
+
+    def read_geiger_cps_once(self, schedule_next: bool = False) -> None:
+        if not self._require_connected():
+            return
+
+        def on_ok(pf: ParsedFrame) -> None:
+            cps = reg_payload_to_u32(pf.payload)
+            time_text = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            self._append_cps_row(time_text, cps)
+            if schedule_next:
+                self._schedule_cps_poll(delay_ms=1000)
+
+        def on_fail(msg: str) -> None:
+            self.cps_time_lbl.configure(text=f"读失败")
+            self._log(f"WARN reg190 CPS 读失败: {msg}")
+            if schedule_next:
+                self._schedule_cps_poll(delay_ms=1000)
+
+        req = build_read_holding(
+            self._slave_addr(), REG_GEIGER_SEC_CPS, REG_GEIGER_SEC_CPS_COUNT
+        )
+        self._begin_request(
+            req,
+            FC_READ_HOLDING_RESP,
+            on_ok,
+            on_fail,
+            expect_reg=REG_GEIGER_SEC_CPS,
+            config_mode=False,
+            retries=1,
+            timeout=2.0,
         )
 
     def _geiger_form_u32_values(self) -> list[tuple[int, list[int]]] | None:
@@ -668,7 +1060,7 @@ class FactoryApp(tk.Tk):
 
     def _require_connected(self) -> bool:
         if not self.connected:
-            messagebox.showinfo("提示", "请先连接串口")
+            messagebox.showinfo("提示", "请先连接（串口或 TCP）")
             return False
         return True
 
@@ -683,8 +1075,9 @@ class FactoryApp(tk.Tk):
         self.scanner.ignore_text = False
 
     def _cancel_pending(self) -> None:
+        if self._pending is not None and self._pending.config_mode:
+            self._end_config_tx()
         self._pending = None
-        self._end_config_tx()
         if self._poll_after_id is not None:
             try:
                 self.after_cancel(self._poll_after_id)
@@ -707,9 +1100,11 @@ class FactoryApp(tk.Tk):
         timeout: float = 5.0,
         expect_reg: Optional[int] = None,
         retries: int = 3,
+        config_mode: bool = True,
     ) -> None:
         self._cancel_pending()
-        self._prep_config_tx()
+        if config_mode:
+            self._prep_config_tx()
 
         def start_attempt(remaining: int) -> None:
             if not self._send_frame(frame):
@@ -726,6 +1121,7 @@ class FactoryApp(tk.Tk):
                 slave_addr=self._slave_addr(),
                 retries_left=remaining,
                 tx_frame=frame,
+                config_mode=config_mode,
             )
             self._poll_after_id = self.after(50, self._poll_pending)
 
@@ -757,6 +1153,7 @@ class FactoryApp(tk.Tk):
                         slave_addr=pending.slave_addr,
                         retries_left=pending.retries_left - 1,
                         tx_frame=pending.tx_frame,
+                        config_mode=pending.config_mode,
                     )
                     self._poll_after_id = self.after(50, self._poll_pending)
 
@@ -812,7 +1209,7 @@ class FactoryApp(tk.Tk):
             self.model_var.set(str(results.get("model", "")))
             self.hw_version_var.set(str(results.get("hw_version", "")))
             self.dev_addr_var.set(str(results.get("addr", self.dev_addr_var.get())))
-            self.static_ip_var.set(str(results.get("static_ip", self.static_ip_var.get())))
+            self.current_ip_var.set(str(results.get("current_ip", "—")))
             self.dose_hi_var.set(str(results.get("dose_hi", self.dose_hi_var.get())))
             self.dose_lo_var.set(str(results.get("dose_lo", self.dose_lo_var.get())))
             alarm_enable = int(results.get("alarm_enable", 0))
@@ -821,11 +1218,13 @@ class FactoryApp(tk.Tk):
             self.rtc_time_var.set(str(results.get("rtc_time", "—")))
             self.sw_version_var.set(str(results.get("sw_version", "—")))
             self._set_language_from_reg(int(results.get("language", 0)))
+            self.alarm_volume_var.set(int(results.get("volume", 50)))
+            self._set_control_bit2_from_reg(int(results.get("control_bit2", NEIJI_CTRL2_DEFAULT)))
             self.status_var.set("配置读取完成")
             messagebox.showinfo(
                 "完成",
-                "已读取：SN / 名称 / 型号 / 硬件版本 / 地址 / 静态 IP / 阈值 / "
-                "报警使能 / 时间 / 语言 / 版本",
+                "已读取：SN / 名称 / 型号 / 硬件版本 / 地址 / 当前 IP / 阈值 / "
+                "报警使能 / 音量 / 屏光 / 时间 / 语言 / 版本",
             )
 
         def read_sw_version_step() -> None:
@@ -888,10 +1287,35 @@ class FactoryApp(tk.Tk):
 
             def on_ok(pf: ParsedFrame) -> None:
                 results["alarm_enable"] = reg_payload_to_u32(pf.payload)
-                read_time_step()
+                read_control_bit2_step()
 
             self._begin_request(
                 req, FC_READ_HOLDING_RESP, on_ok, self._on_cfg_fail, expect_reg=REG_ALARM_ENABLE
+            )
+
+        def read_control_bit2_step() -> None:
+            req = build_read_holding(
+                self._slave_addr(), REG_CONTROL_BIT2, REG_CONTROL_BIT2_COUNT
+            )
+
+            def on_ok(pf: ParsedFrame) -> None:
+                results["control_bit2"] = reg_payload_to_u32(pf.payload)
+                read_volume_step()
+
+            self._begin_request(
+                req, FC_READ_HOLDING_RESP, on_ok, self._on_cfg_fail, expect_reg=REG_CONTROL_BIT2
+            )
+
+        def read_volume_step() -> None:
+            req = build_read_holding(self._slave_addr(), REG_ALARM_VOLUME, 1)
+
+            def on_ok(pf: ParsedFrame) -> None:
+                if len(pf.payload) >= 2:
+                    results["volume"] = int.from_bytes(pf.payload[:2], "little")
+                read_time_step()
+
+            self._begin_request(
+                req, FC_READ_HOLDING_RESP, on_ok, self._on_cfg_fail, expect_reg=REG_ALARM_VOLUME
             )
 
         def read_dose_lo_step() -> None:
@@ -916,17 +1340,17 @@ class FactoryApp(tk.Tk):
                 req, FC_READ_HOLDING_RESP, on_ok, self._on_cfg_fail, expect_reg=REG_DOSE_HI_TH
             )
 
-        def read_static_ip_step() -> None:
+        def read_current_ip_step() -> None:
             req = build_read_holding(
-                self._slave_addr(), REG_STATIC_IP, REG_STATIC_IP_COUNT
+                self._slave_addr(), REG_CURRENT_IP, REG_CURRENT_IP_COUNT
             )
 
             def on_ok(pf: ParsedFrame) -> None:
-                results["static_ip"] = reg_payload_to_ipv4(pf.payload)
+                results["current_ip"] = reg_payload_to_ipv4(pf.payload)
                 read_dose_hi_step()
 
             self._begin_request(
-                req, FC_READ_HOLDING_RESP, on_ok, self._on_cfg_fail, expect_reg=REG_STATIC_IP
+                req, FC_READ_HOLDING_RESP, on_ok, self._on_cfg_fail, expect_reg=REG_CURRENT_IP
             )
 
         def read_model_step() -> None:
@@ -936,7 +1360,7 @@ class FactoryApp(tk.Tk):
 
             def on_ok(pf: ParsedFrame) -> None:
                 results["model"] = reg_payload_to_ascii(pf.payload)
-                read_static_ip_step()
+                read_current_ip_step()
 
             self._begin_request(req, FC_READ_HOLDING_RESP, on_ok, self._on_cfg_fail, expect_reg=REG_PRODUCT_MODEL)
 
@@ -1052,23 +1476,34 @@ class FactoryApp(tk.Tk):
 
         self._begin_request(req, FC_WRITE_SINGLE_RESP, on_ok, self._on_cfg_fail, expect_reg=REG_ADDRESS)
 
-    def _parse_static_ip(self) -> list[int] | None:
+    def _parse_ipv4_text(self, text: str, field_name: str = "IP") -> list[int] | None:
         try:
-            return ipv4_to_reg_values(self.static_ip_var.get().strip())
+            return ipv4_to_reg_values(text.strip())
         except ValueError:
-            messagebox.showwarning("提示", "静态 IP 格式无效")
+            messagebox.showwarning("提示", f"{field_name} 格式无效")
             return None
 
     def write_ip_only(self) -> None:
         if not self._require_connected():
             return
-        values = self._parse_static_ip()
+        initial = self.current_ip_var.get().strip()
+        if not initial or initial == "—":
+            initial = "192.168.2.100"
+        ip_text = simpledialog.askstring(
+            "写入静态 IP (reg 138)",
+            "静态 IP 写入 W25Q，静态/DHCP 备用配置：",
+            initialvalue=initial,
+            parent=self,
+        )
+        if not ip_text:
+            return
+        values = self._parse_ipv4_text(ip_text, "静态 IP")
         if values is None:
             return
         req = build_write_multi(self._slave_addr(), REG_STATIC_IP, values)
 
         def on_ok(_pf: ParsedFrame) -> None:
-            messagebox.showinfo("完成", f"静态 IP 已写入 W25Q: {self.static_ip_var.get().strip()}")
+            messagebox.showinfo("完成", f"静态 IP 已写入 W25Q: {ip_text.strip()}")
 
         self._begin_request(
             req, FC_WRITE_MULTI_RESP, on_ok, self._on_cfg_fail, expect_reg=REG_STATIC_IP
@@ -1090,23 +1525,118 @@ class FactoryApp(tk.Tk):
             req, FC_WRITE_SINGLE_RESP, on_ok, self._on_cfg_fail, expect_reg=REG_LANGUAGE
         )
 
+    def write_hw_version_only(self) -> None:
+        if not self._require_connected():
+            return
+        hw_version = self.hw_version_var.get().strip()[:CFG_HW_VERSION_MAX_LEN]
+        if not hw_version:
+            messagebox.showwarning("提示", "请输入硬件版本")
+            return
+        values = ascii_to_reg_values(hw_version, REG_HW_VERSION_COUNT)
+        req = build_write_multi(self._slave_addr(), REG_HW_VERSION, values)
+        self._begin_request(
+            req,
+            FC_WRITE_MULTI_RESP,
+            lambda _pf: messagebox.showinfo("完成", f"硬件版本已写入: {hw_version}"),
+            self._on_cfg_fail,
+            expect_reg=REG_HW_VERSION,
+        )
+
+    def write_dose_hi_only(self) -> None:
+        if not self._require_connected():
+            return
+        dose_hi_x100 = self._parse_dose_hi_x100()
+        if dose_hi_x100 is None:
+            return
+        req = build_write_multi(
+            self._slave_addr(), REG_DOSE_HI_TH, u32_to_reg_values(dose_hi_x100)
+        )
+        self._begin_request(
+            req,
+            FC_WRITE_MULTI_RESP,
+            lambda _pf: messagebox.showinfo("完成", f"上阈值已写入: {self.dose_hi_var.get()} μSv/h"),
+            self._on_cfg_fail,
+            expect_reg=REG_DOSE_HI_TH,
+        )
+
+    def write_dose_lo_only(self) -> None:
+        if not self._require_connected():
+            return
+        dose_lo_x100 = self._parse_dose_lo_x100()
+        if dose_lo_x100 is None:
+            return
+        req = build_write_multi(
+            self._slave_addr(), REG_DOSE_LO_TH, u32_to_reg_values(dose_lo_x100)
+        )
+        self._begin_request(
+            req,
+            FC_WRITE_MULTI_RESP,
+            lambda _pf: messagebox.showinfo("完成", f"下阈值已写入: {self.dose_lo_var.get()} μSv/h"),
+            self._on_cfg_fail,
+            expect_reg=REG_DOSE_LO_TH,
+        )
+
+    def write_alarm_enable_only(self) -> None:
+        if not self._require_connected():
+            return
+        alarm_enable = self._alarm_enable_from_ui()
+        req = build_write_multi(
+            self._slave_addr(), REG_ALARM_ENABLE, u32_to_reg_values(alarm_enable)
+        )
+        self._begin_request(
+            req,
+            FC_WRITE_MULTI_RESP,
+            lambda _pf: messagebox.showinfo("完成", f"报警使能已写入: 0x{alarm_enable:X}"),
+            self._on_cfg_fail,
+            expect_reg=REG_ALARM_ENABLE,
+        )
+
+    def write_volume_only(self) -> None:
+        if not self._require_connected():
+            return
+        vol = self._parse_alarm_volume()
+        if vol is None:
+            return
+        req = build_write_single(self._slave_addr(), REG_ALARM_VOLUME, vol)
+        self._begin_request(
+            req,
+            FC_WRITE_SINGLE_RESP,
+            lambda _pf: messagebox.showinfo("完成", f"报警音量已写入: {vol}"),
+            self._on_cfg_fail,
+            expect_reg=REG_ALARM_VOLUME,
+        )
+
+    def write_control_bit2_only(self) -> None:
+        if not self._require_connected():
+            return
+        merged = self._control_bit2_from_ui()
+        req = build_write_multi(
+            self._slave_addr(), REG_CONTROL_BIT2, u32_to_reg_values(merged)
+        )
+
+        def on_ok(_pf: ParsedFrame) -> None:
+            self._control_bit2_raw = merged
+            messagebox.showinfo("完成", f"屏/光控制已写入 reg123: 0x{merged:08X}")
+
+        self._begin_request(
+            req,
+            FC_WRITE_MULTI_RESP,
+            on_ok,
+            self._on_cfg_fail,
+            expect_reg=REG_CONTROL_BIT2,
+        )
+
     def _alarm_form_values(self) -> tuple[int, int, int] | None:
-        try:
-            dose_hi_x100 = max(0, int(float(self.dose_hi_var.get()) * 100.0))
-            dose_lo_x100 = max(0, int(float(self.dose_lo_var.get()) * 100.0))
-        except ValueError:
-            messagebox.showwarning("提示", "剂量率阈值无效")
+        dose_hi_x100 = self._parse_dose_hi_x100()
+        if dose_hi_x100 is None:
             return None
-
-        alarm_enable = 0
-        if self.alarm_hi_var.get():
-            alarm_enable |= (1 << ALARM_BIT_DOSE_HI)
-        if self.alarm_lo_var.get():
-            alarm_enable |= (1 << ALARM_BIT_DOSE_LO)
-
-        return dose_hi_x100, dose_lo_x100, alarm_enable
+        dose_lo_x100 = self._parse_dose_lo_x100()
+        if dose_lo_x100 is None:
+            return None
+        return dose_hi_x100, dose_lo_x100, self._alarm_enable_from_ui()
 
     def write_alarm_only(self) -> None:
+        """兼容旧入口：依次写上/下阈值与报警使能。"""
         if not self._require_connected():
             return
         values = self._alarm_form_values()
@@ -1184,21 +1714,17 @@ class FactoryApp(tk.Tk):
             messagebox.showwarning("提示", "协议地址无效")
             return
         addr = max(1, min(247, addr))
-        ip_values = self._parse_static_ip()
-        if ip_values is None:
+        dose_hi_x100 = self._parse_dose_hi_x100()
+        if dose_hi_x100 is None:
             return
-        try:
-            dose_hi_x100 = max(0, int(float(self.dose_hi_var.get()) * 100.0))
-            dose_lo_x100 = max(0, int(float(self.dose_lo_var.get()) * 100.0))
-        except ValueError:
-            messagebox.showwarning("提示", "剂量率阈值无效")
+        dose_lo_x100 = self._parse_dose_lo_x100()
+        if dose_lo_x100 is None:
             return
-
-        alarm_enable = 0
-        if self.alarm_hi_var.get():
-            alarm_enable |= (1 << ALARM_BIT_DOSE_HI)
-        if self.alarm_lo_var.get():
-            alarm_enable |= (1 << ALARM_BIT_DOSE_LO)
+        vol = self._parse_alarm_volume()
+        if vol is None:
+            return
+        alarm_enable = self._alarm_enable_from_ui()
+        control_bit2 = self._control_bit2_from_ui()
 
         def write_alarm_enable_step() -> None:
             req = build_write_multi(
@@ -1206,11 +1732,13 @@ class FactoryApp(tk.Tk):
             )
 
             def on_ok(_pf: ParsedFrame) -> None:
+                self._control_bit2_raw = control_bit2
                 self.slave_addr_var.set(str(addr))
                 self.status_var.set("配置写入完成")
                 messagebox.showinfo(
                     "完成",
-                    "SN / 名称 / 型号 / 硬件版本 / 地址 / 静态 IP / 阈值 / 语言 / 报警使能已写入 W25Q",
+                    "SN / 名称 / 型号 / 硬件版本 / 地址 / 阈值 / 语言 / "
+                    "音量 / 屏光 / 报警使能已写入",
                 )
 
             self._begin_request(
@@ -1221,6 +1749,28 @@ class FactoryApp(tk.Tk):
                 expect_reg=REG_ALARM_ENABLE,
             )
 
+        def write_control_bit2_step() -> None:
+            req = build_write_multi(
+                self._slave_addr(), REG_CONTROL_BIT2, u32_to_reg_values(control_bit2)
+            )
+            self._begin_request(
+                req,
+                FC_WRITE_MULTI_RESP,
+                lambda _pf: write_alarm_enable_step(),
+                self._on_cfg_fail,
+                expect_reg=REG_CONTROL_BIT2,
+            )
+
+        def write_volume_step() -> None:
+            req = build_write_single(self._slave_addr(), REG_ALARM_VOLUME, vol)
+            self._begin_request(
+                req,
+                FC_WRITE_SINGLE_RESP,
+                lambda _pf: write_control_bit2_step(),
+                self._on_cfg_fail,
+                expect_reg=REG_ALARM_VOLUME,
+            )
+
         def write_language_step() -> None:
             lang = self._language_reg_value()
             if lang is None:
@@ -1229,7 +1779,7 @@ class FactoryApp(tk.Tk):
             self._begin_request(
                 req,
                 FC_WRITE_SINGLE_RESP,
-                lambda _pf: write_alarm_enable_step(),
+                lambda _pf: write_volume_step(),
                 self._on_cfg_fail,
                 expect_reg=REG_LANGUAGE,
             )
@@ -1274,19 +1824,9 @@ class FactoryApp(tk.Tk):
             self._begin_request(
                 req,
                 FC_WRITE_SINGLE_RESP,
-                lambda _pf: write_static_ip_step(),
-                self._on_cfg_fail,
-                expect_reg=REG_ADDRESS,
-            )
-
-        def write_static_ip_step() -> None:
-            req = build_write_multi(self._slave_addr(), REG_STATIC_IP, ip_values)
-            self._begin_request(
-                req,
-                FC_WRITE_MULTI_RESP,
                 lambda _pf: write_dose_hi_step(),
                 self._on_cfg_fail,
-                expect_reg=REG_STATIC_IP,
+                expect_reg=REG_ADDRESS,
             )
 
         def write_model_step() -> None:
@@ -1325,6 +1865,29 @@ class FactoryApp(tk.Tk):
         self.status_var.set("正在写入配置...")
         write_sn_step()
 
+    def _apply_conn_mode_ui(self) -> None:
+        if self.connected:
+            return
+        if self._conn_mode.get() == "tcp":
+            self.serial_frame.pack_forget()
+            self.tcp_frame.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        else:
+            self.tcp_frame.pack_forget()
+            self.serial_frame.pack(side=tk.LEFT, fill=tk.X, expand=True)
+
+    def _set_conn_inputs_state(self, connected: bool) -> None:
+        state_ro = "disabled" if connected else "readonly"
+        state_norm = "disabled" if connected else "normal"
+        self.rb_serial.configure(state=state_norm)
+        self.rb_tcp.configure(state=state_norm)
+        self.port_combo.configure(state=state_ro)
+        self.btn_refresh_ports.configure(state=state_norm)
+        self.baud_combo.configure(state=state_ro)
+        self.tcp_host_entry.configure(state=state_norm)
+        self.tcp_port_entry.configure(state=state_norm)
+        self.slave_spin.configure(state=state_norm)
+        self.btn_connect.configure(text="断开" if connected else "连接")
+
     def refresh_ports(self) -> None:
         items = scan_port_items()
         self.port_combo["values"] = items
@@ -1348,6 +1911,12 @@ class FactoryApp(tk.Tk):
             self.connect()
 
     def connect(self) -> None:
+        if self._conn_mode.get() == "tcp":
+            self._connect_tcp()
+        else:
+            self._connect_serial()
+
+    def _connect_serial(self) -> None:
         port = port_from_combo(self.port_var.get())
         if not port:
             messagebox.showwarning("提示", "请先选择串口")
@@ -1358,26 +1927,68 @@ class FactoryApp(tk.Tk):
             messagebox.showwarning("提示", "波特率无效")
             return
         try:
+            self.worker = self.serial_worker
             self.worker.start(port, baud)
         except serial.SerialException as exc:
             messagebox.showerror("连接失败", str(exc))
             return
 
+        self._link_kind = "serial"
+        self._on_connected(f"已连接 串口 {port} @ {baud}")
+        save_conn_config(
+            "serial",
+            port=port,
+            baud=baud,
+            host=self.tcp_host_var.get().strip(),
+            tcp_port=int(self.tcp_port_var.get() or DEFAULT_TCP_PORT),
+        )
+        self._log(f"=== 已连接 串口 {port} @ {baud} ===")
+
+    def _connect_tcp(self) -> None:
+        host = self.tcp_host_var.get().strip()
+        if not host:
+            messagebox.showwarning("提示", "请填写 IP 地址")
+            return
+        try:
+            port = int(self.tcp_port_var.get().strip() or DEFAULT_TCP_PORT)
+        except ValueError:
+            messagebox.showwarning("提示", "TCP 端口无效")
+            return
+        if port <= 0 or port > 65535:
+            messagebox.showwarning("提示", "TCP 端口须在 1..65535")
+            return
+        try:
+            self.worker = self.tcp_worker
+            self.worker.start(host, port)
+        except OSError as exc:
+            messagebox.showerror("TCP 连接失败", str(exc))
+            return
+
+        self._link_kind = "tcp"
+        self._on_connected(f"已连接 TCP {host}:{port}")
+        save_conn_config(
+            "tcp",
+            port=port_from_combo(self.port_var.get()),
+            baud=int(self.baud_var.get() or DEFAULT_BAUD),
+            host=host,
+            tcp_port=port,
+        )
+        self._log(f"=== 已连接 TCP {host}:{port} ===")
+
+    def _on_connected(self, status: str) -> None:
         self.connected = True
         self.scanner = FrameScanner(slave_filter=None)
         self.frame_count = 0
-        save_last_port(port)
-        self.btn_connect.configure(text="断开")
-        self.port_combo.configure(state="disabled")
-        self.status_var.set(f"已连接 {port} @ {baud} — 等待数据...")
-        self._log(f"=== 已连接 {port} @ {baud} ===")
+        self._set_conn_inputs_state(True)
+        self.status_var.set(f"{status} — 等待数据...")
 
     def disconnect(self) -> None:
+        self.cps_poll_var.set(False)
+        self._stop_cps_poll()
         self._cancel_pending()
         self.worker.stop()
         self.connected = False
-        self.btn_connect.configure(text="连接")
-        self.port_combo.configure(state="readonly")
+        self._set_conn_inputs_state(False)
         self.status_var.set("未连接")
         self._log("=== 已断开 ===")
 
@@ -1387,9 +1998,9 @@ class FactoryApp(tk.Tk):
         req = build_read_holding(self._slave_addr(), 0x0001, 11)
         self._send_frame(req)
 
-    def _on_serial_data(self, data: bytes) -> None:
+    def _on_link_data(self, data: bytes) -> None:
         frames, text = self.scanner.feed(data)
-        if text:
+        if text and self._link_kind == "serial":
             for line in text.splitlines():
                 self._log(f"LOG {line}")
         for pf in frames:
@@ -1442,12 +2053,13 @@ class FactoryApp(tk.Tk):
         else:
             lbl.configure(text=str(raw))
 
-    def _on_serial_error(self, msg: str) -> None:
+    def _on_link_error(self, msg: str) -> None:
         self._log(f"ERR {msg}")
-        messagebox.showerror("串口错误", msg)
+        kind = "TCP" if self._link_kind == "tcp" else "串口"
+        messagebox.showerror(f"{kind}错误", msg)
         self.disconnect()
 
-    def _on_serial_closed(self) -> None:
+    def _on_link_closed(self) -> None:
         if self.connected:
             self.disconnect()
 
@@ -1463,8 +2075,10 @@ class FactoryApp(tk.Tk):
         self.log_text.configure(state=tk.DISABLED)
 
     def _on_close(self) -> None:
+        self._stop_cps_poll()
         self._cancel_pending()
-        self.worker.stop()
+        self.serial_worker.stop()
+        self.tcp_worker.stop()
         self.destroy()
 
 

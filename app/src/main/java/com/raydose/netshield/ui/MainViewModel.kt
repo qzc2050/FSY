@@ -14,6 +14,7 @@ import com.raydose.netshield.ui.home.HomeClockFormatter
 import com.raydose.netshield.data.ProbeConfigRepository
 import com.raydose.netshield.data.ProbeConnectionManager
 import com.raydose.netshield.data.ProbeDoseHistoryRepository
+import com.raydose.netshield.data.ProbeSensorOfflineLogAggregator
 import com.raydose.netshield.model.DisplaySoundSettings
 import com.raydose.netshield.model.PAUSE_ALARM_DURATION_MS
 import com.raydose.netshield.model.HostNetworkSettings
@@ -38,15 +39,15 @@ import com.raydose.netshield.model.SavedProbe
 import com.raydose.netshield.model.SlaveProbeUi
 import com.raydose.netshield.model.SystemAlertLog
 import com.raydose.netshield.model.applyParsedFrame
-import com.raydose.netshield.model.buildControlBit2WriteFrame
 import com.raydose.netshield.model.buildLowerAlarmCheckboxWriteFrames
 import com.raydose.netshield.model.buildUpperAlarmCheckboxWriteFrames
 import com.raydose.netshield.model.buildVolumeWriteFrame
-import com.raydose.netshield.model.mergeControlBit2Enables
 import com.raydose.netshield.model.deriveDoorState
 import com.raydose.netshield.model.matchesSaved
 import com.raydose.netshield.model.mergeFromDiscovery
 import com.raydose.netshield.model.mergeConfigFromTelemetry
+import com.raydose.netshield.model.buildControlBit2WriteFrame
+import com.raydose.netshield.model.mergeControlBit2Enables
 import com.raydose.netshield.model.toManageDraft
 import com.raydose.netshield.model.toSlaveProbeUi
 import com.raydose.netshield.ui.settings.SettingsTab
@@ -97,6 +98,24 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val discoveredMap = ConcurrentHashMap<String, DiscoveredDevice>()
     private var nextAlertLogId = 1L
 
+    private val sensorOfflineLogAggregator = ProbeSensorOfflineLogAggregator(
+        onSensorsNormal = { ts, probeName ->
+            appendAlertLog(
+                message = "$probeName 传感器正常",
+                kind = AlertLogKind.Info,
+                timestampMillis = ts,
+            )
+        },
+        onSensorsOffline = { ts, probeName, sensors ->
+            val labels = sensors.sortedBy { it.ordinal }.joinToString("、") { it.label }
+            appendAlertLog(
+                message = "$probeName ${labels}传感器离线",
+                kind = AlertLogKind.Warning,
+                timestampMillis = ts,
+            )
+        },
+    )
+
     private val _savedProbes = MutableStateFlow(repository.load())
     private val _liveTelemetry = MutableStateFlow<Map<String, LiveProbeTelemetry>>(emptyMap())
     private val _nowMillis = MutableStateFlow(System.currentTimeMillis())
@@ -112,6 +131,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         onDiscoveredRaw = ::onDiscoveryDatagram,
         onTcpFrame = ::onTcpFrame,
         onProbeOnlineChanged = ::onProbeOnlineChanged,
+        onLog = { msg -> Log.i(ProbeConnectionManager.TAG, msg) },
     )
 
     /** 设置 · 时间页只读日期/时间，与主页共用每秒 tick */
@@ -442,7 +462,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
             pkg.versionName
         } ?: "—"
-        val formFactor = ScreenSpec.formFactor(app.resources.configuration.screenWidthDp)
+        val formFactor = ScreenSpec.formFactor(
+            app.resources.configuration.screenWidthDp,
+            app.resources.configuration.screenHeightDp,
+        )
         val model = when (formFactor) {
             TabletFormFactor.Compact -> "NS-T100（10 寸）"
             TabletFormFactor.Expanded -> "NS-T130（13 寸）"
@@ -503,7 +526,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         syncProbeCardAt(clamped)
     }
 
-    /** 进入设置页或切换探头卡片时：从遥测合并一次并主动读 0x52/7A/7B/阈值；停留期间不再被 0x23 刷新表单 */
+    /** 进入设置页或切换探头卡片时：从遥测合并一次并主动读 reg50/52/82/122/123；停留期间 0x23 不刷新阈值/使能表单 */
     private fun syncProbeCardAt(index: Int) {
         val state = _settings.value
         if (index !in state.manageDrafts.indices) return
@@ -518,11 +541,23 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             s.copy(manageDrafts = drafts)
         }
         if (telemetry?.isOnline == true) {
-            connectionManager.fetchManageConfig(probe)
+            viewModelScope.launch {
+                // 先让探头管理页完成首帧绘制，再发 0x03，减轻切 Tab 时「卡住」感
+                delay(80)
+                val current = _settings.value
+                if (index !in current.manageDrafts.indices) return@launch
+                if (current.selectedProbeIndex != index) return@launch
+                val p = current.draftProbes.getOrNull(index) ?: return@launch
+                if (_liveTelemetry.value[p.id]?.isOnline == true) {
+                    connectionManager.fetchManageConfig(p)
+                }
+            }
+        } else {
+            Log.i(ProbeConnectionManager.TAG, "跳过读配置 ${probe.displayName}：TCP 未在线")
         }
     }
 
-    /** 音量滑条松手后写入 0x7A */
+    /** 音量滑条松手后写入 reg 122 */
     fun commitProbeVolume(index: Int) {
         val draft = _settings.value.manageDrafts.getOrNull(index) ?: return
         if (!draft.isTcpOnline) return
@@ -531,7 +566,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val t = map[draft.id] ?: LiveProbeTelemetry()
             map + (draft.id to t.copy(volume = draft.volume))
         }
-        Log.d(ProbeConnectionManager.TAG, "音量已写入 probe=${draft.id} reg=0x7A")
+        Log.d(ProbeConnectionManager.TAG, "音量已写入 probe=${draft.id} reg122")
     }
 
     fun updateManageDraft(index: Int, draft: ProbeManageDraft) {
@@ -553,28 +588,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     /**
      * 仅 checkbox 变化时写从机（阈值/音量改字只改草稿，不发命令）：
-     * - 上限旁「报警」→ 0x52（bit0）+ 0x32 当前上限值
-     * - 下限旁「报警」→ 0x52（bit1）+ 0x34 当前下限值（与上限独立）
-     * - 从机屏幕 / 报警灯光 → 0x7B bit14/13
+     * - 上限旁「报警」→ reg 82 + reg 50
+     * - 下限旁「报警」→ reg 82 + reg 52
+     * - 从机屏幕 / 报警灯光 → reg 123 bit14 / bit13
+     * - 音量滑条松手 → reg 122
      */
     private fun pushDraftWritesIfNeeded(prev: ProbeManageDraft, draft: ProbeManageDraft) {
         if (!draft.isTcpOnline) return
         val probeId = draft.id
-        val liveCtrl = _liveTelemetry.value[probeId]?.controlBit2Value
         val frames = mutableListOf<ByteArray>()
 
-        if (prev.slaveScreenOn != draft.slaveScreenOn || prev.alarmLightOn != draft.alarmLightOn) {
-            frames += draft.buildControlBit2WriteFrame(liveCtrl)
-            val merged = mergeControlBit2Enables(liveCtrl ?: 0L, draft.slaveScreenOn, draft.alarmLightOn)
-            _liveTelemetry.update { map ->
-                val t = map[probeId] ?: LiveProbeTelemetry()
-                map + (probeId to t.copy(
-                    controlBit2Value = merged,
-                    slaveScreenOn = draft.slaveScreenOn,
-                    alarmLightOn = draft.alarmLightOn,
-                ))
-            }
-        }
         if (prev.radiationUpperAlarmOn != draft.radiationUpperAlarmOn) {
             frames += draft.buildUpperAlarmCheckboxWriteFrames()
             patchTelemetryAlarmEnable(probeId, draft)
@@ -583,9 +606,44 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             frames += draft.buildLowerAlarmCheckboxWriteFrames()
             patchTelemetryAlarmEnable(probeId, draft)
         }
+        if (prev.slaveScreenOn != draft.slaveScreenOn ||
+            prev.alarmLightOn != draft.alarmLightOn
+        ) {
+            frames += draft.buildControlBit2WriteFrame()
+            patchTelemetryControlBit2(probeId, draft)
+        }
         if (frames.isNotEmpty()) {
             connectionManager.sendFrames(probeId, frames)
-            Log.d(ProbeConnectionManager.TAG, "探头 checkbox 写入 probe=$probeId frames=${frames.size}")
+            val detail = buildList {
+                if (prev.radiationUpperAlarmOn != draft.radiationUpperAlarmOn) {
+                    add("上报警=${draft.radiationUpperAlarmOn}")
+                }
+                if (prev.radiationLowerAlarmOn != draft.radiationLowerAlarmOn) {
+                    add("下报警=${draft.radiationLowerAlarmOn}")
+                }
+                if (prev.slaveScreenOn != draft.slaveScreenOn) {
+                    add("背光=${draft.slaveScreenOn}")
+                }
+                if (prev.alarmLightOn != draft.alarmLightOn) {
+                    add("灯光=${draft.alarmLightOn}")
+                }
+            }.joinToString(", ")
+            Log.d(
+                ProbeConnectionManager.TAG,
+                "探头配置写入 probe=$probeId frames=${frames.size} ($detail)",
+            )
+        }
+    }
+
+    private fun patchTelemetryControlBit2(probeId: String, draft: ProbeManageDraft) {
+        val merged = mergeControlBit2Enables(draft.controlBit2Raw, draft.slaveScreenOn, draft.alarmLightOn)
+        _liveTelemetry.update { map ->
+            val t = map[probeId] ?: LiveProbeTelemetry()
+            map + (probeId to t.copy(
+                controlBit2Value = merged,
+                slaveScreenOn = draft.slaveScreenOn,
+                alarmLightOn = draft.alarmLightOn,
+            ))
         }
     }
 
@@ -857,6 +915,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         if (frame.func == 0x13 && _showSettings.value) {
             applyConfigReadToSelectedProbeDraft(probeId)
         }
+        frame.uploadValues?.takeIf { it.size >= 8 }?.let {
+            val probe = _savedProbes.value.find { it.id == probeId }
+            val telemetry = _liveTelemetry.value[probeId]
+            sensorOfflineLogAggregator.onTelemetrySample(
+                probeId = probeId,
+                probeName = probe?.displayName ?: probeId,
+                alarmBit = telemetry?.alarmBit,
+                nowMillis = System.currentTimeMillis(),
+            )
+        }
     }
 
     private fun onProbeOnlineChanged(probeId: String, online: Boolean) {
@@ -875,6 +943,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             message = if (online) "$name 已连接" else "$name 已断开",
             kind = if (online) AlertLogKind.Connected else AlertLogKind.Warning,
         )
+        if (online) {
+            sensorOfflineLogAggregator.onProbeConnected(probeId)
+        } else {
+            sensorOfflineLogAggregator.onProbeDisconnected(probeId)
+        }
         if (_showSettings.value) {
             patchProbeOnlineOnDraft(probeId, online)
             // 添加探头或重连后 TCP 才就绪：此时补读 0x40/0x52/0x7A/0x7B（添加时 sync 可能因未在线而跳过）
@@ -934,11 +1007,28 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    private fun appendAlertLog(message: String, kind: AlertLogKind) {
-        val time = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.getDefault())
-            .format(java.util.Date())
-        val entry = SystemAlertLog(id = nextAlertLogId++, timeText = time, message = message, kind = kind)
+    private fun appendAlertLog(
+        message: String,
+        kind: AlertLogKind,
+        timestampMillis: Long = System.currentTimeMillis(),
+    ) {
+        val time = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault())
+            .format(Date(timestampMillis))
+        val entry = SystemAlertLog(
+            id = nextAlertLogId++,
+            timeText = time,
+            message = message,
+            kind = kind,
+            timestampMillis = timestampMillis,
+        )
         _alertLogs.update { (listOf(entry) + it).take(100) }
+    }
+
+    private fun filterAlertLogs24h(logs: List<SystemAlertLog>, nowMillis: Long): List<SystemAlertLog> {
+        val cutoff = nowMillis - ALERT_LOG_RETENTION_MS
+        return logs.filter { log ->
+            log.timestampMillis == 0L || log.timestampMillis >= cutoff
+        }
     }
 
     private fun buildHomeState(
@@ -977,7 +1067,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             },
             slaveProbes = probes,
             doorState = resolveDoorState(hostAdapter, live),
-            alertLogs = logs,
+            alertLogs = filterAlertLogs24h(logs, nowMillis),
             messages = emptyList(),
             statusBarExpanded = flags.statusBarExpanded,
             sideDrawerOpen = flags.sideDrawerOpen,
@@ -1017,5 +1107,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     companion object {
         private const val DISCOVERY_TTL_MS = 30_000L
+        private const val ALERT_LOG_RETENTION_MS = 24L * 3_600_000L
     }
 }

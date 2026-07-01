@@ -45,11 +45,11 @@ static Alarm_Visual_State_t alarm_eval_visual(void)
     if (probe_count_fault()) {
         return ALARM_VIS_FAULT;
     }
-    /* 剂量率报警优先于环境传感器离线，避免超上限时误显示红常亮 */
-    if ((sys_cfg.alarm_status & (1UL << RATE_HIGH_ALARM_BIT)) != 0U) {
+    /* 剂量率报警（reg82 使能 + 超限）优先于环境离线；离线仅走 WS2812，不驱动转轮/蜂鸣 */
+    if ((st & (1UL << RATE_HIGH_ALARM_BIT)) != 0U) {
         return ALARM_VIS_HI;
     }
-    if ((sys_cfg.alarm_status & (1UL << RATE_LOW_ALARM_BIT)) != 0U) {
+    if ((st & (1UL << RATE_LOW_ALARM_BIT)) != 0U) {
         return ALARM_VIS_LO;
     }
     if ((st & FSY_ALARM_ENV_MASK) != 0U) {

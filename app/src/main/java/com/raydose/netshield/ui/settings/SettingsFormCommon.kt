@@ -64,14 +64,38 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.raydose.netshield.ui.theme.NetShieldAccentBlue
+import com.raydose.netshield.ui.theme.rememberTabletFormFactor
+import com.raydose.netshield.ui.theme.TabletFormFactor
 import com.raydose.netshield.ui.theme.NetShieldSettingsEditorPanel
 import com.raydose.netshield.ui.theme.NetShieldTextPrimary
 import com.raydose.netshield.ui.theme.NetShieldTextSecondary
 
 internal val SettingsFormLabelWidth = 140.dp
+internal val SettingsFormLabelWidthCompact = 120.dp
 internal val SettingsFormRowSpacing = 12.dp
 /** 标签右侧编辑区占行宽比例（网络信息等页输入框半宽） */
 internal val SettingsFieldAreaFraction = 0.5f
+internal val SettingsFieldAreaFractionCompact = 0.62f
+
+@Composable
+internal fun settingsFormLabelWidth(): Dp {
+    val formFactor = rememberTabletFormFactor()
+    return if (formFactor == TabletFormFactor.Compact) {
+        SettingsFormLabelWidthCompact
+    } else {
+        SettingsFormLabelWidth
+    }
+}
+
+@Composable
+internal fun settingsFieldAreaFraction(): Float {
+    val formFactor = rememberTabletFormFactor()
+    return if (formFactor == TabletFormFactor.Compact) {
+        SettingsFieldAreaFractionCompact
+    } else {
+        SettingsFieldAreaFraction
+    }
+}
 /** 网络表单右侧「保存」列宽，无保存的行也占位以保证输入框对齐 */
 private val SettingsSaveSlotWidth = 88.dp
 private val FieldTextColor = Color(0xFF1E2433)
@@ -260,9 +284,10 @@ internal fun SettingsTextFieldHalfRowWithActions(
     label: String,
     value: String,
     onValueChange: (String) -> Unit,
-    fieldAreaFraction: Float = SettingsFieldAreaFraction,
+    fieldAreaFraction: Float? = null,
     actions: @Composable RowScope.() -> Unit,
 ) {
+    val fraction = fieldAreaFraction ?: settingsFieldAreaFraction()
     Row(
         modifier = Modifier.fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically,
@@ -272,7 +297,7 @@ internal fun SettingsTextFieldHalfRowWithActions(
         SettingsValueField(
             value = value,
             onValueChange = onValueChange,
-            modifier = Modifier.fillMaxWidth(fieldAreaFraction),
+            modifier = Modifier.fillMaxWidth(fraction),
         )
         actions()
     }
@@ -585,13 +610,15 @@ internal fun SettingsTextFieldRow(
 internal fun SettingsReadOnlyHalfRow(
     label: String,
     value: String,
-    fieldAreaFraction: Float = SettingsFieldAreaFraction,
+    fieldAreaFraction: Float? = null,
     alignSaveColumn: Boolean = false,
     labelFontSize: TextUnit = 17.sp,
     valueFontSize: TextUnit = 17.sp,
-    labelWidth: Dp = SettingsFormLabelWidth,
+    labelWidth: Dp? = null,
     labelSingleLine: Boolean = false,
 ) {
+    val fraction = fieldAreaFraction ?: settingsFieldAreaFraction()
+    val labelW = labelWidth ?: settingsFormLabelWidth()
     if (!alignSaveColumn) {
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -599,7 +626,7 @@ internal fun SettingsReadOnlyHalfRow(
         ) {
             SettingsFormLabel(
                 text = label,
-                width = labelWidth,
+                width = labelW,
                 fontSize = labelFontSize,
                 maxLines = if (labelSingleLine) 1 else Int.MAX_VALUE,
                 softWrap = !labelSingleLine,
@@ -608,14 +635,14 @@ internal fun SettingsReadOnlyHalfRow(
                 text = value.ifBlank { "—" },
                 color = NetShieldTextPrimary,
                 fontSize = valueFontSize,
-                modifier = Modifier.fillMaxWidth(fieldAreaFraction),
+                modifier = Modifier.fillMaxWidth(fraction),
             )
         }
         return
     }
     SettingsNetworkFieldRow(
         label = label,
-        fieldAreaFraction = fieldAreaFraction,
+        fieldAreaFraction = fraction,
         showSave = false,
         onSaveClick = null,
     ) { mod ->
@@ -633,28 +660,29 @@ internal fun SettingsTextFieldHalfRow(
     label: String,
     value: String,
     onValueChange: (String) -> Unit,
-    fieldAreaFraction: Float = SettingsFieldAreaFraction,
+    fieldAreaFraction: Float? = null,
     alignSaveColumn: Boolean = false,
     isPassword: Boolean = false,
 ) {
+    val fraction = fieldAreaFraction ?: settingsFieldAreaFraction()
     if (!alignSaveColumn) {
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            SettingsFormLabel(label)
+            SettingsFormLabel(label, width = settingsFormLabelWidth())
             SettingsValueField(
                 value = value,
                 onValueChange = onValueChange,
                 isPassword = isPassword,
-                modifier = Modifier.fillMaxWidth(fieldAreaFraction),
+                modifier = Modifier.fillMaxWidth(fraction),
             )
         }
         return
     }
     SettingsNetworkFieldRow(
         label = label,
-        fieldAreaFraction = fieldAreaFraction,
+        fieldAreaFraction = fraction,
         showSave = false,
         onSaveClick = null,
     ) { mod ->
@@ -674,21 +702,22 @@ internal fun SettingsTextFieldHalfRowWithSave(
     value: String,
     onValueChange: (String) -> Unit,
     onSaveClick: () -> Unit,
-    fieldAreaFraction: Float = SettingsFieldAreaFraction,
+    fieldAreaFraction: Float? = null,
     alignSaveColumn: Boolean = false,
     isPassword: Boolean = false,
 ) {
+    val fraction = fieldAreaFraction ?: settingsFieldAreaFraction()
     if (!alignSaveColumn) {
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            SettingsFormLabel(label)
+            SettingsFormLabel(label, width = settingsFormLabelWidth())
             SettingsValueField(
                 value = value,
                 onValueChange = onValueChange,
                 isPassword = isPassword,
-                modifier = Modifier.fillMaxWidth(fieldAreaFraction),
+                modifier = Modifier.fillMaxWidth(fraction),
             )
             Spacer(modifier = Modifier.width(12.dp))
             SettingsInlineSaveButton(onClick = onSaveClick)
@@ -697,7 +726,7 @@ internal fun SettingsTextFieldHalfRowWithSave(
     }
     SettingsNetworkFieldRow(
         label = label,
-        fieldAreaFraction = fieldAreaFraction,
+        fieldAreaFraction = fraction,
         showSave = true,
         onSaveClick = onSaveClick,
     ) { mod ->
@@ -716,9 +745,10 @@ internal fun SettingsDropdownHalfRow(
     value: String,
     options: List<String>,
     onSelected: (Int) -> Unit,
-    fieldAreaFraction: Float = SettingsFieldAreaFraction,
+    fieldAreaFraction: Float? = null,
     alignSaveColumn: Boolean = false,
 ) {
+    val fraction = fieldAreaFraction ?: settingsFieldAreaFraction()
     val dropdown: @Composable BoxScope.(Modifier) -> Unit = { mod ->
         SettingsDropdownControl(
             modifier = mod,
@@ -732,8 +762,8 @@ internal fun SettingsDropdownHalfRow(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            SettingsFormLabel(label)
-            Box(modifier = Modifier.fillMaxWidth(fieldAreaFraction)) {
+            SettingsFormLabel(label, width = settingsFormLabelWidth())
+            Box(modifier = Modifier.fillMaxWidth(fraction)) {
                 dropdown(Modifier)
             }
         }
@@ -741,7 +771,7 @@ internal fun SettingsDropdownHalfRow(
     }
     SettingsNetworkFieldRow(
         label = label,
-        fieldAreaFraction = fieldAreaFraction,
+        fieldAreaFraction = fraction,
         showSave = false,
         onSaveClick = null,
         field = dropdown,
@@ -778,6 +808,7 @@ internal fun SettingsValueField(
     var passwordVisible by remember { mutableStateOf(false) }
     Row(
         modifier = modifier
+            .defaultMinSize(minWidth = 96.dp, minHeight = 44.dp)
             .clip(RoundedCornerShape(6.dp))
             .background(Color.White),
         verticalAlignment = Alignment.CenterVertically,
@@ -794,7 +825,7 @@ internal fun SettingsValueField(
             },
             modifier = Modifier
                 .weight(1f)
-                .padding(horizontal = 12.dp, vertical = 9.dp),
+                .padding(horizontal = 12.dp, vertical = 10.dp),
             singleLine = true,
         )
         if (isPassword) {

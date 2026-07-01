@@ -26,15 +26,26 @@ object ScreenSpec {
     const val T130_WIDTH_PX = 1920
     const val T130_HEIGHT_PX = 1080
 
-    /** 低于此逻辑宽度视为 T100 档布局 */
+    /** 低于此逻辑宽度视为 T100 档布局（仅作兜底；优先用 [formFactor] 长短边判定） */
     val compactMaxWidthDp = 960.dp
 
-    fun formFactor(screenWidthDp: Int): TabletFormFactor =
-        if (screenWidthDp < compactMaxWidthDp.value.toInt()) {
+    /** 短边 ≤820dp 且长边 ≤1320dp → NS-T100（1280×800） */
+    val compactShortSideMaxDp = 820.dp
+    val compactLongSideMaxDp = 1320.dp
+
+    fun formFactor(screenWidthDp: Int, screenHeightDp: Int = screenWidthDp): TabletFormFactor {
+        val shortSide = minOf(screenWidthDp, screenHeightDp)
+        val longSide = maxOf(screenWidthDp, screenHeightDp)
+        return if (shortSide <= compactShortSideMaxDp.value.toInt() &&
+            longSide <= compactLongSideMaxDp.value.toInt()
+        ) {
+            TabletFormFactor.Compact
+        } else if (screenWidthDp < compactMaxWidthDp.value.toInt()) {
             TabletFormFactor.Compact
         } else {
             TabletFormFactor.Expanded
         }
+    }
 
     /** 主页探头卡片：左边距占屏宽比例 */
     const val HOME_CARD_START_FRACTION = 0.068f
@@ -50,6 +61,41 @@ object ScreenSpec {
 
     /** 待机页：顶区（顶栏+日期时间+门状态+本机环境）占屏高比例 */
     const val STANDBY_HEADER_SECTION_FRACTION = 0.25f
+
+    /** 10 寸：顶区增高，容纳居中日期/时间 + 下方环境横排 */
+    const val STANDBY_HEADER_SECTION_FRACTION_COMPACT = 0.34f
+
+    fun standbyHeaderSectionFraction(formFactor: TabletFormFactor): Float = when (formFactor) {
+        TabletFormFactor.Compact -> STANDBY_HEADER_SECTION_FRACTION_COMPACT
+        TabletFormFactor.Expanded -> STANDBY_HEADER_SECTION_FRACTION
+    }
+
+    fun standbyBottomSectionFraction(formFactor: TabletFormFactor): Float =
+        1f - standbyHeaderSectionFraction(formFactor)
+
+    /** 待机页日期字号 */
+    fun standbyDateSp(formFactor: TabletFormFactor): Int = when (formFactor) {
+        TabletFormFactor.Compact -> 28
+        TabletFormFactor.Expanded -> HOME_DATE_SP
+    }
+
+    /** 待机页时间字号 */
+    fun standbyTimeSp(formFactor: TabletFormFactor): Int = when (formFactor) {
+        TabletFormFactor.Compact -> 36
+        TabletFormFactor.Expanded -> HOME_TIME_SP
+    }
+
+    /** 顶栏系统名字号（NetShield） */
+    const val HOME_TOP_BAR_TITLE_SP = 26
+
+    /** 待机页横排环境参数字号（与顶栏 NetShield 一致） */
+    const val STANDBY_HOST_ENV_ROW_SP = HOME_TOP_BAR_TITLE_SP
+
+    /** 待机页环境横排项间距 */
+    fun standbyHostEnvRowGap(formFactor: TabletFormFactor): Dp = when (formFactor) {
+        TabletFormFactor.Compact -> 14.dp
+        TabletFormFactor.Expanded -> 28.dp
+    }
 
     /** 待机页探头列宽占下区 Row 比例（留言 1/3） */
     const val STANDBY_PROBE_COLUMN_WEIGHT = 2f
@@ -141,6 +187,23 @@ object ScreenSpec {
 
     /** 侧栏高度 = 卡片高度 × 此比例（0.8 → 比卡片矮 20%，上下各留 10%） */
     const val SIDE_DRAWER_HEIGHT_RATIO_OF_CARD = 0.8f
+
+    /** 10 寸等矮屏：侧栏略高于卡片（106%），保证四项文字可读 */
+    const val SIDE_DRAWER_HEIGHT_RATIO_COMPACT_SCREEN = 1.06f
+
+    /** 低于此屏高（dp）视为矮屏侧栏布局 */
+    val compactScreenMaxHeightDp = 820.dp
+
+    fun sideDrawerHeightRatioOfCard(screenHeight: Dp): Float =
+        if (screenHeight <= compactScreenMaxHeightDp) {
+            SIDE_DRAWER_HEIGHT_RATIO_COMPACT_SCREEN
+        } else {
+            SIDE_DRAWER_HEIGHT_RATIO_OF_CARD
+        }
+
+    /** 106% 高度时相对卡片垂直居中： (1 - 1.06) / 2 */
+    fun sideDrawerTopInsetRatioOfCard(screenHeight: Dp): Float =
+        if (screenHeight <= compactScreenMaxHeightDp) -0.03f else SIDE_DRAWER_TOP_INSET_RATIO_OF_CARD
 
     /** 侧栏顶部相对卡片顶的下移比例（与高度比例配合，使侧栏在卡片内垂直居中） */
     const val SIDE_DRAWER_TOP_INSET_RATIO_OF_CARD = 0.1f
@@ -280,6 +343,15 @@ object ScreenSpec {
         TabletFormFactor.Expanded -> 26
     }
 
+    /** 添加探头弹窗：10 寸屏宽 1/2，13 寸屏宽 1/3 */
+    const val ADD_PROBE_DIALOG_WIDTH_FRACTION_COMPACT = 0.5f
+    const val ADD_PROBE_DIALOG_WIDTH_FRACTION_EXPANDED = 1f / 3f
+
+    fun addProbeDialogWidthFraction(formFactor: TabletFormFactor): Float = when (formFactor) {
+        TabletFormFactor.Compact -> ADD_PROBE_DIALOG_WIDTH_FRACTION_COMPACT
+        TabletFormFactor.Expanded -> ADD_PROBE_DIALOG_WIDTH_FRACTION_EXPANDED
+    }
+
     /** 待机页留言字号 */
     fun standbyMessageSp(formFactor: TabletFormFactor): Int = when (formFactor) {
         TabletFormFactor.Compact -> 24
@@ -295,8 +367,8 @@ object ScreenSpec {
 
 @Composable
 fun rememberTabletFormFactor(): TabletFormFactor {
-    val widthDp = LocalConfiguration.current.screenWidthDp
-    return ScreenSpec.formFactor(widthDp)
+    val cfg = androidx.compose.ui.platform.LocalConfiguration.current
+    return ScreenSpec.formFactor(cfg.screenWidthDp, cfg.screenHeightDp)
 }
 
 @Composable

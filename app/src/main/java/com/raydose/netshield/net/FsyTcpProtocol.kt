@@ -1,5 +1,6 @@
 package com.raydose.netshield.net
 
+import com.raydose.netshield.model.NeijiProbeRegs
 import java.util.Calendar
 import kotlin.math.min
 
@@ -40,6 +41,9 @@ data class ParsedFsyFrame(
     val deviceSerial: String? = null,
     val deviceTime: DeviceTimeInfo? = null,
     val thresholdValues: List<Long>? = null,  // 12项，顺序：辐射上/下、温度上/下、气压上/下、湿度上/下、CO2上/下、PM2.5上/下
+    /** Neiji reg 50 / 52 单次读回应（×100 μSv/h） */
+    val doseHiX100: Long? = null,
+    val doseLoX100: Long? = null,
     val statusBitValue: Long? = null,
     val controlBit2Value: Long? = null,
     val alarmEnableValue: Long? = null,
@@ -372,7 +376,30 @@ private fun parseReadResp13(frame: ByteArray, addr: Int, crcOk: Boolean): Parsed
         )
     }
 
-    // 报警阈值：startReg=0x0040（完整 12×u32 或仅辐射前 2×u32）
+    // Neiji 剂量率上/下阈值（reg 50 / 52，各 uint32×100 μSv/h）
+    if (startReg == NeijiProbeRegs.DOSE_HI_TH && byteCount >= 4 && frame.size >= payloadStart + 4) {
+        val hi = u32le(frame, payloadStart)
+        return ParsedFsyFrame(
+            addr = addr,
+            func = 0x13,
+            crcOk = crcOk,
+            summary = "0x13 剂量率上限(reg50): ${"%.2f".format(hi / 100.0)} μSv/h",
+            doseHiX100 = hi,
+        )
+    }
+
+    if (startReg == NeijiProbeRegs.DOSE_LO_TH && byteCount >= 4 && frame.size >= payloadStart + 4) {
+        val lo = u32le(frame, payloadStart)
+        return ParsedFsyFrame(
+            addr = addr,
+            func = 0x13,
+            crcOk = crcOk,
+            summary = "0x13 剂量率下限(reg52): ${"%.2f".format(lo / 100.0)} μSv/h",
+            doseLoX100 = lo,
+        )
+    }
+
+    // 报警阈值：startReg=0x0040（转接板 12×u32 或辐射前 2×u32，保留兼容 0x23）
     if (startReg == REG_THRESHOLD_READ && byteCount >= 8 && frame.size >= payloadStart + 8) {
         val count = minOf(12, byteCount / 4)
         val thresholds = (0 until count).map { u32le(frame, payloadStart + it * 4) }
