@@ -2,6 +2,9 @@
 
 #include "fsy_dispatch.h"
 #include "fsy_frame.h"
+#include "can_driver.h"
+#include "net_tcp.h"
+#include "uart1_port.h"
 
 #include <stddef.h>
 #include <stdbool.h>
@@ -9,59 +12,9 @@
 
 #define FSY_ASM_BUF_SIZE     FSY_FRAME_MAX_LEN
 #define FSY_ASM_DRAIN_CHUNK  32U
-#define FSY_RTU_FL_NEED_MORE 0xFFFFU
 
 static uint8_t s_uart_asm_buf[FSY_ASM_BUF_SIZE];
 static uint16_t s_uart_asm_len;
-
-static uint16_t fsy_rtu_frame_len(const uint8_t *buf, uint16_t avail)
-{
-    uint8_t fc;
-    uint16_t fl;
-
-    if (avail < 2U) {
-        return FSY_RTU_FL_NEED_MORE;
-    }
-
-    fc = buf[1];
-    if ((fc & 0x80U) != 0U) {
-        return 8U;
-    }
-
-    switch (fc) {
-    case FSY_FC_READ_HOLDING_REQ:
-    case FSY_FC_WRITE_SINGLE_REQ:
-    case FSY_FC_WRITE_SINGLE_RESP:
-    case FSY_FC_WRITE_MULTI_RESP:
-    case FSY_FC_READ_SINGLE_REQ:
-    case FSY_FC_READ_SINGLE_RESP:
-        return 8U;
-
-    case FSY_FC_WRITE_MULTI_REQ:
-        if (avail < 9U) {
-            return FSY_RTU_FL_NEED_MORE;
-        }
-        fl = (uint16_t)(7U + buf[6] + 2U);
-        if (fl > FSY_FRAME_MAX_LEN) {
-            return 0U;
-        }
-        return fl;
-
-    case FSY_FC_READ_HOLDING_RESP:
-    case FSY_FC_ACTIVE_UPLOAD:
-        if (avail < 3U) {
-            return FSY_RTU_FL_NEED_MORE;
-        }
-        fl = (uint16_t)(7U + buf[2]);
-        if (fl > FSY_FRAME_MAX_LEN) {
-            return 0U;
-        }
-        return fl;
-
-    default:
-        return 0U;
-    }
-}
 
 static void fsy_drain_ring_to_asm(UartRingBuf *rx_ring)
 {
@@ -101,9 +54,9 @@ void Fsy_Link_OnUartBytes(UartRingBuf *rx_ring,
     fsy_drain_ring_to_asm(rx_ring);
 
     for (;;) {
-        uint16_t frame_len = fsy_rtu_frame_len(s_uart_asm_buf, s_uart_asm_len);
+        uint16_t frame_len = Fsy_Frame_RtuAssembleLen(s_uart_asm_buf, s_uart_asm_len);
 
-        if (frame_len == FSY_RTU_FL_NEED_MORE) {
+        if (frame_len == FSY_FRAME_LEN_NEED_MORE) {
             return;
         }
         if (frame_len == 0U) {
@@ -219,4 +172,45 @@ void Fsy_Link_ProcessRx(UartRingBuf *rx_ring,
 {
     while (Fsy_Link_ProcessOneFrame(rx_ring, write_fn)) {
     }
+}
+
+static void fsy_link_mirror_can(const uint8_t *data, uint16_t len)
+{
+    if (CanDriver_IsReady()) {
+        (void)CanDriver_TransmitRtu(data, len);
+    }
+}
+
+int Fsy_Link_WriteUpload(const uint8_t *data, uint16_t len)
+{
+    if ((data == NULL) || (len == 0U)) {
+        return -1;
+    }
+
+    (void)Uart1_Port_Write(data, len);
+    (void)Net_Tcp_Write(data, len);
+    fsy_link_mirror_can(data, len);
+    return (int)len;
+}
+
+int Fsy_Link_WriteUart(const uint8_t *data, uint16_t len)
+{
+    if ((data == NULL) || (len == 0U)) {
+        return -1;
+    }
+
+    (void)Uart1_Port_Write(data, len);
+    fsy_link_mirror_can(data, len);
+    return (int)len;
+}
+
+int Fsy_Link_WriteTcp(const uint8_t *data, uint16_t len)
+{
+    if ((data == NULL) || (len == 0U)) {
+        return -1;
+    }
+
+    (void)Net_Tcp_Write(data, len);
+    fsy_link_mirror_can(data, len);
+    return (int)len;
 }

@@ -15,13 +15,13 @@ bool Fsy_Frame_CrcOk(const uint8_t *frame, uint16_t len)
            (frame[len - 1U] == (uint8_t)(crc >> 8));
 }
 
-uint16_t Fsy_Frame_PredictLen(const uint8_t *frame, uint16_t avail)
+uint16_t Fsy_Frame_RtuAssembleLen(const uint8_t *frame, uint16_t avail)
 {
-    uint16_t len = 0U;
     uint8_t fc;
+    uint16_t fl;
 
-    if ((frame == NULL) || (avail < 4U)) {
-        return 0U;
+    if ((frame == NULL) || (avail < 2U)) {
+        return FSY_FRAME_LEN_NEED_MORE;
     }
 
     fc = frame[1];
@@ -36,30 +36,44 @@ uint16_t Fsy_Frame_PredictLen(const uint8_t *frame, uint16_t avail)
     case FSY_FC_WRITE_MULTI_RESP:
     case FSY_FC_READ_SINGLE_REQ:
     case FSY_FC_READ_SINGLE_RESP:
-        len = 8U;
-        break;
+        return 8U;
 
     case FSY_FC_WRITE_MULTI_REQ:
-        if (avail >= 7U) {
-            len = (uint16_t)(9U + frame[6]);
+        if (avail < 9U) {
+            return FSY_FRAME_LEN_NEED_MORE;
         }
-        break;
+        fl = (uint16_t)(7U + frame[6] + 2U);
+        if (fl > FSY_FRAME_MAX_LEN) {
+            return 0U;
+        }
+        return fl;
 
     case FSY_FC_READ_HOLDING_RESP:
     case FSY_FC_ACTIVE_UPLOAD:
-        if (avail >= 3U) {
-            len = (uint16_t)(7U + frame[2]);
+        if (avail < 3U) {
+            return FSY_FRAME_LEN_NEED_MORE;
         }
-        break;
+        fl = (uint16_t)(7U + frame[2]);
+        if (fl > FSY_FRAME_MAX_LEN) {
+            return 0U;
+        }
+        return fl;
 
     default:
-        break;
+        return 0U;
     }
+}
 
+uint16_t Fsy_Frame_PredictLen(const uint8_t *frame, uint16_t avail)
+{
+    uint16_t len = Fsy_Frame_RtuAssembleLen(frame, avail);
+
+    if (len == FSY_FRAME_LEN_NEED_MORE) {
+        return 0U;
+    }
     if ((len >= 4U) && (len <= avail)) {
         return len;
     }
-
     return 0U;
 }
 

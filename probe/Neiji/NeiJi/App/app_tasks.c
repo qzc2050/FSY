@@ -21,6 +21,7 @@
 #include "ws2812b.h"
 #include "alarm_output.h"
 #include "uart_diag.h"
+#include "can_driver.h"
 #include <stdio.h>
 #include <string.h>
 
@@ -66,11 +67,9 @@ static const osThreadAttr_t uploadTaskAttributes = {
 
 
 
-static int UploadWriteBoth(const uint8_t *data, uint16_t len)
+static int UploadWriteAll(const uint8_t *data, uint16_t len)
 {
-    (void)Uart1_Port_Write(data, len);
-    (void)Net_Tcp_Write(data, len);
-    return (int)len;
+    return Fsy_Link_WriteUpload(data, len);
 }
 
 static void BootMessage(void)
@@ -96,6 +95,8 @@ void App_TasksInit(void)
     Uart1_Port_Init();
 
     Uart1_Port_StartRx();
+
+    (void)CanDriver_Init();
 
     /* 按键扫描先于 LVGL，供 lv_port_indev 读取 */
     Key_TaskInit();
@@ -142,7 +143,9 @@ static void UartTask(void *argument)
 
     for (;;) {
 
-        Fsy_Link_OnUartBytes(rb, Uart1_Port_Write);
+        Fsy_Link_OnUartBytes(rb, Fsy_Link_WriteUart);
+
+        CanDriver_Poll();
 
         (void)osDelay(UART_RX_POLL_MS);
 
@@ -156,13 +159,23 @@ static void UploadTask(void *argument)
 
 {
 
+    uint32_t last_sn_tick = 0U;
+
     (void)argument;
 
 
 
     for (;;) {
 
-        (void)Fsy_Upload_Send(UploadWriteBoth);
+        uint32_t now = osKernelGetTickCount();
+
+        (void)Fsy_Upload_Send(UploadWriteAll);
+
+        if ((last_sn_tick == 0U) ||
+            ((now - last_sn_tick) >= FSY_UPLOAD_SN_PERIOD_MS)) {
+            last_sn_tick = now;
+            (void)Fsy_Upload_SendSerial(UploadWriteAll);
+        }
 
         (void)osDelay(FSY_UPLOAD_PERIOD_MS);
 

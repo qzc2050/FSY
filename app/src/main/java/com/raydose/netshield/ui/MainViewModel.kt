@@ -13,6 +13,7 @@ import com.raydose.netshield.data.HostSettingsRepository
 import com.raydose.netshield.ui.home.HomeClockFormatter
 import com.raydose.netshield.data.ProbeConfigRepository
 import com.raydose.netshield.data.ProbeConnectionManager
+import com.raydose.netshield.data.ProbeLinkRouter
 import com.raydose.netshield.data.ProbeDoseHistoryRepository
 import com.raydose.netshield.data.ProbeSensorOfflineLogAggregator
 import com.raydose.netshield.model.DisplaySoundSettings
@@ -38,6 +39,7 @@ import com.raydose.netshield.model.ProbeManageDraft
 import com.raydose.netshield.model.SavedProbe
 import com.raydose.netshield.model.SlaveProbeUi
 import com.raydose.netshield.model.SystemAlertLog
+import com.raydose.netshield.model.ProbeCommandLink
 import com.raydose.netshield.model.applyParsedFrame
 import com.raydose.netshield.model.buildLowerAlarmCheckboxWriteFrames
 import com.raydose.netshield.model.buildUpperAlarmCheckboxWriteFrames
@@ -92,7 +94,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val doseHistoryRepository = ProbeDoseHistoryRepository(application)
     private val displaySoundController = DisplaySoundController(application)
     private val hostAlarmController = HostAlarmController(application)
-    private val hostEnvSerialRepository = HostEnvSerialRepository()
+    private val linkRouter = ProbeLinkRouter()
+    private val hostEnvSerialRepository = HostEnvSerialRepository(
+        onProbeFrame = ::onProbeSerialFrame,
+    )
     private var windowBrightnessApplier: ((Float) -> Unit)? = null
     private var pauseAlarmExpiryJob: Job? = null
     private val discoveredMap = ConcurrentHashMap<String, DiscoveredDevice>()
@@ -128,6 +133,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private val connectionManager = ProbeConnectionManager(
         context = application,
+        linkRouter = linkRouter,
+        serialSender = { frame -> hostEnvSerialRepository.sendRaw(frame) },
+        isTelemetryOnline = { probeId -> _liveTelemetry.value[probeId]?.isOnline == true },
         onDiscoveredRaw = ::onDiscoveryDatagram,
         onTcpFrame = ::onTcpFrame,
         onProbeOnlineChanged = ::onProbeOnlineChanged,
@@ -206,6 +214,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             while (true) {
                 _nowMillis.value = System.currentTimeMillis()
                 pruneStaleDiscovery()
+                pruneStaleProbeTelemetry()
                 delay(1000L)
             }
         }
@@ -553,7 +562,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
             }
         } else {
-            Log.i(ProbeConnectionManager.TAG, "跳过读配置 ${probe.displayName}：TCP 未在线")
+            Log.i(ProbeConnectionManager.TAG, "跳过读配置 ${probe.displayName}：探头离线")
         }
     }
 
@@ -669,7 +678,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             it.copy(
                 showAddProbeDialog = true,
                 discoveredDevices = discoveredMap.values.sortedForAddProbeDialog(),
-                statusHint = if (discoveredMap.isEmpty()) "正在搜索组播设备…" else null,
+                statusHint = if (discoveredMap.isEmpty()) {
+                    "正在搜索设备（组播 / 串口）…"
+                } else {
+                    null
+                },
             )
         }
     }
@@ -689,7 +702,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val drafts = state.manageDrafts + newDraft
         val list = drafts.map { it.savedProbe }
         persistProbeList(list)
-        connectionManager.connect(added)
+        if (added.ip.isNotBlank()) {
+            connectionManager.connect(added)
+        }
         val newIndex = drafts.lastIndex
         _settings.update {
             it.copy(
@@ -736,6 +751,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _savedProbes.value = list
         connectionManager.setSavedProbes(list)
         connectionManager.disconnect(removedId)
+        linkRouter.clear(removedId)
         _liveTelemetry.update { map -> map.filterKeys { id -> id != removedId } }
         _settings.update {
             it.copy(
@@ -834,13 +850,126 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val device = DiscoveredDevice.fromBroadcast(broadcast)
         discoveredMap[device.stableId] = device
         applyDiscoveryNetworkUpdate(device)
-        if (_settings.value.showAddProbeDialog) {
-            _settings.update {
-                it.copy(
-                    discoveredDevices = discoveredMap.values.sortedForAddProbeDialog(),
-                    statusHint = null,
-                )
+        publishDiscoveredDevicesIfVisible()
+    }
+
+    /** zjb 串口/CAN：非 0xEF 从机 0x23（序列号广播 + 实时上传） */
+    private fun onProbeSerialFrame(frame: com.raydose.netshield.net.ParsedFsyFrame) {
+        if (!frame.crcOk) return
+
+        frame.deviceSerial?.trim()?.takeIf { it.isNotEmpty() }?.let { serial ->
+            upsertSerialDiscovery(protoAddr = frame.addr, serial = serial)
+            Log.i(ProbeConnectionManager.TAG, "串口发现探头 serial=$serial addr=0x${frame.addr.toString(16)}")
+        }
+
+        val isRealtimeUpload =
+            frame.func == 0x23 && frame.uploadValues != null && frame.uploadValues.size >= 8
+        if (isRealtimeUpload) {
+            upsertSerialDiscoveryFromRealtime(frame.addr)
+            val probeId = findSavedProbeIdByModbusAddr(frame.addr) ?: return
+            applyTelemetryFromFrame(probeId, frame, ProbeCommandLink.SERIAL)
+            return
+        }
+        if (frame.func == 0x13) {
+            val probeId = findSavedProbeIdByModbusAddr(frame.addr) ?: return
+            applyTelemetryFromFrame(probeId, frame, null)
+        }
+    }
+
+    /** 串口 SN 广播：写入发现表，并同步已保存探头（不覆盖已有 IP）。 */
+    private fun upsertSerialDiscovery(protoAddr: Int, serial: String) {
+        val device = DiscoveredDevice.fromSerialSerialUpload(protoAddr = protoAddr, serial = serial)
+        discoveredMap[device.stableId] = device
+        removeSerialDiscoveryPlaceholder(protoAddr)
+        applyDiscoveryNetworkUpdate(device)
+        publishDiscoveredDevicesIfVisible()
+    }
+
+    /** 仅有实时 0x23、尚未收到 SN 时，按协议地址占位，便于「添加探头」列表展示。 */
+    private fun upsertSerialDiscoveryFromRealtime(protoAddr: Int) {
+        val addrStr = protoAddr.toString()
+        val now = System.currentTimeMillis()
+        val bySerial = discoveredMap.values.firstOrNull {
+            it.protoAddr == addrStr && it.serial.isNotBlank()
+        }
+        if (bySerial != null) {
+            discoveredMap[bySerial.stableId] = bySerial.copy(lastSeenMillis = now)
+            publishDiscoveredDevicesIfVisible()
+            return
+        }
+        val placeholderKey = serialDiscoveryPlaceholderId(protoAddr)
+        val existing = discoveredMap[placeholderKey]
+        discoveredMap[placeholderKey] = (existing ?: DiscoveredDevice(
+            model = "FSY-I",
+            serial = "",
+            ip = "",
+            controlPort = 0,
+            dataPort = 0,
+            protoAddr = addrStr,
+            lastSeenMillis = now,
+        )).copy(lastSeenMillis = now)
+        publishDiscoveredDevicesIfVisible()
+    }
+
+    private fun serialDiscoveryPlaceholderId(protoAddr: Int): String = "can_addr_$protoAddr"
+
+    private fun removeSerialDiscoveryPlaceholder(protoAddr: Int) {
+        discoveredMap.remove(serialDiscoveryPlaceholderId(protoAddr))
+    }
+
+    private fun publishDiscoveredDevicesIfVisible() {
+        if (!_settings.value.showAddProbeDialog) return
+        _settings.update {
+            it.copy(
+                discoveredDevices = discoveredMap.values.sortedForAddProbeDialog(),
+                statusHint = null,
+            )
+        }
+    }
+
+    private fun findSavedProbeIdByModbusAddr(addr: Int): String? {
+        return _savedProbes.value.firstOrNull { probe ->
+            val n = probe.protoAddr.trim().toIntOrNull() ?: return@firstOrNull false
+            n == addr
+        }?.id
+    }
+
+    private fun applyTelemetryFromFrame(
+        probeId: String,
+        frame: com.raydose.netshield.net.ParsedFsyFrame,
+        rxLink: ProbeCommandLink? = null,
+    ) {
+        if (rxLink != null &&
+            frame.func == 0x23 &&
+            frame.uploadValues != null &&
+            frame.uploadValues.size >= 8
+        ) {
+            linkRouter.recordRx23(probeId, rxLink)
+        }
+        _liveTelemetry.update { map ->
+            val prev = map[probeId] ?: LiveProbeTelemetry()
+            val next = prev.applyParsedFrame(frame)
+            frame.uploadValues?.takeIf { it.size >= 8 }?.let { values ->
+                val dose = values[0] / 100.0
+                doseHistoryRepository.recordSampleIfDue(probeId, dose)
             }
+            map + (probeId to next)
+        }
+        if (_showSettings.value) {
+            patchProbeRealtimeSummaryOnDraft(probeId)
+        }
+        if (frame.func == 0x13 && _showSettings.value) {
+            applyConfigReadToSelectedProbeDraft(probeId)
+        }
+        frame.uploadValues?.takeIf { it.size >= 8 }?.let {
+            val probe = _savedProbes.value.find { it.id == probeId }
+            val telemetry = _liveTelemetry.value[probeId]
+            sensorOfflineLogAggregator.onTelemetrySample(
+                probeId = probeId,
+                probeName = probe?.displayName ?: probeId,
+                alarmBit = telemetry?.alarmBit,
+                nowMillis = System.currentTimeMillis(),
+            )
         }
     }
 
@@ -859,6 +988,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
         if (probe.id != updated.id) {
             val telemetry = _liveTelemetry.value[probe.id] ?: LiveProbeTelemetry()
+            linkRouter.routeFor(probe.id)?.let { linkRouter.recordRx23(updated.id, it) }
+            linkRouter.clear(probe.id)
             _liveTelemetry.update { map ->
                 map.filterKeys { it != probe.id } + (updated.id to telemetry)
             }
@@ -897,34 +1028,46 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    private fun onTcpFrame(probeId: String, frame: com.raydose.netshield.net.ParsedFsyFrame) {
+    /**
+     * 串口/CAN 探头无 TCP 断线事件：超过 [PROBE_TELEMETRY_STALE_MS] 未收到实时 0x23 则置离线。
+     * 走 TCP 且仍连着的探头由 [ProbeConnectionManager] 内 watchdog 处理。
+     */
+    private fun pruneStaleProbeTelemetry() {
+        val now = System.currentTimeMillis()
+        for (probe in _savedProbes.value) {
+            val probeId = probe.id
+            if (_liveTelemetry.value[probeId]?.isOnline != true) continue
+            val lastRx = linkRouter.lastRx23Millis(probeId) ?: continue
+            if (now - lastRx < PROBE_TELEMETRY_STALE_MS) continue
+            val route = linkRouter.routeFor(probeId)
+            if (route == ProbeCommandLink.NETWORK && connectionManager.isTcpOnline(probeId)) {
+                continue
+            }
+            markProbeTelemetryStaleOffline(probeId)
+        }
+    }
+
+    private fun markProbeTelemetryStaleOffline(probeId: String) {
+        if (_liveTelemetry.value[probeId]?.isOnline != true) return
         _liveTelemetry.update { map ->
             val prev = map[probeId] ?: LiveProbeTelemetry()
-            val next = prev.applyParsedFrame(frame)
-            frame.uploadValues?.takeIf { it.size >= 8 }?.let { values ->
-                val dose = values[0] / 100.0
-                doseHistoryRepository.recordSampleIfDue(probeId, dose)
-            }
-            map + (probeId to next)
+            map + (probeId to prev.copy(isOnline = false))
         }
-        // 设置页顶部辐射量摘要需要在任意子页实时刷新，不仅限探头管理页。
+        val probe = _savedProbes.value.find { it.id == probeId }
+        val name = probe?.displayName ?: probeId
+        appendAlertLog(
+            message = "$name 已断开",
+            kind = AlertLogKind.Warning,
+        )
+        sensorOfflineLogAggregator.onProbeDisconnected(probeId)
         if (_showSettings.value) {
-            patchProbeRealtimeSummaryOnDraft(probeId)
+            patchProbeOnlineOnDraft(probeId, false)
         }
-        // 仅主动读应答 0x13 刷新当前卡片一次；0x23 不刷新表单
-        if (frame.func == 0x13 && _showSettings.value) {
-            applyConfigReadToSelectedProbeDraft(probeId)
-        }
-        frame.uploadValues?.takeIf { it.size >= 8 }?.let {
-            val probe = _savedProbes.value.find { it.id == probeId }
-            val telemetry = _liveTelemetry.value[probeId]
-            sensorOfflineLogAggregator.onTelemetrySample(
-                probeId = probeId,
-                probeName = probe?.displayName ?: probeId,
-                alarmBit = telemetry?.alarmBit,
-                nowMillis = System.currentTimeMillis(),
-            )
-        }
+        Log.i(ProbeConnectionManager.TAG, "探头离线(0x23超时) id=$probeId name=$name")
+    }
+
+    private fun onTcpFrame(probeId: String, frame: com.raydose.netshield.net.ParsedFsyFrame) {
+        applyTelemetryFromFrame(probeId, frame, ProbeCommandLink.NETWORK)
     }
 
     private fun onProbeOnlineChanged(probeId: String, online: Boolean) {
@@ -933,7 +1076,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val updated = if (online) {
                 prev.copy(isOnline = true)
             } else {
-                LiveProbeTelemetry(isOnline = false)
+                prev.copy(isOnline = false)
             }
             map + (probeId to updated)
         }
@@ -1107,6 +1250,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     companion object {
         private const val DISCOVERY_TTL_MS = 30_000L
+        /** Neiji 约 1s 一帧实时 0x23；与转接板本机环境 STALE 对齐 */
+        private const val PROBE_TELEMETRY_STALE_MS = 5_000L
         private const val ALERT_LOG_RETENTION_MS = 24L * 3_600_000L
     }
 }

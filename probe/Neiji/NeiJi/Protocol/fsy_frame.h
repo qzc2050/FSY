@@ -16,8 +16,12 @@
 
 #define FSY_FRAME_MAX_LEN         256U
 
+#define FSY_FRAME_LEN_NEED_MORE  0xFFFFU
+
 bool Fsy_Frame_CrcOk(const uint8_t *frame, uint16_t len);
 uint16_t Fsy_Frame_PredictLen(const uint8_t *frame, uint16_t avail);
+/** 组帧用：返回整帧长度；[FSY_FRAME_LEN_NEED_MORE]=字节不够；0=无法识别 */
+uint16_t Fsy_Frame_RtuAssembleLen(const uint8_t *frame, uint16_t avail);
 bool Fsy_Frame_FormatOk(const uint8_t *frame, uint16_t len);
 
 #endif

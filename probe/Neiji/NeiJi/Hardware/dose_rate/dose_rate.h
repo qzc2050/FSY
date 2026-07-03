@@ -5,6 +5,7 @@
 #include <stdint.h>
 
 #define GEIGER_DEFAULT_SENSITIVITY_CPM  600.0f
+#define GEIGER_DEFAULT_BACKGROUND_CPM   20U
 
 typedef enum {
     DR_INPUT_MODE_REAL = 0,
@@ -46,6 +47,9 @@ void DoseRate_GetEwmaConfig(EwmaGlobalConfig *cfg);
 
 bool DoseRate_SetRateLimitUsvh(float limit_usvh);
 float DoseRate_GetRateLimitUsvh(void);
+
+bool DoseRate_SetBackgroundCpm(uint32_t background_cpm);
+uint32_t DoseRate_GetBackgroundCpm(void);
 
 uint8_t DoseRate_GetInputMode(void);
 bool DoseRate_SetInputMode(uint8_t mode);

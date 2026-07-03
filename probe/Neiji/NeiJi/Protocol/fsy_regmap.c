@@ -361,7 +361,7 @@ static int reg_is_configurable(uint16_t reg)
         return 1;
     }
     if ((reg >= FSY_REG_GEIGER_SENS) &&
-        (reg < (uint16_t)(FSY_REG_RATE_LIMIT + FSY_REG_GEIGER_PARAM_REGS))) {
+        (reg < (uint16_t)(FSY_REG_GEIGER_BACKGROUND_CPM + FSY_REG_GEIGER_PARAM_REGS))) {
         return 1;
     }
     if ((reg >= FSY_REG_DOSE_HI_TH) &&

@@ -48,8 +48,8 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-/* 上电传感器自检串口打印：调试完改为 0，或注释掉 Sensor_PrintBootCheck() 调用 */
-#define SENSOR_DEBUG_BOOT_CHECK  1
+/* 上电传感器自检串口打印：联调/生产保持 0 */
+#define SENSOR_DEBUG_BOOT_CHECK  0
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -166,19 +166,8 @@ void MX_FREERTOS_Init(void) {
 void StartDefaultTask(void *argument)
 {
   /* USER CODE BEGIN StartDefaultTask */
-  uint8_t printed_cfg = 0U;
-
   for(;;)
   {
-    if (printed_cfg == 0U)
-    {
-      printed_cfg = 1U;
-      printf("CONFIG: addr=0x%04X control_bit=0x%04X control_bit2=0x%08lX\r\n",
-             (unsigned)g_config.address,
-             (unsigned)g_config.control_bit,
-             (unsigned long)g_config.control_bit2);
-    }
-
     Protocol_OnUart1Bytes();
     Protocol_OnCanFrames();
 
@@ -262,11 +251,8 @@ void StartSensorTask(void *argument)
   /* USER CODE BEGIN StartSensorTask */
   PM25_Data_t pm25_data;
   PM25_Data_t pm25_last;
-  ENS160_Data_t ens_data;
   AHT20_Data_t aht_data;
-  BMP280_Data_t bmp_data;
   uint32_t last_i2c_update = 0U;
-  uint32_t last_ens_log = 0U;
 
   /* 上电后等待传感器/总线稳定，减少偶发 I2C 首读失败 */
   osDelay(300);
@@ -318,30 +304,6 @@ void StartSensorTask(void *argument)
         ENS160_SetCompensation(aht_data.temperature_c, aht_data.humidity_rh);
       }
       ENS160_Update();
-
-      ENS160_GetData(&ens_data);
-      BMP280_GetData(&bmp_data);
-
-      if ((HAL_GetTick() - last_ens_log) >= 5000U)
-      {
-        last_ens_log = HAL_GetTick();
-        printf("ENS160 online=%u eCO2=%u TVOC=%u status=0x%02X phase=%s\r\n",
-               (unsigned)ens_data.online,
-               (unsigned)ens_data.eco2,
-               (unsigned)ens_data.tvoc,
-               (unsigned)ens_data.device_status,
-               ENS160_WarmupText(ens_data.warmup_phase));
-      }
-
-//      printf("AHT20: T=%.2fC RH=%.2f%% online=%u\r\n",
-//             (double)aht_data.temperature_c,
-//             (double)aht_data.humidity_rh,
-//             (unsigned)aht_data.online);
-
-//      printf("BMP280: T=%.2fC P=%.2fPa online=%u\r\n",
-//             (double)bmp_data.temperature_c,
-//             (double)bmp_data.pressure_pa,
-//             (unsigned)bmp_data.online);
 
       if (OTA_IsRealtimeMuted() == 0U)
       {

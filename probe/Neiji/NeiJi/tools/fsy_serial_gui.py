@@ -57,6 +57,7 @@ from fsy_protocol import (
     REG_EWMA_ALPHA_HIGH,
     REG_EWMA_BOOST_DURATION,
     REG_RATE_LIMIT,
+    REG_GEIGER_BACKGROUND_CPM,
     REG_GEIGER_PARAM_COUNT,
     REG_HW_VERSION,
     REG_HW_VERSION_COUNT,
@@ -803,7 +804,7 @@ class FactoryApp(tk.Tk):
         self.cps_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         scroll.pack(side=tk.RIGHT, fill=tk.Y)
 
-        form = ttk.LabelFrame(parent, text="盖革 / EWMA（reg 154–167，每项 uint32 占 2 reg）", padding=12)
+        form = ttk.LabelFrame(parent, text="盖革 / EWMA（reg 154–169，每项 uint32 占 2 reg）", padding=12)
         form.pack(fill=tk.X, pady=(0, 0))
 
         rows = [
@@ -814,6 +815,7 @@ class FactoryApp(tk.Tk):
             ("EWMA alpha_high (162)", "ewma_alpha_hi_var", "0.35", "协议值×100"),
             ("EWMA boost_duration (164)", "ewma_boost_var", "20", "秒"),
             ("剂量率量程上限 (166)", "rate_limit_var", "10000.00", "μSv/h，协议值×100"),
+            ("盖革本底 (168)", "background_cpm_var", "20", "CPM，参与剂量率前先扣除"),
         ]
         self.geiger_sens_var = tk.StringVar(value="600.00")
         self.ewma_cps_var = tk.StringVar(value="200")
@@ -822,6 +824,7 @@ class FactoryApp(tk.Tk):
         self.ewma_alpha_hi_var = tk.StringVar(value="0.35")
         self.ewma_boost_var = tk.StringVar(value="20")
         self.rate_limit_var = tk.StringVar(value="10000.00")
+        self.background_cpm_var = tk.StringVar(value="20")
 
         for i, (label, attr, _default, hint) in enumerate(rows):
             ttk.Label(form, text=label).grid(row=i, column=0, sticky=tk.W, pady=4)
@@ -972,6 +975,7 @@ class FactoryApp(tk.Tk):
                 (REG_EWMA_ALPHA_HIGH, int(float(self.ewma_alpha_hi_var.get()) * 100.0)),
                 (REG_EWMA_BOOST_DURATION, int(self.ewma_boost_var.get())),
                 (REG_RATE_LIMIT, int(float(self.rate_limit_var.get()) * 100.0)),
+                (REG_GEIGER_BACKGROUND_CPM, int(self.background_cpm_var.get())),
             ]
         except ValueError:
             messagebox.showwarning("提示", "盖革参数格式无效")
@@ -998,6 +1002,7 @@ class FactoryApp(tk.Tk):
             (REG_EWMA_ALPHA_HIGH, "alpha_hi"),
             (REG_EWMA_BOOST_DURATION, "boost"),
             (REG_RATE_LIMIT, "rate_limit"),
+            (REG_GEIGER_BACKGROUND_CPM, "background_cpm"),
         ]
 
         def finish() -> None:
@@ -1008,8 +1013,9 @@ class FactoryApp(tk.Tk):
             self.ewma_alpha_hi_var.set(f"{results.get('alpha_hi', 0) / 100.0:.2f}")
             self.ewma_boost_var.set(str(results.get("boost", 0)))
             self.rate_limit_var.set(f"{results.get('rate_limit', 0) / 100.0:.2f}")
+            self.background_cpm_var.set(str(results.get("background_cpm", 20)))
             self.status_var.set("盖革参数读取完成")
-            messagebox.showinfo("完成", "已读取盖革 / EWMA 参数（reg 154–167）")
+            messagebox.showinfo("完成", "已读取盖革 / EWMA 参数（reg 154–169）")
 
         def make_step(idx: int) -> None:
             reg, key = chain[idx]

@@ -7,10 +7,22 @@
 #define FSY_UPLOAD_PERIOD_MS 1000U
 #endif
 
+#ifndef FSY_UPLOAD_SN_PERIOD_MS
+#define FSY_UPLOAD_SN_PERIOD_MS 3000U
+#endif
+
+#define FSY_SN_UPLOAD_PAYLOAD_BYTES  16U
+#define FSY_SN_UPLOAD_FRAME_LEN      (5U + FSY_SN_UPLOAD_PAYLOAD_BYTES + 2U)
+
 void Fsy_Upload_Init(void);
 
 int Fsy_Upload_BuildFrame(uint8_t *frame, uint16_t frame_cap);
 
 int Fsy_Upload_Send(int (*write_fn)(const uint8_t *data, uint16_t len));
+
+/** 0x23 主动广播序列号：start reg 86 (0x0056)，16 字节 ASCII */
+int Fsy_Upload_BuildSerialFrame(uint8_t *frame, uint16_t frame_cap);
+
+int Fsy_Upload_SendSerial(int (*write_fn)(const uint8_t *data, uint16_t len));
 
 #endif

@@ -259,6 +259,22 @@ private fun parseUpload23(frame: ByteArray, addr: Int, crcOk: Boolean): ParsedFs
 
     tryParseFiveMinUpload(frame, startReg, byteCount, addr, crcOk)?.let { return it }
 
+    // 序列号主动广播：01 23 10 56 00 + char[16]（协议 reg 86）
+    if (startReg == 0x0056 && byteCount >= 16 && frame.size >= 5 + byteCount + 2) {
+        val payloadStart = 5
+        val end = minOf(payloadStart + byteCount, frame.size - 2)
+        val serial = String(frame.copyOfRange(payloadStart, end), Charsets.US_ASCII)
+            .trimEnd('\u0000')
+            .trim()
+        return ParsedFsyFrame(
+            addr = addr,
+            func = 0x23,
+            crcOk = crcOk,
+            summary = "0x23 序列号广播: $serial",
+            deviceSerial = serial,
+        )
+    }
+
     val values = readU32Payload(frame)
     val count = values.size
 

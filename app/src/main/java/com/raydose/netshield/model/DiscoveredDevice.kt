@@ -45,6 +45,24 @@ data class DiscoveredDevice(
                 protoAddr = b.protoAddr,
                 lastSeenMillis = nowMillis,
             )
+
+        /** 串口/CAN 经 zjb 上报的 0x23 序列号广播（无 IP） */
+        fun fromSerialSerialUpload(
+            protoAddr: Int,
+            serial: String,
+            model: String = DEFAULT_SERIAL_PROBE_MODEL,
+            nowMillis: Long = System.currentTimeMillis(),
+        ): DiscoveredDevice = DiscoveredDevice(
+            model = model,
+            serial = serial,
+            ip = "",
+            controlPort = 0,
+            dataPort = 0,
+            protoAddr = protoAddr.toString(),
+            lastSeenMillis = nowMillis,
+        )
+
+        private const val DEFAULT_SERIAL_PROBE_MODEL = "FSY-I"
     }
 }
 

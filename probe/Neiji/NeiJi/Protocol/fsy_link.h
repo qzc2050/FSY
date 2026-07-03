@@ -18,4 +18,13 @@ bool Fsy_Link_ProcessOneFrame(UartRingBuf *rx_ring,
 void Fsy_Link_ProcessRx(UartRingBuf *rx_ring,
                         int (*write_fn)(const uint8_t *data, uint16_t len));
 
+/** 0x23 主动上传：UART1 + TCP + CAN */
+int Fsy_Link_WriteUpload(const uint8_t *data, uint16_t len);
+
+/** 串口应答：UART1 + CAN */
+int Fsy_Link_WriteUart(const uint8_t *data, uint16_t len);
+
+/** TCP 应答：TCP + CAN */
+int Fsy_Link_WriteTcp(const uint8_t *data, uint16_t len);
+
 #endif

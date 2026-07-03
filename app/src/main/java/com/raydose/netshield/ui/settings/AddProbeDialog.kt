@@ -99,7 +99,7 @@ fun AddProbeDialog(
                 )
                 if (discovered.isEmpty()) {
                     Text(
-                        text = "未发现设备，请确认从机已上电且与主机同网段。",
+                        text = "未发现设备，请确认从机已上电（同网段组播，或经转接板串口/CAN）。",
                         color = NetShieldTextSecondary,
                         fontSize = headerSp,
                         modifier = Modifier.padding(vertical = 28.dp),
@@ -209,7 +209,7 @@ private fun AddProbeDeviceRow(
             modifier = Modifier.weight(1f),
         )
         Text(
-            text = device.ip,
+            text = device.ip.ifBlank { "串口/CAN" },
             color = NetShieldTextPrimary,
             fontSize = bodySp,
             maxLines = 1,

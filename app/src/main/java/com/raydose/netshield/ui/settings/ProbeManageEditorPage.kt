@@ -1,6 +1,8 @@
 package com.raydose.netshield.ui.settings
 
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.background
@@ -45,6 +47,8 @@ import com.raydose.netshield.ui.theme.NetShieldAccentBlue
 import com.raydose.netshield.ui.theme.NetShieldDoorOpen
 import com.raydose.netshield.ui.theme.NetShieldTextPrimary
 import com.raydose.netshield.ui.theme.NetShieldTextSecondary
+import com.raydose.netshield.ui.theme.TabletFormFactor
+import com.raydose.netshield.ui.theme.rememberTabletFormFactor
 
 private val FormLabelWidth = 108.dp
 private val FormRowSpacing = 14.dp
@@ -71,10 +75,16 @@ fun ProbeManageEditorPage(
     onVolumeCommitted: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val formFactor = rememberTabletFormFactor()
+    val isCompact = formFactor == TabletFormFactor.Compact
+    val rowSpacing = if (isCompact) 10.dp else FormRowSpacing
+    val columnGap = if (isCompact) 16.dp else FormColumnGap
+
     Column(
         modifier = modifier
             .fillMaxSize()
-            .padding(horizontal = 28.dp, vertical = 12.dp),
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = if (isCompact) 12.dp else 28.dp, vertical = 12.dp),
     ) {
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -94,7 +104,7 @@ fun ProbeManageEditorPage(
         Spacer(modifier = Modifier.height(14.dp))
 
         ProbeFormGridRow(
-            gap = FormColumnGap,
+            gap = columnGap,
             left = {
                 ProbeInfoLabelCell(label = "型号", value = draft.savedProbe.model)
             },
@@ -103,10 +113,10 @@ fun ProbeManageEditorPage(
             },
         )
 
-        Spacer(modifier = Modifier.height(FormRowSpacing))
+        Spacer(modifier = Modifier.height(rowSpacing))
 
         ProbeFormGridRow(
-            gap = FormColumnGap,
+            gap = columnGap,
             left = {
                 ProbeInfoLabelCell(label = "IP 地址", value = draft.ip)
             },
@@ -115,10 +125,10 @@ fun ProbeManageEditorPage(
             },
         )
 
-        Spacer(modifier = Modifier.height(18.dp))
+        Spacer(modifier = Modifier.height(if (isCompact) 12.dp else 18.dp))
 
         ProbeFormGridRow(
-            gap = FormColumnGap,
+            gap = columnGap,
             left = {
                 ProbeLabeledFieldCell(
                     label = "从机名称",
@@ -137,10 +147,10 @@ fun ProbeManageEditorPage(
             },
         )
 
-        Spacer(modifier = Modifier.height(FormRowSpacing))
+        Spacer(modifier = Modifier.height(rowSpacing))
 
         ProbeFormGridRow(
-            gap = FormColumnGap,
+            gap = columnGap,
             left = {
                 ProbeLabeledFieldCell(
                     label = "从机位置",
@@ -159,7 +169,7 @@ fun ProbeManageEditorPage(
             },
         )
 
-        Spacer(modifier = Modifier.height(FormRowSpacing))
+        Spacer(modifier = Modifier.height(rowSpacing))
 
         ProbeThresholdAlarmRow(
             thresholdLabel = "报警上限值",
@@ -170,7 +180,7 @@ fun ProbeManageEditorPage(
             trailingHalf = null,
         )
 
-        Spacer(modifier = Modifier.height(FormRowSpacing))
+        Spacer(modifier = Modifier.height(rowSpacing))
 
         ProbeThresholdAlarmRow(
             thresholdLabel = "报警下限值",
@@ -181,10 +191,10 @@ fun ProbeManageEditorPage(
             trailingHalf = null,
         )
 
-        Spacer(modifier = Modifier.height(FormRowSpacing))
+        Spacer(modifier = Modifier.height(rowSpacing))
 
         ProbeFormGridRow(
-            gap = FormColumnGap,
+            gap = columnGap,
             left = {
                 VolumeCell(
                     volume = draft.volume,
@@ -195,35 +205,46 @@ fun ProbeManageEditorPage(
             right = { Box(modifier = Modifier.fillMaxWidth()) },
         )
 
-        Spacer(modifier = Modifier.height(FormRowSpacing))
+        Spacer(modifier = Modifier.height(rowSpacing))
 
         ProbeFormGridRow(
-            gap = FormColumnGap,
+            gap = columnGap,
             left = { Box(modifier = Modifier.fillMaxWidth()) },
             right = {
                 ProbeFormGridRightSlot {
                     val deleteEnabled = !draft.isTcpOnline
-                    IconButton(
-                        onClick = onDeleteClick,
-                        enabled = deleteEnabled,
-                        modifier = Modifier.size(DeleteButtonSize),
-                    ) {
-                        Icon(
-                            imageVector = Icons.Outlined.Delete,
-                            contentDescription = "删除探头",
-                            tint = if (deleteEnabled) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        IconButton(
+                            onClick = onDeleteClick,
+                            enabled = deleteEnabled,
+                            modifier = Modifier.size(DeleteButtonSize),
+                        ) {
+                            Icon(
+                                imageVector = Icons.Outlined.Delete,
+                                contentDescription = "删除探头",
+                                tint = if (deleteEnabled) {
+                                    NetShieldDoorOpen
+                                } else {
+                                    NetShieldTextSecondary.copy(alpha = 0.5f)
+                                },
+                                modifier = Modifier.size(DeleteIconSize),
+                            )
+                        }
+                        Text(
+                            text = if (deleteEnabled) "删除探头" else "在线不可删",
+                            color = if (deleteEnabled) {
                                 NetShieldDoorOpen
                             } else {
-                                NetShieldTextSecondary.copy(alpha = 0.35f)
+                                NetShieldTextSecondary.copy(alpha = 0.5f)
                             },
-                            modifier = Modifier.size(DeleteIconSize),
+                            fontSize = if (isCompact) 15.sp else FormActionSp,
                         )
                     }
                 }
             },
         )
 
-        Spacer(modifier = Modifier.weight(1f))
+        Spacer(modifier = Modifier.height(16.dp))
     }
 }
 

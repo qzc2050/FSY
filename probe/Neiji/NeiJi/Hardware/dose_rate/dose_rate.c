@@ -7,6 +7,18 @@ static GeigerEWMA s_sensor;
 static uint8_t s_dr_input_mode = DR_INPUT_MODE_REAL;
 static uint32_t s_dr_manual_cps = 0U;
 static float s_rate_limit_usvh = 10000.0f;
+static uint32_t s_background_cpm = GEIGER_DEFAULT_BACKGROUND_CPM;
+
+static uint32_t dose_rate_effective_cps(uint32_t raw_cps)
+{
+    float bg_cps = (float)s_background_cpm / 60.0f;
+    float eff = (float)raw_cps - bg_cps;
+
+    if (eff <= 0.0f) {
+        return 0U;
+    }
+    return (uint32_t)eff;
+}
 
 static void init_ewma_config(void)
 {
@@ -93,7 +105,9 @@ void DoseRate_ResetFilter(void)
 
 float DoseRate_UpdateFromCps(uint32_t cps)
 {
-    ewma_update(&s_sensor, (int)cps);
+    uint32_t eff = dose_rate_effective_cps(cps);
+
+    ewma_update(&s_sensor, (int)eff);
     return s_sensor.current_dose_rate;
 }
 
@@ -161,6 +175,17 @@ bool DoseRate_SetRateLimitUsvh(float limit_usvh)
 float DoseRate_GetRateLimitUsvh(void)
 {
     return s_rate_limit_usvh;
+}
+
+bool DoseRate_SetBackgroundCpm(uint32_t background_cpm)
+{
+    s_background_cpm = background_cpm;
+    return true;
+}
+
+uint32_t DoseRate_GetBackgroundCpm(void)
+{
+    return s_background_cpm;
 }
 
 uint8_t DoseRate_GetInputMode(void)

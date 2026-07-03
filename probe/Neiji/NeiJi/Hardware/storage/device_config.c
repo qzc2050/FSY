@@ -21,7 +21,8 @@
 #include <string.h>
 
 #define CFG_MAGIC                 0x44455643U /* 'DEVC' */
-#define CFG_VERSION               10U
+#define CFG_VERSION               11U
+#define CFG_VERSION_V10           10U
 #define CFG_VERSION_V9            9U
 #define CFG_VERSION_V8            8U
 #define CFG_VERSION_V7            7U
@@ -50,6 +51,7 @@
 #define CFG_EWMA_ALPHA_HIGH_X100_DEFAULT   35UL
 #define CFG_EWMA_BOOST_DURATION_DEFAULT    20UL
 #define CFG_RATE_LIMIT_X100_DEFAULT        (10000UL * 100UL)
+#define CFG_GEIGER_BACKGROUND_CPM_DEFAULT    20UL
 
 typedef struct __attribute__((packed)) {
     uint32_t magic;
@@ -138,6 +140,34 @@ typedef struct __attribute__((packed)) {
     uint32_t ewma_boost_duration;
     uint32_t rate_limit_x100;
     char hw_version[CFG_MODEL_FIELD_LEN];
+} DeviceCfgBlobV10;
+
+typedef struct __attribute__((packed)) {
+    uint32_t magic;
+    uint32_t version;
+    uint32_t crc32;
+    char sn[CFG_SN_FIELD_LEN];
+    char product_model[CFG_MODEL_FIELD_LEN];
+    uint8_t dev_addr;
+    uint8_t dhcp_enable;
+    uint8_t static_ip[4];
+    uint32_t dose_hi_x100;
+    uint32_t dose_lo_x100;
+    uint32_t alarm_enable_mask;
+    uint8_t alarm_volume;
+    char product_name[CFG_MODEL_FIELD_LEN];
+    uint8_t language;
+    uint8_t alarm_sound;
+    uint8_t alarm_light;
+    uint32_t geiger_sens_x100;
+    uint32_t ewma_threshold_cps;
+    uint32_t ewma_threshold_delta;
+    uint32_t ewma_alpha_low_x100;
+    uint32_t ewma_alpha_high_x100;
+    uint32_t ewma_boost_duration;
+    uint32_t rate_limit_x100;
+    char hw_version[CFG_MODEL_FIELD_LEN];
+    uint32_t background_cpm;
 } DeviceCfgBlob;
 
 typedef struct __attribute__((packed)) {
@@ -264,6 +294,7 @@ static void cfg_apply_geiger_defaults(DeviceCfgBlob *blob)
     blob->ewma_alpha_high_x100 = CFG_EWMA_ALPHA_HIGH_X100_DEFAULT;
     blob->ewma_boost_duration = CFG_EWMA_BOOST_DURATION_DEFAULT;
     blob->rate_limit_x100 = CFG_RATE_LIMIT_X100_DEFAULT;
+    blob->background_cpm = CFG_GEIGER_BACKGROUND_CPM_DEFAULT;
 }
 
 static void cfg_apply_hw_defaults(DeviceCfgBlob *blob)
@@ -814,12 +845,55 @@ static int cfg_blob_v9_valid(const DeviceCfgBlobV9 *blob)
     return 1;
 }
 
-static void cfg_upgrade_v9_to_v10(const DeviceCfgBlobV9 *old, DeviceCfgBlob *cur)
+static uint32_t cfg_calc_crc_v10(const DeviceCfgBlobV10 *blob)
+{
+    DeviceCfgBlobV10 tmp;
+
+    memcpy(&tmp, blob, sizeof(tmp));
+    tmp.crc32 = 0U;
+    return cfg_crc32((const uint8_t *)&tmp.version,
+                     sizeof(DeviceCfgBlobV10) - offsetof(DeviceCfgBlobV10, version));
+}
+
+static void cfg_refresh_crc_v10(DeviceCfgBlobV10 *blob)
+{
+    blob->crc32 = cfg_calc_crc_v10(blob);
+}
+
+static void cfg_upgrade_v9_to_v10(const DeviceCfgBlobV9 *old, DeviceCfgBlobV10 *cur)
+{
+    memcpy(cur, old, sizeof(*old));
+    cur->magic = CFG_MAGIC;
+    cur->version = CFG_VERSION_V10;
+    cfg_apply_hw_defaults(cur);
+    cfg_refresh_crc_v10(cur);
+}
+
+static int cfg_blob_v10_valid(const DeviceCfgBlobV10 *blob)
+{
+    DeviceCfgBlob tmp;
+
+    if (blob->magic != CFG_MAGIC) {
+        return 0;
+    }
+    if (blob->version != CFG_VERSION_V10) {
+        return 0;
+    }
+    if (blob->crc32 != cfg_calc_crc_v10(blob)) {
+        return 0;
+    }
+    memcpy(&tmp, blob, sizeof(*blob));
+    tmp.version = CFG_VERSION;
+    tmp.background_cpm = CFG_GEIGER_BACKGROUND_CPM_DEFAULT;
+    return cfg_geiger_fields_valid(&tmp);
+}
+
+static void cfg_upgrade_v10_to_v11(const DeviceCfgBlobV10 *old, DeviceCfgBlob *cur)
 {
     memcpy(cur, old, sizeof(*old));
     cur->magic = CFG_MAGIC;
     cur->version = CFG_VERSION;
-    cfg_apply_hw_defaults(cur);
+    cur->background_cpm = CFG_GEIGER_BACKGROUND_CPM_DEFAULT;
     cfg_refresh_crc(cur);
 }
 
@@ -845,6 +919,9 @@ static int cfg_geiger_fields_valid(const DeviceCfgBlob *blob)
         return 0;
     }
     if (blob->rate_limit_x100 == 0U) {
+        return 0;
+    }
+    if (blob->background_cpm > 10000U) {
         return 0;
     }
     return 1;
@@ -992,7 +1069,17 @@ static int cfg_blob_normalize(DeviceCfgBlob *blob)
         if (!cfg_blob_v9_valid(&v9)) {
             return 0;
         }
-        cfg_upgrade_v9_to_v10(&v9, blob);
+        cfg_upgrade_v9_to_v10(&v9, (DeviceCfgBlobV10 *)blob);
+        return 1;
+    }
+    if (blob->version == CFG_VERSION_V10) {
+        DeviceCfgBlobV10 v10;
+
+        memcpy(&v10, blob, sizeof(v10));
+        if (!cfg_blob_v10_valid(&v10)) {
+            return 0;
+        }
+        cfg_upgrade_v10_to_v11(&v10, blob);
         return 1;
     }
     return 0;
@@ -1159,6 +1246,7 @@ static void cfg_apply_geiger_runtime(void)
     ec.boost_duration = (int)s_cfg.ewma_boost_duration;
     (void)DoseRate_SetEwmaConfig(&ec);
     (void)DoseRate_SetRateLimitUsvh((float)s_cfg.rate_limit_x100 / 100.0f);
+    (void)DoseRate_SetBackgroundCpm(s_cfg.background_cpm);
 }
 
 static void cfg_apply_runtime(void)
@@ -1818,6 +1906,9 @@ int DeviceConfig_ReadRegBlock(uint16_t start_reg, uint16_t reg_count,
                              FSY_REG_EWMA_BOOST_DURATION, reg);
         } else if (reg_in_range(reg, FSY_REG_RATE_LIMIT, FSY_REG_GEIGER_PARAM_REGS)) {
             store_u32_reg_at(&out[i * 2U], s_cfg.rate_limit_x100, FSY_REG_RATE_LIMIT, reg);
+        } else if (reg_in_range(reg, FSY_REG_GEIGER_BACKGROUND_CPM, FSY_REG_GEIGER_PARAM_REGS)) {
+            store_u32_reg_at(&out[i * 2U], s_cfg.background_cpm,
+                             FSY_REG_GEIGER_BACKGROUND_CPM, reg);
         } else if (reg == FSY_REG_DHCP_ENABLE) {
             store_u16_le(&out[i * 2U], s_cfg.dhcp_enable);
         } else if (reg == FSY_REG_LANGUAGE) {
@@ -1949,6 +2040,15 @@ int DeviceConfig_WriteRegBlock(uint16_t start_reg, const uint8_t *data,
                          FSY_REG_RATE_LIMIT, FSY_REG_GEIGER_PARAM_REGS)) {
         int ret = write_u32_pair(start_reg, data, byte_count,
                                  FSY_REG_RATE_LIMIT, &s_cfg.rate_limit_x100);
+        if (ret == 0) {
+            cfg_apply_geiger_runtime();
+        }
+        return ret;
+    }
+    if (reg_range_inside(start_reg, (uint16_t)(byte_count / 2U),
+                         FSY_REG_GEIGER_BACKGROUND_CPM, FSY_REG_GEIGER_PARAM_REGS)) {
+        int ret = write_u32_pair(start_reg, data, byte_count,
+                                 FSY_REG_GEIGER_BACKGROUND_CPM, &s_cfg.background_cpm);
         if (ret == 0) {
             cfg_apply_geiger_runtime();
         }

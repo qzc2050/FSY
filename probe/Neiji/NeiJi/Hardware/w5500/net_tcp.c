@@ -77,9 +77,11 @@ static void net_tcp_recover_listen(uint8_t sock, uint16_t port)
 
 static void net_phy_link_maintain(void)
 {
-    uint8_t link_up = (getPHYCFGR() & LINK) ? 1u : 0u;
+    bool rising = false;
+    bool falling = false;
+    uint8_t link_up = W5500_PhyLink_DebouncedPoll(&rising, &falling);
 
-    if (link_up == s_phy_link_up) {
+    if (!rising && !falling) {
         return;
     }
 
@@ -90,9 +92,9 @@ static void net_phy_link_maintain(void)
         return;
     }
 
-    if (link_up) {
+    if (rising) {
         (void)net_tcp_listen(SETTING_SOCKET_NUM, SETTING_SOCKET_PORT, true);
-    } else {
+    } else if (falling) {
         close(SETTING_SOCKET_NUM);
     }
 }

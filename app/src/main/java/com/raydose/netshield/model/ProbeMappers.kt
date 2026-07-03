@@ -171,9 +171,10 @@ fun SavedProbe.mergeFromDiscovery(device: DiscoveredDevice): SavedProbe? {
     val merged = copy(
         id = normalizedId,
         serial = device.serial.trim().ifEmpty { serial },
-        ip = device.ip,
-        controlPort = device.controlPort,
-        dataPort = device.dataPort,
+        // 串口/CAN 发现无 IP：保留已保存的网口信息，避免「网口→CAN」时 IP 被清空
+        ip = device.ip.ifBlank { ip },
+        controlPort = device.controlPort.takeIf { it > 0 } ?: controlPort,
+        dataPort = device.dataPort.takeIf { it > 0 } ?: dataPort,
         model = device.model.ifBlank { model },
         protoAddr = device.protoAddr.ifBlank { protoAddr },
     )

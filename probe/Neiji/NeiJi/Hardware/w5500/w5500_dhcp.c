@@ -215,40 +215,84 @@ void W5500_DHCP_Init(void)
     g_dhcp_retry_cnt = 0;
 }
 
+static uint8_t s_phy_polled_this_loop = 0u;
+
+uint8_t W5500_PhyLink_DebouncedPoll(bool *rising, bool *falling)
+{
+    static uint8_t stable_up = 0u;
+    static uint8_t down_pending = 0u;
+    static uint32_t down_since_ms = 0u;
+    static uint8_t edge_up = 0u;
+    static uint8_t edge_down = 0u;
+    uint8_t raw_up;
+
+    if (!s_phy_polled_this_loop) {
+        uint32_t now = HAL_GetTick();
+
+        s_phy_polled_this_loop = 1u;
+        edge_up = 0u;
+        edge_down = 0u;
+        raw_up = ((getPHYCFGR() & LINK) != 0u) ? 1u : 0u;
+
+        if (raw_up) {
+            down_pending = 0u;
+            if (!stable_up) {
+                stable_up = 1u;
+                edge_up = 1u;
+            }
+        } else if (stable_up) {
+            if (!down_pending) {
+                down_pending = 1u;
+                down_since_ms = now;
+            } else if ((now - down_since_ms) >= PHY_LINK_DOWN_DEBOUNCE_MS) {
+                stable_up = 0u;
+                down_pending = 0u;
+                edge_down = 1u;
+            }
+        }
+    }
+
+    if (rising != NULL) {
+        *rising = (edge_up != 0u);
+    }
+    if (falling != NULL) {
+        *falling = (edge_down != 0u);
+    }
+    return stable_up;
+}
+
+void W5500_PhyLink_DebouncedLoopBegin(void)
+{
+    s_phy_polled_this_loop = 0u;
+}
+
 /********************************************************************************************
 * 函数名：DHCP_Check_Link_Status
 * 描  述：检查网络链路状态（支持链路断开后自动重连）
-* 注  意：链路恢复时会自动触发 DHCP 重新获取
+* 注  意：link down 需持续 PHY_LINK_DOWN_DEBOUNCE_MS 才认定；link up 仍立即处理
 ********************************************************************************************/
 static void DHCP_Check_Link_Status(void)
 {
-    uint8_t phy_status = getPHYCFGR();
-    static uint8_t last_link_status = 0;
-    uint8_t current_link = (phy_status & LINK) ? 1 : 0;
-    
-    /* 检测链路变化 */
-    if(current_link != last_link_status)
-    {
-        last_link_status = current_link;
-        
-        if(current_link)
+    bool link_up = false;
+    bool link_down = false;
+
+    (void)W5500_PhyLink_DebouncedPoll(&link_up, &link_down);
+
+    if (link_up) {
+        printf("[DHCP] link up, trigger DHCP\r\n");
+        g_dhcp_state = DHCP_STATE_INIT;
+        g_dhcp_retry_cnt = 0;
+        DHCP_Set_State(DHCP_INIT);
+        return;
+    }
+
+    if (link_down) {
+        printf("[DHCP] link down (debounced %ums)\r\n", (unsigned)PHY_LINK_DOWN_DEBOUNCE_MS);
         {
-            printf("[DHCP] link up, trigger DHCP\r\n");
-            /* 链路连接，重新获取 DHCP */
-            g_dhcp_state = DHCP_STATE_INIT;
-            g_dhcp_retry_cnt = 0;
-            /* 重置内部 DHCP 状态机，确保同步 */
-            DHCP_Set_State(DHCP_INIT);
-        }
-        else
-        {
-            printf("[DHCP] link down\r\n");
-            /* 链路断开，清除 IP 并等待链路恢复 */
             uint8_t zero_ip[4] = {0, 0, 0, 0};
             setSIPR(zero_ip);
-            /* 设置为超时状态，暂停 DHCP 请求 */
-            g_dhcp_state = DHCP_STATE_TIMEOUT;
         }
+        g_dhcp_state = DHCP_STATE_TIMEOUT;
     }
 }
 

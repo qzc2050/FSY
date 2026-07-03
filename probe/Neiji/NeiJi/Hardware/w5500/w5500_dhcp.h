@@ -39,6 +39,9 @@ W5500 技术交流 QQ 群：722479032
 #define DHCP_WDG_FIRST_WAIT_MS      (10000U)
 #define DHCP_WDG_PERIOD_MS          (10000U)
 
+/** PHY link down 防抖：连续低于此时间才认定断链（netTask ~2ms 轮询） */
+#define PHY_LINK_DOWN_DEBOUNCE_MS   (500U)
+
 /* DHCP 状态机 */
 typedef enum
 {
@@ -91,6 +94,19 @@ void DHCP_Watchdog_Task(void);
  * @brief  W5500 是否正在执行网络硬复位/重初始化
  */
 bool W5500_Is_Network_Recovering(void);
+
+/**
+ * @brief  新一轮 netTask 循环开始前调用，使本轮内 DHCP/TCP 共用一次 PHY 采样
+ */
+void W5500_PhyLink_DebouncedLoopBegin(void);
+
+/**
+ * @brief  读 PHY 链路并做 link-down 防抖；每轮 netTask 调用一次
+ * @param  rising  可选，防抖后 link up 上升沿
+ * @param  falling 可选，防抖后 link down 下降沿
+ * @retval 1=防抖后链路 up，0=down
+ */
+uint8_t W5500_PhyLink_DebouncedPoll(bool *rising, bool *falling);
 
 /**
  * @brief  获取当前 IP 地址

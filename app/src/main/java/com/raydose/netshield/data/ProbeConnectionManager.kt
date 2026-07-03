@@ -5,6 +5,7 @@ import android.net.Network
 import android.util.Log
 import com.raydose.netshield.model.DiscoveredDevice
 import com.raydose.netshield.model.NeijiProbeRegs
+import com.raydose.netshield.model.ProbeCommandLink
 import com.raydose.netshield.model.SavedProbe
 import com.raydose.netshield.model.matchesSaved
 import com.raydose.netshield.net.FsyBroadcast
@@ -17,6 +18,7 @@ import com.raydose.netshield.net.findRoutesToHost
 import com.raydose.netshield.net.listFsyNetworkOptions
 import com.raydose.netshield.net.parseFsyBroadcast
 import com.raydose.netshield.net.parseFsyTcpFrame
+import com.raydose.netshield.net.ParsedFsyFrame
 import com.raydose.netshield.net.pickBestRoute
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
@@ -31,6 +33,9 @@ import kotlin.concurrent.thread
  */
 class ProbeConnectionManager(
     context: Context,
+    private val linkRouter: ProbeLinkRouter,
+    private val serialSender: ((ByteArray) -> Unit)? = null,
+    private val isTelemetryOnline: (probeId: String) -> Boolean = { false },
     private val onDiscoveredRaw: (String) -> Unit,
     private val onTcpFrame: (probeId: String, frame: com.raydose.netshield.net.ParsedFsyFrame) -> Unit,
     private val onProbeOnlineChanged: (probeId: String, online: Boolean) -> Unit,
@@ -48,7 +53,8 @@ class ProbeConnectionManager(
     private val lastConnectAttemptMs = ConcurrentHashMap<String, Long>()
     private val connectLocks = ConcurrentHashMap<String, Any>()
     private val frameStatsByProbe = ConcurrentHashMap<String, TcpFrameStats>()
-    private val lastRx23RealtimeMs = ConcurrentHashMap<String, Long>()
+    /** 任意 0x23（实时/阈值/5min/其它）收到时刷新，用于僵死连接判定 */
+    private val lastRx23Ms = ConcurrentHashMap<String, Long>()
     private val tcpConnectedAtMs = ConcurrentHashMap<String, Long>()
     /** 组播发现日志去重：同一设备 60s 内只打一条 */
     private val lastDiscoveryLogMs = ConcurrentHashMap<String, Long>()
@@ -141,9 +147,38 @@ class ProbeConnectionManager(
 
     /**
      * 进入探头管理时按需读取（Neiji reg 50/52/82/122/123）。
-     * 应答经 [onTcpFrame] 回调，由 ViewModel 合并到草稿。
+     * 应答经 [onTcpFrame] 或串口 [onProbeFrame] 回调，由 ViewModel 合并到草稿。
+     * 读请求走该探头最后一条实时 0x23 的来源通道。
      */
     fun fetchManageConfig(probe: SavedProbe) {
+        when (linkRouter.routeFor(probe.id)) {
+            ProbeCommandLink.SERIAL -> fetchManageConfigSerial(probe)
+            ProbeCommandLink.NETWORK -> fetchManageConfigTcp(probe)
+            null -> when {
+                probe.ip.isBlank() && isTelemetryOnline(probe.id) ->
+                    fetchManageConfigSerial(probe)
+                isTcpOnline(probe.id) ->
+                    fetchManageConfigTcp(probe)
+                isTelemetryOnline(probe.id) ->
+                    fetchManageConfigSerial(probe)
+                else ->
+                    Log.i(TAG, "跳过读配置 ${probe.displayName}：尚无 0x23 路由")
+            }
+        }
+    }
+
+    private fun manageConfigReadFrames(probe: SavedProbe): List<ByteArray> {
+        val addr = probe.modbusDeviceAddr()
+        return listOf(
+            buildReadRegsFrame(NeijiProbeRegs.DOSE_HI_TH, NeijiProbeRegs.U32_REG_COUNT, addr),
+            buildReadRegsFrame(NeijiProbeRegs.DOSE_LO_TH, NeijiProbeRegs.U32_REG_COUNT, addr),
+            buildReadRegsFrame(NeijiProbeRegs.ALARM_ENABLE, NeijiProbeRegs.U32_REG_COUNT, addr),
+            buildReadRegsFrame(NeijiProbeRegs.ALARM_VOLUME, 1, addr),
+            buildReadRegsFrame(NeijiProbeRegs.CONTROL_BIT2, NeijiProbeRegs.U32_REG_COUNT, addr),
+        )
+    }
+
+    private fun fetchManageConfigTcp(probe: SavedProbe) {
         if (!isProbeOnline(probe.id)) {
             Log.i(TAG, "跳过读配置 ${probe.displayName}：TCP 未在线")
             return
@@ -153,15 +188,8 @@ class ProbeConnectionManager(
             Log.w(TAG, "跳过读配置 ${probe.displayName}：无 TCP 客户端")
             return
         }
-        val addr = probe.modbusDeviceAddr()
-        val reads = listOf(
-            buildReadRegsFrame(NeijiProbeRegs.DOSE_HI_TH, NeijiProbeRegs.U32_REG_COUNT, addr),
-            buildReadRegsFrame(NeijiProbeRegs.DOSE_LO_TH, NeijiProbeRegs.U32_REG_COUNT, addr),
-            buildReadRegsFrame(NeijiProbeRegs.ALARM_ENABLE, NeijiProbeRegs.U32_REG_COUNT, addr),
-            buildReadRegsFrame(NeijiProbeRegs.ALARM_VOLUME, 1, addr),
-            buildReadRegsFrame(NeijiProbeRegs.CONTROL_BIT2, NeijiProbeRegs.U32_REG_COUNT, addr),
-        )
-        thread(name = "fsy-fetch-cfg-${probe.id}") {
+        val reads = manageConfigReadFrames(probe)
+        thread(name = "fsy-fetch-cfg-tcp-${probe.id}") {
             reads.forEach { frame ->
                 if (!isProbeOnline(probe.id)) return@thread
                 client.send(frame)
@@ -171,15 +199,74 @@ class ProbeConnectionManager(
                     return@thread
                 }
             }
-            Log.i(TAG, "已请求 ${probe.displayName} 配置 reg50/52/82/122/123")
+            Log.i(TAG, "已请求(TCP) ${probe.displayName} 配置 reg50/52/82/122/123")
+            onLog("已请求 ${probe.displayName} 配置 reg50/52/82/122/123")
+        }
+    }
+
+    private fun fetchManageConfigSerial(probe: SavedProbe) {
+        val sender = serialSender
+        if (sender == null) {
+            Log.w(TAG, "跳过读配置 ${probe.displayName}：串口未就绪")
+            return
+        }
+        if (!isTelemetryOnline(probe.id)) {
+            Log.i(TAG, "跳过读配置 ${probe.displayName}：串口路径无近期 0x23")
+            return
+        }
+        val reads = manageConfigReadFrames(probe)
+        thread(name = "fsy-fetch-cfg-serial-${probe.id}") {
+            reads.forEach { frame ->
+                if (!isTelemetryOnline(probe.id)) return@thread
+                sender(frame)
+                try {
+                    Thread.sleep(CONFIG_READ_GAP_MS)
+                } catch (_: InterruptedException) {
+                    return@thread
+                }
+            }
+            Log.i(TAG, "已请求(串口) ${probe.displayName} 配置 reg50/52/82/122/123")
             onLog("已请求 ${probe.displayName} 配置 reg50/52/82/122/123")
         }
     }
 
     fun sendFrames(probeId: String, frames: List<ByteArray>) {
+        if (frames.isEmpty()) return
+        when (linkRouter.routeFor(probeId)) {
+            ProbeCommandLink.SERIAL -> sendFramesSerial(probeId, frames)
+            ProbeCommandLink.NETWORK -> sendFramesTcp(probeId, frames)
+            null -> Log.i(TAG, "跳过写入 probe=$probeId：尚无 0x23 路由")
+        }
+    }
+
+    private fun sendFramesSerial(probeId: String, frames: List<ByteArray>) {
+        val sender = serialSender
+        if (sender == null) {
+            Log.w(TAG, "跳过串口写入 probe=$probeId：串口未就绪")
+            return
+        }
+        if (!isTelemetryOnline(probeId)) {
+            Log.i(TAG, "跳过串口写入 probe=$probeId：无近期 0x23")
+            return
+        }
+        thread(name = "fsy-write-serial-$probeId") {
+            frames.forEach { frame ->
+                if (!isTelemetryOnline(probeId)) return@thread
+                sender(frame)
+                try {
+                    Thread.sleep(CONFIG_READ_GAP_MS)
+                } catch (_: InterruptedException) {
+                    return@thread
+                }
+            }
+            Log.d(TAG, "串口写入完成 probe=$probeId frames=${frames.size}")
+        }
+    }
+
+    private fun sendFramesTcp(probeId: String, frames: List<ByteArray>) {
         if (!isProbeOnline(probeId)) return
         val client = clients[probeId] ?: return
-        thread(name = "fsy-write-cfg-$probeId") {
+        thread(name = "fsy-write-tcp-$probeId") {
             frames.forEach { frame ->
                 if (!isProbeOnline(probeId)) return@thread
                 client.send(frame)
@@ -189,6 +276,7 @@ class ProbeConnectionManager(
                     return@thread
                 }
             }
+            Log.d(TAG, "TCP 写入完成 probe=$probeId frames=${frames.size}")
         }
     }
 
@@ -214,6 +302,8 @@ class ProbeConnectionManager(
 
     private fun isProbeOnline(probeId: String): Boolean = probeOnline[probeId] == true
 
+    fun isTcpOnline(probeId: String): Boolean = isProbeOnline(probeId)
+
     private fun setProbeOnline(probeId: String, online: Boolean) {
         val was = probeOnline[probeId]
         probeOnline[probeId] = online
@@ -238,6 +328,10 @@ class ProbeConnectionManager(
 
     private fun connectOnWorker(probe: SavedProbe, generation: Int) {
         if (isStaleConnect(probe.id, generation)) return
+        if (probe.ip.isBlank()) {
+            Log.i(TAG, "跳过 TCP 连接 ${probe.displayName}：无 IP（串口/CAN 探头）")
+            return
+        }
         closeClientOnly(probe.id)
         if (isStaleConnect(probe.id, generation)) return
 
@@ -253,8 +347,10 @@ class ProbeConnectionManager(
                     val parsed = parseFsyTcpFrame(frame)
                     if (parsed == null) {
                         statsForProbe(probe.id).parseFail.incrementAndGet()
+                        logTcpRxParseFail(probe, frame)
                         return@forEach
                     }
+                    logTcpRxFrame(probe, frame, parsed)
                     recordFrameStats(probe.id, parsed)
                     onTcpFrame(probe.id, parsed)
                 }
@@ -304,7 +400,7 @@ class ProbeConnectionManager(
         if (ok) {
             val now = System.currentTimeMillis()
             tcpConnectedAtMs[probe.id] = now
-            lastRx23RealtimeMs[probe.id] = now
+            lastRx23Ms[probe.id] = now
             setProbeOnline(probe.id, true)
             Log.i(TAG, "TCP 已连接 ${probe.displayName} ${probe.ip}:${probe.controlPort}")
         } else {
@@ -339,11 +435,11 @@ class ProbeConnectionManager(
         val now = System.currentTimeMillis()
         val online = isProbeOnline(probe.id)
         if (online) {
-            val lastRx = lastRx23RealtimeMs[probe.id] ?: tcpConnectedAtMs[probe.id] ?: return
+            val lastRx = lastRx23Ms[probe.id] ?: tcpConnectedAtMs[probe.id] ?: return
             if (now - lastRx < DISCOVERY_STALE_RECONNECT_MS) return
             Log.i(
                 TAG,
-                "组播活跃但 ${now - lastRx}ms 无 0x23，疑内机重启/僵死连接，重连 ${probe.displayName}",
+                "组播活跃但 ${now - lastRx}ms 无 0x23，软重连 ${probe.displayName}（不断开 UI）",
             )
         } else {
             val lastDiscovery = lastDiscoveryReconnectMs[probe.id] ?: 0L
@@ -356,9 +452,15 @@ class ProbeConnectionManager(
         lastDiscoveryReconnectMs[probe.id] = now
         resetRetryDelay(probe.id)
         if (online) {
-            closeClientOnly(probe.id)
-            setProbeOnline(probe.id, false)
+            reconnectTcpSoft(probe)
+        } else {
+            scheduleConnect(probe)
         }
+    }
+
+    /** 在线态 TCP 僵死/超时：重建连接但保持 UI 在线，避免剂量闪 --- */
+    private fun reconnectTcpSoft(probe: SavedProbe) {
+        closeClientOnly(probe.id)
         scheduleConnect(probe)
     }
 
@@ -444,25 +546,50 @@ class ProbeConnectionManager(
         clients.remove(probeId)?.close()
         collectors.remove(probeId)
         frameStatsByProbe.remove(probeId)
-        lastRx23RealtimeMs.remove(probeId)
+        lastRx23Ms.remove(probeId)
         tcpConnectedAtMs.remove(probeId)
     }
 
     private fun statsForProbe(probeId: String): TcpFrameStats =
         frameStatsByProbe.getOrPut(probeId) { TcpFrameStats() }
 
+    private fun logTcpRxFrame(probe: SavedProbe, raw: ByteArray, parsed: ParsedFsyFrame) {
+        val crcTag = if (parsed.crcOk) "OK" else "BAD"
+        Log.d(
+            TAG,
+            "[TCP RX] ${probe.displayName}@${probe.ip} len=${raw.size} " +
+                "addr=0x${parsed.addr.toString(16)} func=0x${parsed.func.toString(16).uppercase()} " +
+                "crc=$crcTag | ${parsed.summary} | hex=${formatBytesHex(raw)}",
+        )
+    }
+
+    private fun logTcpRxParseFail(probe: SavedProbe, raw: ByteArray) {
+        Log.w(
+            TAG,
+            "[TCP RX] ${probe.displayName}@${probe.ip} 解析失败 len=${raw.size} hex=${formatBytesHex(raw)}",
+        )
+    }
+
+    private fun formatBytesHex(data: ByteArray, maxBytes: Int = 64): String {
+        val n = minOf(data.size, maxBytes)
+        val hex = data.take(n).joinToString(" ") { "%02X".format(it.toUByte().toInt()) }
+        return if (data.size > maxBytes) "$hex ...(+${data.size - maxBytes})" else hex
+    }
+
     private fun recordFrameStats(probeId: String, parsed: com.raydose.netshield.net.ParsedFsyFrame) {
         val stats = statsForProbe(probeId)
         when (parsed.func) {
-            0x23 -> when {
-                parsed.uploadValues != null && parsed.uploadValues.size >= 8 -> {
-                    stats.rx23Realtime.incrementAndGet()
-                    stats.lastDoseX100.set(parsed.uploadValues[0])
-                    lastRx23RealtimeMs[probeId] = System.currentTimeMillis()
+            0x23 -> {
+                when {
+                    parsed.uploadValues != null && parsed.uploadValues.size >= 8 -> {
+                        stats.rx23Realtime.incrementAndGet()
+                        stats.lastDoseX100.set(parsed.uploadValues[0])
+                    }
+                    parsed.thresholdValues != null -> stats.rx23Threshold.incrementAndGet()
+                    parsed.fiveMinUpload != null -> stats.rx23FiveMin.incrementAndGet()
+                    else -> stats.rx23Other.incrementAndGet()
                 }
-                parsed.thresholdValues != null -> stats.rx23Threshold.incrementAndGet()
-                parsed.fiveMinUpload != null -> stats.rx23FiveMin.incrementAndGet()
-                else -> stats.rx23Other.incrementAndGet()
+                lastRx23Ms[probeId] = System.currentTimeMillis()
             }
             0x13 -> stats.rx13.incrementAndGet()
             else -> stats.rxOther.incrementAndGet()
@@ -484,19 +611,19 @@ class ProbeConnectionManager(
         }
     }
 
-    /** TCP 仍标记在线但长时间无 0x23 实时帧 → 视为僵死连接并重连 */
+    /** TCP 仍标记在线但长时间无任何 0x23 → 视为僵死连接并重连 */
     private fun checkTelemetryStale(probe: SavedProbe) {
         if (clients[probe.id] == null) return
         val now = System.currentTimeMillis()
-        val lastRx = lastRx23RealtimeMs[probe.id]
+        val lastRx = lastRx23Ms[probe.id]
             ?: tcpConnectedAtMs[probe.id]
             ?: return
         if (now - lastRx < TELEMETRY_STALE_MS) return
         Log.w(
             TAG,
-            "0x23 超时 ${now - lastRx}ms 无实时帧，重连 ${probe.displayName}@${probe.ip}",
+            "0x23 超时 ${now - lastRx}ms 无 0x23，软重连 ${probe.displayName}@${probe.ip}",
         )
-        handleConnectionLost(probe, "0x23 超时未收到")
+        reconnectTcpSoft(probe)
     }
 
     /** 每 10s 汇总上一窗口内各探头收到的 0x23/0x13 等帧数，便于排查卡片读数不刷新 */
@@ -518,7 +645,7 @@ class ProbeConnectionManager(
             val rx23Total = rx23Realtime + rx23Threshold + rx23FiveMin + rx23Other
             val doseX100 = stats?.lastDoseX100?.get() ?: -1L
             val doseText = if (doseX100 >= 0) "%.2f uSv/h".format(doseX100 / 100.0) else "—"
-            val lastRx = lastRx23RealtimeMs[probe.id]
+            val lastRx = lastRx23Ms[probe.id]
             val staleSec = if (online && lastRx != null) {
                 ((System.currentTimeMillis() - lastRx) / 1000L).coerceAtLeast(0L)
             } else {
@@ -561,15 +688,15 @@ class ProbeConnectionManager(
         private const val BOOTING_RETRY_MS = 10_000L
         private const val MAX_RETRY_MS = 30_000L
         private const val DISCOVERY_RECONNECT_DEBOUNCE_MS = 4_000L
-        /** 仍标记在线但超过此间隔无 0x23，组播再次出现时主动重连（内机重启常见） */
-        private const val DISCOVERY_STALE_RECONNECT_MS = 8_000L
+        /** 仍标记在线但超过此间隔无 0x23，组播再次出现时软重连（DHCP 续租常暂停 TCP ~10s） */
+        private const val DISCOVERY_STALE_RECONNECT_MS = 20_000L
         private const val CONNECT_COOLDOWN_MS = 5_000L
         private const val WATCHDOG_INTERVAL_MS = 20_000L
         private const val WATCHDOG_MIN_GAP_MS = 18_000L
         private const val CONFIG_READ_GAP_MS = 100L
         private const val FRAME_STATS_INTERVAL_MS = 10_000L
         private const val DISCOVERY_LOG_DEBOUNCE_MS = 60_000L
-        /** 内机约 1s 一帧 0x23；超过此间隔无实时帧则重连 */
+        /** 内机约 1s 一帧 0x23；超过此间隔无任何 0x23 则重连 */
         private const val TELEMETRY_STALE_MS = 25_000L
     }
 }

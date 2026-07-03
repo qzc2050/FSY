@@ -4,6 +4,7 @@ import android.util.Log
 import com.raydose.netshield.model.HostAdapterSnapshot
 import com.raydose.netshield.model.parseHostAdapterUpload
 import com.raydose.netshield.net.FsySerialFrameCollector
+import com.raydose.netshield.net.ParsedFsyFrame
 import com.raydose.netshield.net.buildReadRegsFrame
 import com.raydose.netshield.net.parseFsyTcpFrame
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -19,6 +20,7 @@ class HostEnvSerialRepository(
     private val devicePath: String = DEFAULT_DEVICE_PATH,
     private val baudRate: Int = DEFAULT_BAUD_RATE,
     private val deviceAddr: Int = HOST_ADAPTER_ADDR,
+    private val onProbeFrame: ((ParsedFsyFrame) -> Unit)? = null,
 ) {
     private val _snapshot = MutableStateFlow(HostAdapterSnapshot.empty())
     val snapshot: StateFlow<HostAdapterSnapshot> = _snapshot.asStateFlow()
@@ -68,6 +70,11 @@ class HostEnvSerialRepository(
         client?.send(frame)
     }
 
+    /** 向 zjb 串口发送原始 Modbus 帧（非 0xEF 地址由转接板转发至 CAN/探头）。 */
+    fun sendRaw(data: ByteArray) {
+        client?.send(data)
+    }
+
     private fun startPollLoop() {
         pollThread = Thread {
             while (running) {
@@ -93,14 +100,19 @@ class HostEnvSerialRepository(
         val frames = frameCollector.feed(chunk)
         for (frame in frames) {
             val parsed = parseFsyTcpFrame(frame) ?: continue
-            if (parsed.addr != deviceAddr) continue
             if (!parsed.crcOk) {
-                Log.w(TAG, "CRC 错误: ${parsed.summary}")
+                Log.w(TAG, "CRC 错误 addr=0x${parsed.addr.toString(16)}: ${parsed.summary}")
                 continue
             }
-            when (parsed.func) {
-                0x23 -> parsed.uploadValues?.let(::applyUploadValues)
-                0x13 -> parsed.uploadValues?.let(::applyUploadValues)
+            if (parsed.addr == deviceAddr) {
+                when (parsed.func) {
+                    0x23 -> parsed.uploadValues?.let(::applyUploadValues)
+                    0x13 -> parsed.uploadValues?.let(::applyUploadValues)
+                }
+                continue
+            }
+            if (parsed.addr in 0x01..0xFE) {
+                onProbeFrame?.invoke(parsed)
             }
         }
     }
