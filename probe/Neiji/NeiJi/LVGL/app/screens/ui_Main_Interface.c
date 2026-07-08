@@ -14,14 +14,11 @@
 #include "beep.h"
 #include "sensor_task.h"
 #include "main.h"
-#include "tim.h"
 #include "lcd_rgb.h"
 #include "../ui_alarm_status.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-
-extern TIM_HandleTypeDef htim12;
 
 /* ---- guard: sidebar CLICKED bleed after open menu; skip next OK after enter subgroup ---- */
 static uint8_t ui_sidebar_guard_cnt;
@@ -32,13 +29,6 @@ static bool ui_language_skip_next_ok;
 static void neiji_modify_bright(float bright)
 {
     LcdBacklight_SetPercent(bright);
-}
-
-static void neiji_modify_volume(float volume)
-{
-    if (volume >= 0.0f && volume <= 100.0f) {
-        __HAL_TIM_SET_COMPARE(&htim12, TIM_CHANNEL_2, volume * 1000.0f / 100.0f);
-    }
 }
 
 static void neiji_style_sensor_panel(lv_obj_t *panel)
@@ -1001,7 +991,6 @@ static void neiji_event_slider_volume(lv_event_t *e)
         int32_t v = lv_slider_get_value(ui_Slider_volume);
         lv_label_set_text_fmt(ui_set_alarm_volume, "%" LV_PRId32 " %%", v);
         sys_cfg.alarm_volume = (uint8_t)v;
-        neiji_modify_volume((float)v);
         Beep_Ctr(BEEP_EVENT_SETTING);
     } else if (code == LV_EVENT_KEY && lv_event_get_key(e) == LV_KEY_ESC) {
         int32_t v = lv_slider_get_value(ui_Slider_volume);
@@ -1015,7 +1004,7 @@ static void neiji_event_slider_volume(lv_event_t *e)
             sys_cfg.alarm_sound = 1U;
             (void)DeviceConfig_SetAlarmSound(1U);
         }
-        neiji_modify_volume((float)v);
+        Beep_Ctr(BEEP_EVENT_CLR);
         buf[0] = (uint8_t)(v & 0xFF);
         buf[1] = 0U;
         DeviceConfig_WriteRegBlock(FSY_REG_ALARM_VOLUME, buf, 2);
@@ -1224,7 +1213,6 @@ void ui_main_bind_settings(void)
         neiji_format_dose_threshold_label(ui_low_threshold, lo);
 
     neiji_modify_bright(sys_cfg.bright_sz);
-    neiji_modify_volume((float)vol);
     neiji_bind_about_info();
 }
 

@@ -173,8 +173,6 @@ class FsyTcpClient(
 
             s.connect(InetSocketAddress(host, port), timeoutMs)
             socket = s
-            running = true
-            startReader(s)
             return ConnectResult(true, null)
         } catch (e: Exception) {
             try {
@@ -190,29 +188,45 @@ class FsyTcpClient(
         }
     }
 
+    /** 在连接成功且调用方确认仍有效后再启动读线程，避免被 supersede 的连接启动 reader 后崩溃。 */
+    fun beginReading() {
+        val s = socket ?: return
+        if (running) return
+        running = true
+        startReader(s)
+    }
+
     private fun startReader(s: Socket) {
         thread(name = "fsy-tcp-read", isDaemon = true) {
-            val input = s.getInputStream()
-            val buf = ByteArray(4096)
-            while (running) {
-                try {
-                    val n = input.read(buf)
-                    if (n < 0) {
+            try {
+                if (!running) return@thread
+                val input = s.getInputStream()
+                val buf = ByteArray(4096)
+                while (running) {
+                    try {
+                        val n = input.read(buf)
+                        if (n < 0) {
+                            if (running) {
+                                clearSocketLocked()
+                                onRemoteDisconnected()
+                            }
+                            break
+                        }
+                        if (n > 0) {
+                            onReceive(buf.copyOf(n))
+                        }
+                    } catch (e: Exception) {
                         if (running) {
                             clearSocketLocked()
-                            onRemoteDisconnected()
+                            onError(e.message ?: "TCP 读失败")
                         }
                         break
                     }
-                    if (n > 0) {
-                        onReceive(buf.copyOf(n))
-                    }
-                } catch (e: Exception) {
-                    if (running) {
-                        clearSocketLocked()
-                        onError(e.message ?: "TCP 读失败")
-                    }
-                    break
+                }
+            } catch (e: Exception) {
+                if (running) {
+                    clearSocketLocked()
+                    onError(e.message ?: "TCP 读失败")
                 }
             }
         }

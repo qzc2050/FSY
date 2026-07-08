@@ -2,6 +2,7 @@
 #include "geiger.h"
 #include "uart_diag.h"
 #include "main.h"
+#include "tim.h"
 
 #include <stdio.h>
 
@@ -12,52 +13,60 @@
 #define BEEP_PWM_GPIO_Port  GPIOH
 #endif
 
+#define BEEP_PWM_PERIOD     1000U
+
 uint8_t beep_event = BEEP_EVENT_NULL;
 
-static void beep_gpio_init(void)
+static void beep_pwm_ensure(void)
 {
-    GPIO_InitTypeDef gpio = {0};
-
-    __HAL_RCC_GPIOH_CLK_ENABLE();
-    gpio.Pin = BEEP_PWM_Pin;
-    gpio.Mode = GPIO_MODE_OUTPUT_PP;
-    gpio.Pull = GPIO_NOPULL;
-    gpio.Speed = GPIO_SPEED_FREQ_LOW;
-    HAL_GPIO_Init(BEEP_PWM_GPIO_Port, &gpio);
+    (void)HAL_TIM_PWM_Start(&htim12, TIM_CHANNEL_2);
 }
 
-static void beep_log_pin_hw(const char *tag)
+void Beep_SetVolumePercent(float volume)
+{
+    uint32_t compare = 0U;
+
+    beep_pwm_ensure();
+    if (volume > 0.0f) {
+        if (volume > 100.0f) {
+            volume = 100.0f;
+        }
+        /* 无源蜂鸣器：占空比>50% 接近直流反而变小，UI 0~100% 映射到 0~50% */
+        compare = (uint32_t)(volume * (float)BEEP_PWM_PERIOD / 200.0f);
+    }
+    __HAL_TIM_SET_COMPARE(&htim12, TIM_CHANNEL_2, compare);
+}
+
+static void beep_log_pwm(const char *tag)
 {
     char msg[96];
-    uint32_t moder;
-    uint32_t odr;
 
-    moder = (BEEP_PWM_GPIO_Port->MODER >> (9U * 2U)) & 0x3U;
-    odr = (BEEP_PWM_GPIO_Port->ODR >> 9U) & 0x1U;
     (void)snprintf(msg, sizeof(msg),
-                   "[BEEP] %s PH9 moder=%lu odr=%lu (1=out 0=%s)\r\n",
+                   "[BEEP] %s PH9 TIM12 CH2 CCR=%lu\r\n",
                    tag,
-                   (unsigned long)moder,
-                   (unsigned long)odr,
-                   (odr != 0U) ? "HI" : "LO");
+                   (unsigned long)__HAL_TIM_GET_COMPARE(&htim12, TIM_CHANNEL_2));
     UartDiag_Write(msg);
 }
 
 void Beep_PinEnsure(void)
 {
-    beep_gpio_init();
+    beep_pwm_ensure();
+    Beep_SetVolumePercent(0.0f);
 }
 
 void Beep_On(void)
 {
-    beep_gpio_init();
-    HAL_GPIO_WritePin(BEEP_PWM_GPIO_Port, BEEP_PWM_Pin, GPIO_PIN_SET);
+    beep_pwm_ensure();
+    Beep_SetVolumePercent((float)sys_cfg.alarm_volume);
 }
 
 void Beep_Off(void)
 {
-    beep_gpio_init();
-    HAL_GPIO_WritePin(BEEP_PWM_GPIO_Port, BEEP_PWM_Pin, GPIO_PIN_RESET);
+#if (NEIJI_BEEP_GPIO_HIGH_TEST != 0U)
+    return;
+#endif
+    beep_pwm_ensure();
+    Beep_SetVolumePercent(0.0f);
 }
 
 static bool Beep_Alternate(uint16_t time, uint8_t cnt, bool ref)
@@ -96,6 +105,10 @@ static bool Beep_Alternate(uint16_t time, uint8_t cnt, bool ref)
 
 void Beep_Ctr(uint8_t req_event)
 {
+#if (NEIJI_BEEP_GPIO_HIGH_TEST != 0U)
+    (void)req_event;
+    return;
+#endif
     bool ref = false;
 
     if (req_event > beep_event) {
@@ -132,22 +145,30 @@ void Beep_Ctr(uint8_t req_event)
     }
 }
 
+void Beep_GpioHighTestHold(void)
+{
+    Beep_PinEnsure();
+    Beep_SetVolumePercent(100.0f);
+    beep_log_pwm("pwm-hi-hold");
+    UartDiag_Write("[BEEP] PH9 PWM 100% hold (Q3 ON, need VCC_5V)\r\n");
+}
+
 void Beep_DebugProbe(void)
 {
     char msg[96];
 
     Beep_PinEnsure();
-    beep_log_pin_hw("init");
+    beep_log_pwm("init");
 
     (void)snprintf(msg, sizeof(msg),
-                   "[BEEP] cfg sound=%u vol=%u (GPIO drive, HYG-1203A)\r\n",
+                   "[BEEP] cfg sound=%u vol=%u (TIM12 CH2 PWM ~4kHz passive)\r\n",
                    (unsigned)sys_cfg.alarm_sound,
                    (unsigned)sys_cfg.alarm_volume);
     UartDiag_Write(msg);
 
-    UartDiag_Write("[BEEP] GPIO HIGH 2s (Q3 ON, need VCC_5V) ...\r\n");
+    UartDiag_Write("[BEEP] PWM vol 2s (Q3 ON, need VCC_5V) ...\r\n");
     Beep_On();
     HAL_Delay(2000U);
     Beep_Off();
-    beep_log_pin_hw("done");
+    beep_log_pwm("done");
 }

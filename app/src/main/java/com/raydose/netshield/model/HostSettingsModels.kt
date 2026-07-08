@@ -71,12 +71,14 @@ data class SlaveNetworkCard(
     val wifiPassword: String = NetworkWifiDefaults.SLAVE_WIFI_PASSWORD,
 )
 
-/** 设置 · 时间（仅主页显示样式；同步到设备使用本机当前时间） */
+/** 设置 · 时间（显示样式 + 自动同步到探头；手动/自动同步均使用本机当前时间） */
 data class TimeSettings(
     val use24Hour: Boolean = true,
     val showLunar: Boolean = true,
     val showGregorian: Boolean = true,
     val showHoliday: Boolean = false,
+    /** 自动向在线探头写入 reg94；默认开启，间隔见 [PROBE_AUTO_SYNC_INTERVAL_MS] */
+    val autoSyncToProbe: Boolean = true,
 )
 
 /** 电子相册：图片与留言展示设置。 */
@@ -100,4 +102,10 @@ data class AlbumMessage(
     val id: Long,
     val text: String,
     val createdAtMillis: Long,
+)
+
+/** 每探头自动时间同步状态（持久化） */
+data class ProbeTimeSyncState(
+    val lastAutoSyncMillis: Long = 0L,
+    val lastOfflineMillis: Long = 0L,
 )

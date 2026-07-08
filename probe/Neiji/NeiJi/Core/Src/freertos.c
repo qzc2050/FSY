@@ -27,6 +27,7 @@
 /* USER CODE BEGIN Includes */
 #include "app_tasks.h"
 #include "uart_diag.h"
+#include <stdio.h>
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -127,6 +128,18 @@ void StartDefaultTask(void *argument)
 
 /* Private application code --------------------------------------------------*/
 /* USER CODE BEGIN Application */
+
+void vApplicationStackOverflowHook(TaskHandle_t xTask, char *pcTaskName)
+{
+    char msg[64];
+
+    (void)xTask;
+    (void)snprintf(msg, sizeof(msg), "[RTOS] stack overflow: %s\r\n",
+                   (pcTaskName != NULL) ? pcTaskName : "?");
+    UartDiag_Write(msg);
+    for (;;) {
+    }
+}
 
 /* USER CODE END Application */
 

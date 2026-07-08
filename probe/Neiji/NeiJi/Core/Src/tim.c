@@ -243,7 +243,8 @@ void MX_TIM12_Init(void)
     HAL_GPIO_Init(GPIOH, &GPIO_InitStruct);
 
     htim12.Instance = TIM12;
-    htim12.Init.Prescaler = 11;
+    /* TIM12 @240MHz: PSC=59 ARR=1000 -> ~4kHz (CH2 无源蜂鸣; CH1 背光同频) */
+    htim12.Init.Prescaler = 59;
     htim12.Init.CounterMode = TIM_COUNTERMODE_UP;
     htim12.Init.Period = 1000;
     htim12.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;

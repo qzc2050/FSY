@@ -64,6 +64,15 @@ fun TimeSettingsPanel(
             }
         }
         SettingsSwitchRow(
+            label = "自动同步到探头",
+            checked = settings.autoSyncToProbe,
+            onCheckedChange = { onChange(settings.copy(autoSyncToProbe = it)) },
+            labelFontSize = TimeLabelSp,
+            labelWidth = TimeLabelWidth,
+            labelSingleLine = true,
+            enlargedSwitch = true,
+        )
+        SettingsSwitchRow(
             label = "24 小时制",
             checked = settings.use24Hour,
             onCheckedChange = { onChange(settings.copy(use24Hour = it)) },

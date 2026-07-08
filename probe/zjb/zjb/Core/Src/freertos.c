@@ -115,6 +115,7 @@ void MX_FREERTOS_Init(void); /* (MISRA C 2004 rule 8.1) */
 void MX_FREERTOS_Init(void) {
   /* USER CODE BEGIN Init */
   USART1_TxInit();
+  USART2_TxInit();
   /* USER CODE END Init */
 
   /* USER CODE BEGIN RTOS_MUTEX */
@@ -169,6 +170,7 @@ void StartDefaultTask(void *argument)
   for(;;)
   {
     Protocol_OnUart1Bytes();
+    Protocol_OnUart2Bytes();
     Protocol_OnCanFrames();
 
    // printf("hello world\r\n");

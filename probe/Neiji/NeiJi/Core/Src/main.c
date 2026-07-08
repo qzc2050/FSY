@@ -142,6 +142,11 @@ int main(void)
   LCD_Clear(LCD_UI_BG);
   HAL_GPIO_WritePin(LCD_BACKLIGHT_GPIO_Port, LCD_BACKLIGHT_Pin, GPIO_PIN_SET);
   Beep_PinEnsure();
+#if (NEIJI_BEEP_GPIO_HIGH_TEST != 0U)
+  Beep_GpioHighTestHold();
+#else
+  /* normal: pin idle low until alarm */
+#endif
   UartDiag_Write("[LCD] bringup gray\r\n");
   /* USER CODE END 2 */
 

@@ -6,6 +6,7 @@ extern "C" {
 #endif
 
 void Protocol_OnUart1Bytes(void);
+void Protocol_OnUart2Bytes(void);
 void Protocol_OnCanFrames(void);
 
 #ifdef __cplusplus

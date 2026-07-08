@@ -134,14 +134,19 @@ fun HomeScreen(
     onAddMessage: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val pagerConfig = remember(state.slaveProbes, visibleProbeCards, probeCardMode) {
+    val probePagerKey = probeDisplayListKey(state.slaveProbes)
+    val pagerConfig = remember(probePagerKey, visibleProbeCards, probeCardMode) {
         resolveHomeProbePagerConfig(state.slaveProbes, visibleProbeCards, probeCardMode)
     }
-    val displayProbes = pagerConfig.displayProbes
+    val displayProbes = if (pagerConfig.alarmPriorityActive) {
+        state.slaveProbes.filter { it.hasAlarm }
+    } else {
+        state.slaveProbes
+    }
     val probesPerPage = pagerConfig.probesPerPage
     val probePageCount = pagerConfig.pageCount
     val autoScroll = pagerConfig.autoScroll
-    val displayListKey = remember(displayProbes) { probeDisplayListKey(displayProbes) }
+    val displayListKey = probePagerKey
     val pagerState = rememberPagerState(pageCount = { probePageCount.coerceAtLeast(1) })
     val drawerPanelState = rememberSideDrawerPanelState()
     val statusBarPanelState = rememberStatusBarPanelState()
@@ -182,7 +187,8 @@ fun HomeScreen(
 
     ProbePagerAutoScroll(
         enabled = autoScroll,
-        probeCount = probePageCount,
+        autoScrollPageIndices = pagerConfig.autoScrollPageIndices,
+        pageCount = probePageCount,
         pagerState = pagerState,
         paused = state.statusBarExpanded,
     )

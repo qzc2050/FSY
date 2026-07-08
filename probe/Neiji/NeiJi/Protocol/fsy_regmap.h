@@ -60,7 +60,8 @@
 #define FSY_REG_CONTROL_BIT2      123U
 #define FSY_REG_CONTROL_BIT2_REGS 2U
 
-/** reg123 u32：bit13 光报警，bit14 背光开，bit15 外置报警在线（只读） */
+/** reg123 u32：bit9 LoRa 协议输出，bit13 光报警，bit14 背光，bit15 外置报警在线（只读） */
+#define FSY_CTRL2_BIT_LORA_POWER  9U
 #define FSY_CTRL2_BIT_ALARM_LIGHT 13U
 #define FSY_CTRL2_BIT_SCREEN      14U
 #define FSY_CTRL2_BIT_EXT_ALARM   15U
@@ -87,6 +88,7 @@
 #define FSY_REG_EWMA_BOOST_DURATION   164U
 #define FSY_REG_RATE_LIMIT            166U
 #define FSY_REG_GEIGER_BACKGROUND_CPM 168U
+#define FSY_REG_GEIGER_DEAD_TIME_US   171U
 #define FSY_REG_GEIGER_PARAM_REGS     2U
 
 #define FSY_REG_DHCP_ENABLE       170U

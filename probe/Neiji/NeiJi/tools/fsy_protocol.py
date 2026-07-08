@@ -57,7 +57,10 @@ REG_CONTROL_BIT2_COUNT = 2
 CTRL2_BIT_ALARM_LIGHT = 13
 CTRL2_BIT_SCREEN = 14
 CTRL2_BIT_EXT_ALARM = 15
-NEIJI_CTRL2_DEFAULT = (1 << CTRL2_BIT_ALARM_LIGHT) | (1 << CTRL2_BIT_SCREEN)
+CTRL2_BIT_LORA_POWER = 9
+NEIJI_CTRL2_DEFAULT = (1 << CTRL2_BIT_LORA_POWER) | (1 << CTRL2_BIT_ALARM_LIGHT) | (1 << CTRL2_BIT_SCREEN)
+ZJB_PROTOCOL_ADDR = 239
+ZJB_CTRL2_DEFAULT = 0x00006186
 REG_PRODUCT_MODEL = 130
 REG_PRODUCT_MODEL_COUNT = 8
 REG_PRODUCT_NAME = 146
@@ -90,6 +93,7 @@ REG_EWMA_ALPHA_HIGH = 162
 REG_EWMA_BOOST_DURATION = 164
 REG_RATE_LIMIT = 166
 REG_GEIGER_BACKGROUND_CPM = 168
+REG_GEIGER_DEAD_TIME_US = 171
 REG_GEIGER_PARAM_COUNT = 2
 REG_DHCP_ENABLE = 170
 REG_LANGUAGE = 174
@@ -323,6 +327,23 @@ def control_bit2_enables(value: int) -> Tuple[bool, bool]:
     light_on = bool(value & (1 << CTRL2_BIT_ALARM_LIGHT))
     screen_on = bool(value & (1 << CTRL2_BIT_SCREEN))
     return light_on, screen_on
+
+
+def merge_zjb_control_bit2(
+    current: int, lora_on: bool, screen_on: bool, light_on: bool
+) -> int:
+    value = merge_control_bit2(current, screen_on, light_on)
+    if lora_on:
+        value |= 1 << CTRL2_BIT_LORA_POWER
+    else:
+        value &= ~(1 << CTRL2_BIT_LORA_POWER)
+    return value & 0xFFFFFFFF
+
+
+def zjb_control_bit2_flags(value: int) -> Tuple[bool, bool, bool]:
+    lora_on = bool(value & (1 << CTRL2_BIT_LORA_POWER))
+    light_on, screen_on = control_bit2_enables(value)
+    return lora_on, light_on, screen_on
 
 
 def u32_to_reg_values(value: int) -> List[int]:

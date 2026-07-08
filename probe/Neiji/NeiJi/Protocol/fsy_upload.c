@@ -20,6 +20,30 @@ void Fsy_Upload_Init(void)
     Fsy_Regmap_Init();
 }
 
+uint32_t Fsy_Upload_PhaseOffsetMs(void)
+{
+#if FSY_UPLOAD_PHASE_ENABLE
+    uint8_t addr;
+    uint32_t slots;
+    uint32_t slot;
+
+    if (FSY_UPLOAD_PHASE_SLOTS == 0U) {
+        return 0U;
+    }
+
+    addr = Fsy_Dispatch_GetDeviceAddr();
+    if (addr == 0U) {
+        return 0U;
+    }
+
+    slots = FSY_UPLOAD_PHASE_SLOTS;
+    slot = ((uint32_t)addr - 1U) % slots;
+    return (slot * FSY_UPLOAD_PERIOD_MS) / slots;
+#else
+    return 0U;
+#endif
+}
+
 int Fsy_Upload_BuildFrame(uint8_t *frame, uint16_t frame_cap)
 {
     int payload_len;

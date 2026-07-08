@@ -75,14 +75,16 @@ static void disp_flush(lv_disp_drv_t *disp_drv, const lv_area_t *area, lv_color_
         uint16_t width = (uint16_t)(area->x2 - area->x1 + 1);
         uint16_t height = (uint16_t)(area->y2 - area->y1 + 1);
 
+        /* 须在启动 DMA2D 前登记，避免 TC 中断早于赋值导致 flushing 永真 */
+        s_pending_flush_drv = disp_drv;
         if (LCD_BlitAreaAsync((uint16_t)area->x1,
                               (uint16_t)area->y1,
                               width,
                               height,
                               (const uint16_t *)color_p)) {
-            s_pending_flush_drv = disp_drv;
             return;
         }
+        s_pending_flush_drv = NULL;
     }
 
     lv_disp_flush_ready(disp_drv);

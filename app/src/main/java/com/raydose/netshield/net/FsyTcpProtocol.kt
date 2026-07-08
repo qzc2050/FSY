@@ -83,21 +83,21 @@ fun appendModbusCrc(dataNoCrc: ByteArray): ByteArray {
 }
 
 /**
- * 时间同步帧 (0x10 → reg=0x0020, count=4, byte_count=8)
- * 协议字段按小端序发送。
- * 数据格式: [year%100, month, day, hour, minute, second, 0, 0]
+ * Neiji RTC 时间写入 (0x10 → reg=94/0x005E, count=4, byte_count=8)
+ * 与 tools/fsy_protocol.datetime_to_time_reg_values 一致：
+ * 数据 [year%100, month, day, hour, minute, second, 0, 0]
  */
 fun buildWriteTimeFrame(
     year2d: Int, month: Int, day: Int,
     hour: Int, minute: Int, second: Int,
     deviceAddr: Byte = 0x01,
-): ByteArray = appendModbusCrc(
-    byteArrayOf(
-        deviceAddr, 0x10, 0x20, 0x00, 0x04, 0x00, 0x08,
+): ByteArray {
+    val data = byteArrayOf(
         year2d.toByte(), month.toByte(), day.toByte(),
         hour.toByte(), minute.toByte(), second.toByte(), 0x00, 0x00,
     )
-)
+    return buildWriteMultiRegsFrame(NeijiProbeRegs.TIME, data, deviceAddr)
+}
 
 /**
  * 报警阈值写入帧 (0x10 → reg=0x0040, count=24, byte_count=48)
@@ -305,7 +305,7 @@ private fun parseUpload23(frame: ByteArray, addr: Int, crcOk: Boolean): ParsedFs
 
     val preview = values.take(4).joinToString(", ")
     val summary = "0x23 上传: start=0x${startReg.toString(16).uppercase()} byteCount=$byteCount u32=$count [$preview]"
-    return ParsedFsyFrame(addr, 0x23, crcOk, summary, values)
+    return ParsedFsyFrame(addr, 0x23, crcOk, summary)
 }
 
 /** 五分钟值：主动上传与历史应答均为 reg=0x001E(表地址30)；payload=8 字节时间 + u32 辐射×100 */
@@ -367,8 +367,10 @@ private fun parseReadResp13(frame: ByteArray, addr: Int, crcOk: Boolean): Parsed
         return ParsedFsyFrame(addr, 0x13, crcOk, "0x13 设备序列号: $serial", deviceSerial = serial)
     }
 
-    // 设备时间：startReg=0x0020，payload 8 bytes [year%100,mon,day,hour,min,sec,0,0]
-    if (startReg == 0x0020 && byteCount >= 8 && frame.size >= payloadStart + 8) {
+    // 设备时间：Neiji reg94 / 转接板兼容 reg32(0x0020)
+    if ((startReg == NeijiProbeRegs.TIME || startReg == 0x0020) &&
+        byteCount >= 8 && frame.size >= payloadStart + 8
+    ) {
         val year   = frame[payloadStart    ].toUByte().toInt()
         val month  = frame[payloadStart + 1].toUByte().toInt()
         val day    = frame[payloadStart + 2].toUByte().toInt()

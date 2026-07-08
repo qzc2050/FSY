@@ -199,6 +199,18 @@ void USART1_IRQHandler(void)
 }
 
 /**
+  * @brief This function handles USART2 global interrupt.
+  */
+void USART2_IRQHandler(void)
+{
+  if (__HAL_UART_GET_FLAG(&huart2, UART_FLAG_RXNE) != 0U)
+  {
+    uint8_t b2 = (uint8_t)(huart2.Instance->DR & 0xFFU);
+    USART2_Rx_PushByte(b2);
+  }
+}
+
+/**
   * @brief This function handles USART3 global interrupt.
   */
 void USART3_IRQHandler(void)

@@ -39,6 +39,12 @@ static uint8_t s_udp_bound_ip[4] = {0, 0, 0, 0};
 /* 网络硬复位进行中（其他路径应跳过 W5500 收发） */
 static volatile uint8_t g_w5500_recovering = 0;
 
+/* 冷上电计时：W5500_Network_OnBoot 刷新，用于宽限期内忽略 PHY 抖动 */
+static uint32_t g_net_boot_tick = 0U;
+
+/* 组播连续 send 失败计数 */
+static uint8_t g_mcast_send_fail_streak = 0U;
+
 /* 当前 IP 地址缓存 */
 //static uint8_t g_current_ip[4] = {0, 0, 0, 0};
 
@@ -80,9 +86,32 @@ static void UDP_Set_Destination(SOCKET s, const uint8_t *ip, uint16_t port)
     UDP_Set_Multicast_Mac(s, ip);
 }
 
+static uint8_t UDP_Open_Multicast_Socket(SOCKET s)
+{
+    close(s);
+
+    /*
+     * W5500 multicast mode samples destination IP/port/MAC around OPEN.
+     * Configure them before OPEN; sendto() still refreshes them before each SEND.
+     */
+    UDP_Set_Destination(s, g_discover_mcast_ip, UDP_DISCOVER_MULTICAST_PORT);
+    IINCHIP_WRITE(Sn_TTL(s), 1U);
+    IINCHIP_WRITE(Sn_MR(s), (uint8_t)(Sn_MR_UDP | Sn_MR_MULTI));
+    IINCHIP_WRITE(Sn_PORT0(s), (uint8_t)((UDP_DISCOVER_MULTICAST_PORT & 0xff00u) >> 8));
+    IINCHIP_WRITE(Sn_PORT1(s), (uint8_t)(UDP_DISCOVER_MULTICAST_PORT & 0x00ffu));
+    IINCHIP_WRITE(Sn_CR(s), Sn_CR_OPEN);
+    while (IINCHIP_READ(Sn_CR(s)) != 0U) {
+        ;
+    }
+
+    return (getSn_SR(s) == SOCK_UDP) ? 1U : 0U;
+}
+
 /* ==================== 内部函数声明 ==================== */
 static void DHCP_Check_Link_Status(void);
 static void W5500_DHCP_Network_Recover(void);
+static bool net_in_boot_grace(void);
+static bool w5500_sipr_read_stable(uint8_t ip[4]);
 
 bool W5500_Is_Network_Recovering(void)
 {
@@ -145,6 +174,7 @@ static void W5500_DHCP_Network_Recover(void)
 void DHCP_Watchdog_Task(void)
 {
     static uint32_t s_last_recover_tick = 0U;
+    static uint32_t s_invalid_since = 0U;
     uint32_t now = HAL_GetTick();
 
     if(!ConfigMsg.dhcp)
@@ -159,8 +189,16 @@ void DHCP_Watchdog_Task(void)
     if(!(getPHYCFGR() & LINK))
         return;
 
-    if(W5500_Is_IP_Valid())
+    if(W5500_Is_IP_Valid()) {
+        s_invalid_since = 0U;
         return;
+    }
+
+    if(s_invalid_since == 0U) {
+        s_invalid_since = now;
+    } else if((now - s_invalid_since) < 3000U) {
+        return;
+    }
 
     if(s_last_recover_tick == 0U)
     {
@@ -172,6 +210,7 @@ void DHCP_Watchdog_Task(void)
         return;
     }
 
+    s_invalid_since = 0U;
     s_last_recover_tick = now;
     W5500_DHCP_Network_Recover();
 }
@@ -216,54 +255,64 @@ void W5500_DHCP_Init(void)
 }
 
 static uint8_t s_phy_polled_this_loop = 0u;
+static uint8_t s_phy_stable_up = 0u;
+static uint8_t s_phy_down_pending = 0u;
+static uint32_t s_phy_down_since_ms = 0u;
+static uint8_t s_phy_edge_up = 0u;
+static uint8_t s_phy_edge_down = 0u;
 
 uint8_t W5500_PhyLink_DebouncedPoll(bool *rising, bool *falling)
 {
-    static uint8_t stable_up = 0u;
-    static uint8_t down_pending = 0u;
-    static uint32_t down_since_ms = 0u;
-    static uint8_t edge_up = 0u;
-    static uint8_t edge_down = 0u;
     uint8_t raw_up;
 
     if (!s_phy_polled_this_loop) {
         uint32_t now = HAL_GetTick();
 
         s_phy_polled_this_loop = 1u;
-        edge_up = 0u;
-        edge_down = 0u;
+        s_phy_edge_up = 0u;
+        s_phy_edge_down = 0u;
         raw_up = ((getPHYCFGR() & LINK) != 0u) ? 1u : 0u;
 
         if (raw_up) {
-            down_pending = 0u;
-            if (!stable_up) {
-                stable_up = 1u;
-                edge_up = 1u;
+            s_phy_down_pending = 0u;
+            if (!s_phy_stable_up) {
+                s_phy_stable_up = 1u;
+                s_phy_edge_up = 1u;
             }
-        } else if (stable_up) {
-            if (!down_pending) {
-                down_pending = 1u;
-                down_since_ms = now;
-            } else if ((now - down_since_ms) >= PHY_LINK_DOWN_DEBOUNCE_MS) {
-                stable_up = 0u;
-                down_pending = 0u;
-                edge_down = 1u;
+        } else if (s_phy_stable_up) {
+            if (!s_phy_down_pending) {
+                s_phy_down_pending = 1u;
+                s_phy_down_since_ms = now;
+            } else if ((now - s_phy_down_since_ms) >= PHY_LINK_DOWN_DEBOUNCE_MS) {
+                s_phy_stable_up = 0u;
+                s_phy_down_pending = 0u;
+                s_phy_edge_down = 1u;
             }
         }
     }
 
     if (rising != NULL) {
-        *rising = (edge_up != 0u);
+        *rising = (s_phy_edge_up != 0u);
     }
     if (falling != NULL) {
-        *falling = (edge_down != 0u);
+        *falling = (s_phy_edge_down != 0u);
     }
-    return stable_up;
+    return s_phy_stable_up;
 }
 
 void W5500_PhyLink_DebouncedLoopBegin(void)
 {
     s_phy_polled_this_loop = 0u;
+}
+
+void W5500_PhyLink_ResetDebouncer(void)
+{
+    s_phy_polled_this_loop = 0u;
+    s_phy_stable_up = 0u;
+    s_phy_down_pending = 0u;
+    s_phy_down_since_ms = 0u;
+    s_phy_edge_up = 0u;
+    s_phy_edge_down = 0u;
 }
 
 /********************************************************************************************
@@ -279,14 +328,21 @@ static void DHCP_Check_Link_Status(void)
     (void)W5500_PhyLink_DebouncedPoll(&link_up, &link_down);
 
     if (link_up) {
+        if (g_dhcp_state == DHCP_STATE_BOUND && W5500_Is_IP_Valid() && net_in_boot_grace()) {
+            return;
+        }
         printf("[DHCP] link up, trigger DHCP\r\n");
         g_dhcp_state = DHCP_STATE_INIT;
         g_dhcp_retry_cnt = 0;
-        DHCP_Set_State(DHCP_INIT);
+        DHCP_Stop();
+        (void)DHCP_Init(DHCP_SOCKET);
         return;
     }
 
     if (link_down) {
+        if (g_dhcp_state == DHCP_STATE_BOUND && W5500_Is_IP_Valid() && net_in_boot_grace()) {
+            return;
+        }
         printf("[DHCP] link down (debounced %ums)\r\n", (unsigned)PHY_LINK_DOWN_DEBOUNCE_MS);
         {
             uint8_t zero_ip[4] = {0, 0, 0, 0};
@@ -297,41 +353,189 @@ static void DHCP_Check_Link_Status(void)
 }
 
 /********************************************************************************************
+* 函数名：W5500_Is_IP_Valid_Buf
+* 描  述：检查 IP 是否为可用局域网地址（RFC1918，排除 0/255/环回/组播）
+********************************************************************************************/
+bool W5500_Is_IP_Valid_Buf(const uint8_t ip[4])
+{
+    if (ip == NULL) {
+        return false;
+    }
+
+    if ((ip[0] | ip[1] | ip[2] | ip[3]) == 0U) {
+        return false;
+    }
+
+    if ((ip[0] == 255U) && (ip[1] == 255U) && (ip[2] == 255U) && (ip[3] == 255U)) {
+        return false;
+    }
+
+    if (ip[0] == 127U || ip[0] >= 224U) {
+        return false;
+    }
+
+    if (ip[0] == 10U) {
+        return true;
+    }
+
+    if ((ip[0] == 172U) && (ip[1] >= 16U) && (ip[1] <= 31U)) {
+        return true;
+    }
+
+    if ((ip[0] == 192U) && (ip[1] == 168U)) {
+        return true;
+    }
+
+    return false;
+}
+
+static bool w5500_sipr_read_stable(uint8_t ip[4])
+{
+    uint8_t ip_a[4];
+    uint8_t ip_b[4];
+    uint8_t attempt;
+
+    for (attempt = 0U; attempt < 3U; attempt++) {
+        getSIPR(ip_a);
+        getSIPR(ip_b);
+
+        if ((ip_a[0] == ip_b[0]) && (ip_a[1] == ip_b[1]) &&
+            (ip_a[2] == ip_b[2]) && (ip_a[3] == ip_b[3])) {
+            ip[0] = ip_a[0];
+            ip[1] = ip_a[1];
+            ip[2] = ip_a[2];
+            ip[3] = ip_a[3];
+            return true;
+        }
+    }
+
+    return false;
+}
+
+static bool net_in_boot_grace(void)
+{
+    return ((HAL_GetTick() - g_net_boot_tick) < NET_BOOT_GRACE_MS);
+}
+
+bool W5500_Is_NetBootGrace(void)
+{
+    return net_in_boot_grace();
+}
+
+void W5500_Get_Active_IP(uint8_t ip[4])
+{
+    if (ip == NULL) {
+        return;
+    }
+
+    /* DHCP 模式：仅以 W5500 SIPR 为准，避免 Flash 静态备用地址(如 192.168.2.100)误导组播 */
+    if (ConfigMsg.dhcp) {
+        if (!w5500_sipr_read_stable(ip)) {
+            ip[0] = 0U;
+            ip[1] = 0U;
+            ip[2] = 0U;
+            ip[3] = 0U;
+        }
+        return;
+    }
+
+    if (W5500_Is_IP_Valid_Buf(ConfigMsg.lip)) {
+        ip[0] = ConfigMsg.lip[0];
+        ip[1] = ConfigMsg.lip[1];
+        ip[2] = ConfigMsg.lip[2];
+        ip[3] = ConfigMsg.lip[3];
+        return;
+    }
+
+    if (!w5500_sipr_read_stable(ip)) {
+        ip[0] = 0U;
+        ip[1] = 0U;
+        ip[2] = 0U;
+        ip[3] = 0U;
+    }
+}
+
+/********************************************************************************************
+* 函数名：W5500_Is_IP_Valid
+* 描  述：检查 W5500 是否已有可用 IP
+* 注  意：DHCP 模式下必须已 BOUND 且 SIPR 有效，不能用 Flash 静态备用地址冒充
+********************************************************************************************/
+bool W5500_Is_IP_Valid(void)
+{
+    uint8_t ip[4];
+
+    if (ConfigMsg.dhcp) {
+        if (g_dhcp_state != DHCP_STATE_BOUND) {
+            return false;
+        }
+        if (!w5500_sipr_read_stable(ip)) {
+            return false;
+        }
+        return W5500_Is_IP_Valid_Buf(ip);
+    }
+
+    if (W5500_Is_IP_Valid_Buf(ConfigMsg.lip)) {
+        return true;
+    }
+
+    if (!w5500_sipr_read_stable(ip)) {
+        return false;
+    }
+
+    return W5500_Is_IP_Valid_Buf(ip);
+}
+
+/********************************************************************************************
+* 函数名：W5500_Network_OnBoot
+* 描  述：MCU 复位后清网络运行时状态；W5500 不断电时 PHY 不断，需强制重走 DHCP/组播
+********************************************************************************************/
+void W5500_Network_OnBoot(void)
+{
+    g_net_boot_tick = HAL_GetTick();
+    g_mcast_send_fail_streak = 0U;
+    g_broadcast_enabled = 0U;
+    g_broadcast_last_tick = 0U;
+    s_udp_bound_ip[0] = 0U;
+    s_udp_bound_ip[1] = 0U;
+    s_udp_bound_ip[2] = 0U;
+    s_udp_bound_ip[3] = 0U;
+    s_tcp_bound_ip[0] = 0U;
+    s_tcp_bound_ip[1] = 0U;
+    s_tcp_bound_ip[2] = 0U;
+    s_tcp_bound_ip[3] = 0U;
+    g_dhcp_state = DHCP_STATE_INIT;
+    g_dhcp_retry_cnt = 0U;
+
+    /* 仅清 MCU 侧运行时状态；socket 关闭须在 sysinit 之后（见 set_w5500_network） */
+    if (ConfigMsg.dhcp) {
+        printf("[net] MCU boot: clear stale IP, restart DHCP\r\n");
+    } else {
+        printf("[net] MCU boot: static IP, restart mcast/TCP\r\n");
+    }
+}
+
+void W5500_SyncBoundIp(const uint8_t ip[4])
+{
+    if (ip == NULL) {
+        return;
+    }
+    s_udp_bound_ip[0] = ip[0];
+    s_udp_bound_ip[1] = ip[1];
+    s_udp_bound_ip[2] = ip[2];
+    s_udp_bound_ip[3] = ip[3];
+    s_tcp_bound_ip[0] = ip[0];
+    s_tcp_bound_ip[1] = ip[1];
+    s_tcp_bound_ip[2] = ip[2];
+    s_tcp_bound_ip[3] = ip[3];
+}
+
+/********************************************************************************************
 * 函数名：W5500_Get_IP
 * 描  述：获取当前 IP 地址
 ********************************************************************************************/
 void W5500_Get_IP(uint8_t *ip_addr)
 {
-    if(ip_addr == NULL)
-        return;
-    
-    getSIPR(ip_addr);
-    
-    /* 更新缓存 - 按字节拷贝 */
-//    for(uint8_t i = 0; i < 4; i++)
-//    {
-//        g_current_ip[i] = ip_addr[i];
-//    }
-}
-
-/********************************************************************************************
-* 函数名：W5500_Is_IP_Valid
-* 描  述：检查 IP 是否有效（非 0.0.0.0）
-********************************************************************************************/
-bool W5500_Is_IP_Valid(void)
-{
-    uint8_t ip[4];
-    getSIPR(ip);
-    
-    /* 检查是否为 0.0.0.0 */
-    if((ip[0] == 0) && (ip[1] == 0) && (ip[2] == 0) && (ip[3] == 0))
-        return false;
-    
-    /* 检查是否为 255.255.255.255 */
-    if((ip[0] == 255) && (ip[1] == 255) && (ip[2] == 255) && (ip[3] == 255))
-        return false;
-    
-    return true;
+    W5500_Get_Active_IP(ip_addr);
 }
 
 /********************************************************************************************
@@ -341,17 +545,12 @@ bool W5500_Is_IP_Valid(void)
 void UDP_Broadcast_Init(void)
 {
     uint8_t ret;
-    
-    /* 关闭 Socket 2 */
-    close(UDP_BROADCAST_SOCKET);
-    
-    /* UDP 发往组播 236.2.3.6:2468；需要设置 Sn_MR_MULTI 标志 (0x80) 以支持组播 */
-    /* Sn_MR_MULTI = 0x80 启用UDP组播支持 */
-    ret = socket(UDP_BROADCAST_SOCKET, Sn_MR_UDP | Sn_MR_MULTI, UDP_DISCOVER_MULTICAST_PORT, 0);
+
+    ret = UDP_Open_Multicast_Socket(UDP_BROADCAST_SOCKET);
     
     if(ret == 1)
     {
-        /* SIPR 有效后打开 Socket，并立即写入组播目标，避免 Sn_DIPR 仍为 0.0.0.0 */
+        /* 再刷新一次，便于串口诊断时寄存器保持目标组播地址 */
         UDP_Set_Destination(UDP_BROADCAST_SOCKET, g_discover_mcast_ip, UDP_DISCOVER_MULTICAST_PORT);
         printf("[UDP] mcast socket %d -> %u.%u.%u.%u:%u\r\n",
                 UDP_BROADCAST_SOCKET,
@@ -359,6 +558,12 @@ void UDP_Broadcast_Init(void)
                 (unsigned)g_discover_mcast_ip[2], (unsigned)g_discover_mcast_ip[3],
                 (unsigned)UDP_DISCOVER_MULTICAST_PORT);
         g_broadcast_enabled = 1;
+        g_mcast_send_fail_streak = 0U;
+        /* 下次 Task 循环立即发首帧组播 */
+        g_broadcast_last_tick = HAL_GetTick() - UDP_BROADCAST_INTERVAL_MS;
+        printf("[UDP] mcast init sr=0x%02X enabled=%u\r\n",
+               (unsigned)getSn_SR(UDP_BROADCAST_SOCKET),
+               (unsigned)g_broadcast_enabled);
     }
     else
     {
@@ -454,17 +659,30 @@ uint16_t Broadcast_Fill_Data(uint8_t *buf)
 void UDP_Broadcast_Task(void)
 {
     static uint8_t broadcast_buf[UDP_DISCOVER_PAYLOAD_MAX];
+    static uint32_t s_mcast_recover_tick = 0U;
+    static uint32_t s_invalid_ip_since = 0U;
     uint32_t current_tick = HAL_GetTick();
     uint8_t ip[4];
 
     if(g_w5500_recovering)
         return;
 
-    getSIPR(ip);
+    /*
+     * 静态 IP：以 ConfigMsg.lip 为准，不依赖 SIPR 偶发读失败。
+     * DHCP：Get_Active_IP 内部需 SIPR 连续两次一致才认为有效。
+     */
+    W5500_Get_Active_IP(ip);
 
     /* IP 无效：关闭组播 Socket，等待 DHCP */
     if(!W5500_Is_IP_Valid())
     {
+        if (s_invalid_ip_since == 0U) {
+            s_invalid_ip_since = current_tick;
+        }
+        if ((current_tick - s_invalid_ip_since) < 1000U) {
+            return;
+        }
+
         if((s_udp_bound_ip[0] | s_udp_bound_ip[1] | s_udp_bound_ip[2] | s_udp_bound_ip[3]) != 0U)
         {
             s_udp_bound_ip[0] = 0U;
@@ -483,6 +701,7 @@ void UDP_Broadcast_Task(void)
         }
         return;
     }
+    s_invalid_ip_since = 0U;
 
     /* IP 有效且与上次绑定不同：重新打开组播 Socket（DHCP 首次分配 / 续租变更） */
     if((ip[0] != s_udp_bound_ip[0]) || (ip[1] != s_udp_bound_ip[1]) ||
@@ -500,7 +719,15 @@ void UDP_Broadcast_Task(void)
     }
 
     if(!g_broadcast_enabled)
+    {
+        if((current_tick - s_mcast_recover_tick) >= UDP_MCAST_RECOVER_MS)
+        {
+            s_mcast_recover_tick = current_tick;
+            printf("[UDP] mcast disabled but IP valid, retry init\r\n");
+            UDP_Broadcast_Init();
+        }
         return;
+    }
 
     /* 检查时间间隔 */
     if((current_tick - g_broadcast_last_tick) >= UDP_BROADCAST_INTERVAL_MS)
@@ -517,14 +744,27 @@ void UDP_Broadcast_Task(void)
 
             if(sent <= 0)
             {
-                printf("[UDP] discover broadcast failed\r\n");
+                g_mcast_send_fail_streak++;
+                printf("[UDP] tx fail sr=0x%02X len=%u streak=%u\r\n",
+                       (unsigned)getSn_SR(UDP_BROADCAST_SOCKET),
+                       (unsigned)len,
+                       (unsigned)g_mcast_send_fail_streak);
+                if (g_mcast_send_fail_streak >= UDP_MCAST_SEND_FAIL_MAX) {
+                    printf("[UDP] discover broadcast failed x%u, rebuild socket\r\n",
+                           (unsigned)g_mcast_send_fail_streak);
+                    g_broadcast_enabled = 0U;
+                    g_mcast_send_fail_streak = 0U;
+                }
+            } else {
+                g_mcast_send_fail_streak = 0U;
             }
-            // else
-            // {
-            //     printf("[UDP] 广播设备信息：源 IP %u.%u.%u.%u -> 236.2.3.6:%u\r\n",
-            //             (unsigned)ip[0], (unsigned)ip[1], (unsigned)ip[2], (unsigned)ip[3],
-            //             (unsigned)UDP_DISCOVER_MULTICAST_PORT);
-            // }
+        } else {
+            static uint32_t s_fill_fail_log_tick = 0U;
+
+            if ((current_tick - s_fill_fail_log_tick) >= 5000U) {
+                s_fill_fail_log_tick = current_tick;
+                printf("[UDP] Broadcast_Fill_Data returned 0\r\n");
+            }
         }
     }
 }
@@ -590,6 +830,10 @@ DHCP_State_t DHCP_Client_Task(void)
             s_tcp_bound_ip[1] = ip[1];
             s_tcp_bound_ip[2] = ip[2];
             s_tcp_bound_ip[3] = ip[3];
+            s_udp_bound_ip[0] = ip[0];
+            s_udp_bound_ip[1] = ip[1];
+            s_udp_bound_ip[2] = ip[2];
+            s_udp_bound_ip[3] = ip[3];
             UDP_Broadcast_Init();
             Net_Tcp_RebindOnIpChange();
         }
@@ -620,8 +864,10 @@ DHCP_State_t DHCP_Client_Task(void)
     }
     else if(dhcp_ret == DHCP_RUNNING)
     {
-        /* DHCP 正在运行 */
-        g_dhcp_state = DHCP_STATE_DISCOVER;
+        /* 续租/重试进行中：已 BOUND 时保持 BOUND，避免看门狗误判 */
+        if(g_dhcp_state != DHCP_STATE_BOUND) {
+            g_dhcp_state = DHCP_STATE_DISCOVER;
+        }
     }
     else
     {
@@ -652,4 +898,7 @@ void DHCP_Reset(void)
     printf("[DHCP] reset state\r\n");
     g_dhcp_state = DHCP_STATE_INIT;
     g_dhcp_retry_cnt = 0;
+    if (ConfigMsg.dhcp) {
+        (void)DHCP_Init(DHCP_SOCKET);
+    }
 }

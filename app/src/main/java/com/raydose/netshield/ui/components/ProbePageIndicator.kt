@@ -14,6 +14,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import com.raydose.netshield.ui.home.shouldEnableProbeAutoScroll
 import com.raydose.netshield.ui.theme.NetShieldTextPrimary
 import com.raydose.netshield.ui.theme.NetShieldTextSecondary
 import com.raydose.netshield.ui.theme.ScreenSpec
@@ -23,16 +24,28 @@ import kotlinx.coroutines.delay
 @Composable
 fun ProbePagerAutoScroll(
     enabled: Boolean,
-    probeCount: Int,
+    autoScrollPageIndices: List<Int>,
+    pageCount: Int,
     pagerState: PagerState,
     paused: Boolean = false,
     intervalMs: Long = ScreenSpec.PROBE_CARD_AUTO_SCROLL_INTERVAL_MS,
 ) {
-    LaunchedEffect(enabled, probeCount, paused, intervalMs) {
-        if (!enabled || paused || probeCount <= 1) return@LaunchedEffect
+    val scrollPagesKey = autoScrollPageIndices.joinToString(",")
+    LaunchedEffect(enabled, scrollPagesKey, pageCount, paused, intervalMs) {
+        if (!enabled || paused) return@LaunchedEffect
+        if (!shouldEnableProbeAutoScroll(autoScrollPageIndices, pageCount)) return@LaunchedEffect
         while (true) {
             delay(intervalMs)
-            pagerState.animateScrollToPage((pagerState.currentPage + 1) % probeCount)
+            val current = pagerState.currentPage
+            val nextPage = if (current in autoScrollPageIndices) {
+                val idx = autoScrollPageIndices.indexOf(current)
+                autoScrollPageIndices[(idx + 1) % autoScrollPageIndices.size]
+            } else {
+                autoScrollPageIndices.first()
+            }
+            if (nextPage != current) {
+                pagerState.animateScrollToPage(nextPage)
+            }
         }
     }
 }

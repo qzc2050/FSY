@@ -9,18 +9,28 @@ import java.util.concurrent.ConcurrentHashMap
 class ProbeLinkRouter {
   private val lastRoute = ConcurrentHashMap<String, ProbeCommandLink>()
   private val lastRx23Ms = ConcurrentHashMap<String, Long>()
+  /** 网口组播发现刷新，用于 0x23 超时判定 */
+  private val lastMulticastMs = ConcurrentHashMap<String, Long>()
 
   fun recordRx23(probeId: String, link: ProbeCommandLink) {
     lastRoute[probeId] = link
     lastRx23Ms[probeId] = System.currentTimeMillis()
   }
 
+  /** 已保存网口探头收到组播时刷新，延长 UI 层 0x23 超时窗口 */
+  fun recordMulticastKeepalive(probeId: String) {
+    lastMulticastMs[probeId] = System.currentTimeMillis()
+  }
+
   fun routeFor(probeId: String): ProbeCommandLink? = lastRoute[probeId]
 
   fun lastRx23Millis(probeId: String): Long? = lastRx23Ms[probeId]
 
+  fun lastMulticastKeepaliveMillis(probeId: String): Long? = lastMulticastMs[probeId]
+
   fun clear(probeId: String) {
     lastRoute.remove(probeId)
     lastRx23Ms.remove(probeId)
+    lastMulticastMs.remove(probeId)
   }
 }

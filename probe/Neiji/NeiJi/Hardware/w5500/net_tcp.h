@@ -6,8 +6,10 @@
 
 #include "uart_ringbuf.h"
 
-#define NET_TCP_SYN_HOLD_MS  5000U
-#define NET_TCP_RX_CAP       512U
+#define NET_TCP_SYN_HOLD_MS       5000U
+#define NET_TCP_RX_CAP            512U
+#define NET_TCP_SOCK_INIT_WAIT_MS 50U
+#define NET_TCP_LISTEN_RETRY_MS   3000U
 
 bool Net_Tcp_Init(void);
 void Net_Tcp_DeInit(void);

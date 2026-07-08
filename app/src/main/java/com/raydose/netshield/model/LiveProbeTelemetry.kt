@@ -26,4 +26,16 @@ data class LiveProbeTelemetry(
     val slaveScreenOn: Boolean? = null,
     val alarmLightOn: Boolean? = null,
     val controlBit2Value: Long? = null,
-)
+) {
+    /** 离线时清空实时读数，避免主页仍显示最后一帧剂量 */
+    fun asOffline(): LiveProbeTelemetry = copy(
+        isOnline = false,
+        doseRateText = "---",
+        temperature = "---",
+        pressure = "---",
+        humidity = "---",
+        co2 = "---",
+        pm25 = "---",
+        hasAlarm = false,
+    )
+}

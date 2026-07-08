@@ -8,11 +8,42 @@ static uint8_t s_dr_input_mode = DR_INPUT_MODE_REAL;
 static uint32_t s_dr_manual_cps = 0U;
 static float s_rate_limit_usvh = 10000.0f;
 static uint32_t s_background_cpm = GEIGER_DEFAULT_BACKGROUND_CPM;
+static uint32_t s_dead_time_us_x100 = GEIGER_DEFAULT_DEAD_TIME_US_X100;
+
+static uint32_t dose_rate_correct_dead_time(uint32_t raw_cps)
+{
+    float tau_s;
+    float denom;
+    float corrected;
+
+    if ((s_dead_time_us_x100 == 0U) || (raw_cps == 0U)) {
+        return raw_cps;
+    }
+
+    tau_s = ((float)s_dead_time_us_x100 / 100.0f) / 1000000.0f;
+    denom = 1.0f - ((float)raw_cps * tau_s);
+    if (denom <= 0.0f) {
+        return raw_cps;
+    }
+
+    corrected = (float)raw_cps / denom;
+    if (corrected < 0.0f) {
+        return 0U;
+    }
+    if (corrected > 4294967295.0f) {
+        return UINT32_MAX;
+    }
+    return (uint32_t)(corrected + 0.5f);
+}
 
 static uint32_t dose_rate_effective_cps(uint32_t raw_cps)
 {
-    float bg_cps = (float)s_background_cpm / 60.0f;
-    float eff = (float)raw_cps - bg_cps;
+    float bg_cps;
+    float eff;
+
+    raw_cps = dose_rate_correct_dead_time(raw_cps);
+    bg_cps = (float)s_background_cpm / 60.0f;
+    eff = (float)raw_cps - bg_cps;
 
     if (eff <= 0.0f) {
         return 0U;
@@ -186,6 +217,17 @@ bool DoseRate_SetBackgroundCpm(uint32_t background_cpm)
 uint32_t DoseRate_GetBackgroundCpm(void)
 {
     return s_background_cpm;
+}
+
+bool DoseRate_SetDeadTimeUsX100(uint32_t dead_time_us_x100)
+{
+    s_dead_time_us_x100 = dead_time_us_x100;
+    return true;
+}
+
+uint32_t DoseRate_GetDeadTimeUsX100(void)
+{
+    return s_dead_time_us_x100;
 }
 
 uint8_t DoseRate_GetInputMode(void)

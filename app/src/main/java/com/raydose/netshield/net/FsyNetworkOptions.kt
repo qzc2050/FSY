@@ -78,6 +78,17 @@ fun listFsyNetworkOptions(appContext: Context): List<FsyNetworkOption> {
 }
 
 /**
+ * 组播/TCP 发现用网卡：工控机常同时有 Wi‑Fi 与以太网，优先有线（与 [findRoutesToHost] 一致），
+ * 避免 activeNetwork 落在 Wi‑Fi 而探头在同网段以太网上导致收不到 236.2.3.6:2468。
+ */
+fun pickFsyNetworkForMulticast(options: List<FsyNetworkOption>): FsyNetworkOption? {
+    if (options.isEmpty()) return null
+    return options.firstOrNull { it.interfaceName.startsWith("eth", ignoreCase = true) }
+        ?: options.firstOrNull { it.isDefault }
+        ?: options.firstOrNull()
+}
+
+/**
  * 当前已连接 [Network] 的快照。官方弃用 [ConnectivityManager.getAllNetworks] 后未提供同步替代 API，
  * 一次性刷新列表仍需使用该方法；持续监听场景才适合 [ConnectivityManager.registerNetworkCallback]。
  */

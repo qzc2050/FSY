@@ -31,6 +31,61 @@ static void (*lcd_flush_done_cb)(void);
 static void lcd_dma2d_fill(uint32_t dst, uint16_t width, uint16_t height,
                            uint16_t dst_line_offset, uint32_t color);
 
+#define LCD_DMA2D_BUSY_WAIT_MS  100U
+
+static void lcd_dcache_clean(const void *addr, uint32_t size);
+static void lcd_dcache_clean_phys_rows(uint16_t py, uint16_t px, uint16_t line_w, uint16_t line_cnt);
+static void lcd_dma2d_wait(void);
+static void lcd_yield_if_sched_running(void);
+
+static void lcd_dma2d_abort_hw(void)
+{
+	DMA2D->CR &= ~(DMA2D_CR_START | DMA2D_CR_TCIE);
+	DMA2D->IFCR = DMA2D_IFCR_CTCIF | DMA2D_IFCR_CTEIF | DMA2D_IFCR_CCEIF;
+}
+
+static void lcd_dma2d_on_complete(void)
+{
+	if(lcd_dma2d_clean_rows) {
+		lcd_dcache_clean_phys_rows(lcd_dma2d_clean_py,
+		                           lcd_dma2d_clean_px,
+		                           lcd_dma2d_clean_line_w,
+		                           lcd_dma2d_clean_line_cnt);
+	} else {
+		lcd_dcache_clean((const void *)lcd_dma2d_clean_addr, lcd_dma2d_clean_size);
+	}
+	lcd_dma2d_busy = false;
+
+	if(lcd_flush_done_cb != NULL) {
+		lcd_flush_done_cb();
+	}
+}
+
+static void lcd_dma2d_recover_stall(const char *reason)
+{
+	static uint32_t last_log_tick;
+	uint32_t now = HAL_GetTick();
+
+	lcd_dma2d_abort_hw();
+	lcd_dma2d_wait();
+
+	if(lcd_dma2d_busy) {
+		lcd_dma2d_on_complete();
+
+		if((last_log_tick == 0U) || ((now - last_log_tick) >= 5000U)) {
+			last_log_tick = now;
+			char msg[80];
+
+			(void)snprintf(msg, sizeof(msg),
+			               "[lcd] DMA2D recover (%s) ISR=0x%08lX CR=0x%08lX\r\n",
+			               reason,
+			               (unsigned long)DMA2D->ISR,
+			               (unsigned long)DMA2D->CR);
+			UartDiag_Write(msg);
+		}
+	}
+}
+
 static uint32_t lcd_phys_addr(uint16_t px, uint16_t py)
 {
 	return (uint32_t)&ltdc_lcd_framebuf + 2U * ((uint32_t)py * LCD_PHYS_WIDTH + px);
@@ -43,6 +98,13 @@ static void lcd_logical_to_phys(uint16_t lx, uint16_t ly, uint16_t *px, uint16_t
 	*py = lx;
 }
 
+static void lcd_yield_if_sched_running(void)
+{
+	if (xTaskGetSchedulerState() == taskSCHEDULER_RUNNING) {
+		taskYIELD();
+	}
+}
+
 static void lcd_dma2d_wait(void)
 {
 	uint32_t timeout = 0U;
@@ -52,15 +114,40 @@ static void lcd_dma2d_wait(void)
 			DMA2D->CR &= ~DMA2D_CR_START;
 			break;
 		}
+		if((timeout & 0xFFU) == 0U) {
+			lcd_yield_if_sched_running();
+		}
 	}
 }
 
 void LCD_FlushWait(void)
 {
+	uint32_t t0 = HAL_GetTick();
+
 	lcd_dma2d_wait();
 
 	while(lcd_dma2d_busy) {
-		taskYIELD();
+		uint32_t isr = DMA2D->ISR;
+
+		/* 中断丢失时轮询 TCIF，避免 LVGL 永久卡在 wait_cb */
+		if((isr & DMA2D_ISR_TCIF) != 0U) {
+			DMA2D->IFCR = DMA2D_IFCR_CTCIF;
+			DMA2D->CR &= ~(DMA2D_CR_START | DMA2D_CR_TCIE);
+			lcd_dma2d_on_complete();
+			break;
+		}
+
+		if((isr & (DMA2D_ISR_TEIF | DMA2D_ISR_CEIF)) != 0U) {
+			lcd_dma2d_recover_stall("err");
+			break;
+		}
+
+		if((HAL_GetTick() - t0) >= LCD_DMA2D_BUSY_WAIT_MS) {
+			lcd_dma2d_recover_stall("timeout");
+			break;
+		}
+
+		lcd_yield_if_sched_running();
 	}
 }
 
@@ -98,7 +185,7 @@ static void lcd_wait_vsync(void)
 		if((HAL_GetTick() - t0) > 25U) {
 			break;
 		}
-		taskYIELD();
+		lcd_yield_if_sched_running();
 	}
 #else
 	(void)0;
@@ -315,22 +402,21 @@ static void lcd_dma2d_start_async(uint32_t src, uint32_t dst, uint16_t width, ui
 
 void DMA2D_IRQHandler(void)
 {
-	if((DMA2D->ISR & DMA2D_ISR_TCIF) != 0U) {
-		DMA2D->IFCR = DMA2D_IFCR_CTCIF;
-		DMA2D->CR &= ~(DMA2D_CR_START | DMA2D_CR_TCIE);
-		if(lcd_dma2d_clean_rows) {
-			lcd_dcache_clean_phys_rows(lcd_dma2d_clean_py,
-			                           lcd_dma2d_clean_px,
-			                           lcd_dma2d_clean_line_w,
-			                           lcd_dma2d_clean_line_cnt);
-		} else {
-			lcd_dcache_clean((const void *)lcd_dma2d_clean_addr, lcd_dma2d_clean_size);
-		}
-		lcd_dma2d_busy = false;
+	uint32_t isr = DMA2D->ISR;
 
-		if(lcd_flush_done_cb != NULL) {
-			lcd_flush_done_cb();
-		}
+	if((isr & (DMA2D_ISR_TCIF | DMA2D_ISR_TEIF | DMA2D_ISR_CEIF)) == 0U) {
+		return;
+	}
+
+	if((isr & DMA2D_ISR_TCIF) != 0U) {
+		DMA2D->IFCR = DMA2D_IFCR_CTCIF;
+	} else {
+		DMA2D->IFCR = DMA2D_IFCR_CTCIF | DMA2D_IFCR_CTEIF | DMA2D_IFCR_CCEIF;
+	}
+	DMA2D->CR &= ~(DMA2D_CR_START | DMA2D_CR_TCIE);
+
+	if(lcd_dma2d_busy) {
+		lcd_dma2d_on_complete();
 	}
 }
 

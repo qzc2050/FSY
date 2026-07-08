@@ -21,7 +21,116 @@
 #include "i2c.h"
 
 /* USER CODE BEGIN 0 */
+#include "FreeRTOS.h"
+#include "semphr.h"
 
+#define I2C4_RECOVER_TRIES  3U
+
+static SemaphoreHandle_t s_i2c4_mutex;
+
+static void i2c4_lock(void)
+{
+    if (s_i2c4_mutex != NULL) {
+        (void)xSemaphoreTake(s_i2c4_mutex, portMAX_DELAY);
+    }
+}
+
+static void i2c4_unlock(void)
+{
+    if (s_i2c4_mutex != NULL) {
+        (void)xSemaphoreGive(s_i2c4_mutex);
+    }
+}
+
+static void i2c4_recover_hw(void)
+{
+    (void)HAL_I2C_DeInit(&hi2c4);
+    HAL_Delay(2U);
+    (void)HAL_I2C_Init(&hi2c4);
+    (void)HAL_I2CEx_ConfigAnalogFilter(&hi2c4, I2C_ANALOGFILTER_ENABLE);
+    (void)HAL_I2CEx_ConfigDigitalFilter(&hi2c4, 0);
+}
+
+void I2C_BusMutex_Init(void)
+{
+    if (s_i2c4_mutex == NULL) {
+        s_i2c4_mutex = xSemaphoreCreateMutex();
+    }
+}
+
+HAL_StatusTypeDef I2C4_Mem_Read(uint16_t DevAddress, uint16_t MemAddress,
+                              uint8_t *pData, uint16_t Size, uint32_t TimeoutMs)
+{
+    HAL_StatusTypeDef st = HAL_ERROR;
+    uint8_t n;
+
+    i2c4_lock();
+    for (n = 0U; n < I2C4_RECOVER_TRIES; n++) {
+        st = HAL_I2C_Mem_Read(&hi2c4, DevAddress, MemAddress,
+                              I2C_MEMADD_SIZE_8BIT, pData, Size, TimeoutMs);
+        if (st == HAL_OK) {
+            break;
+        }
+        i2c4_recover_hw();
+    }
+    i2c4_unlock();
+    return st;
+}
+
+HAL_StatusTypeDef I2C4_Mem_Write(uint16_t DevAddress, uint16_t MemAddress,
+                               uint8_t *pData, uint16_t Size, uint32_t TimeoutMs)
+{
+    HAL_StatusTypeDef st = HAL_ERROR;
+    uint8_t n;
+
+    i2c4_lock();
+    for (n = 0U; n < I2C4_RECOVER_TRIES; n++) {
+        st = HAL_I2C_Mem_Write(&hi2c4, DevAddress, MemAddress,
+                               I2C_MEMADD_SIZE_8BIT, pData, Size, TimeoutMs);
+        if (st == HAL_OK) {
+            break;
+        }
+        i2c4_recover_hw();
+    }
+    i2c4_unlock();
+    return st;
+}
+
+HAL_StatusTypeDef I2C4_Master_Transmit(uint16_t DevAddress, uint8_t *pData,
+                                     uint16_t Size, uint32_t TimeoutMs)
+{
+    HAL_StatusTypeDef st = HAL_ERROR;
+    uint8_t n;
+
+    i2c4_lock();
+    for (n = 0U; n < I2C4_RECOVER_TRIES; n++) {
+        st = HAL_I2C_Master_Transmit(&hi2c4, DevAddress, pData, Size, TimeoutMs);
+        if (st == HAL_OK) {
+            break;
+        }
+        i2c4_recover_hw();
+    }
+    i2c4_unlock();
+    return st;
+}
+
+HAL_StatusTypeDef I2C4_Master_Receive(uint16_t DevAddress, uint8_t *pData,
+                                      uint16_t Size, uint32_t TimeoutMs)
+{
+    HAL_StatusTypeDef st = HAL_ERROR;
+    uint8_t n;
+
+    i2c4_lock();
+    for (n = 0U; n < I2C4_RECOVER_TRIES; n++) {
+        st = HAL_I2C_Master_Receive(&hi2c4, DevAddress, pData, Size, TimeoutMs);
+        if (st == HAL_OK) {
+            break;
+        }
+        i2c4_recover_hw();
+    }
+    i2c4_unlock();
+    return st;
+}
 /* USER CODE END 0 */
 
 I2C_HandleTypeDef hi2c1;

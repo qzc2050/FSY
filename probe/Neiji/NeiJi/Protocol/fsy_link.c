@@ -3,6 +3,7 @@
 #include "fsy_dispatch.h"
 #include "fsy_frame.h"
 #include "can_driver.h"
+#include "lora.h"
 #include "net_tcp.h"
 #include "uart1_port.h"
 
@@ -181,16 +182,27 @@ static void fsy_link_mirror_can(const uint8_t *data, uint16_t len)
     }
 }
 
+static void fsy_link_mirror_lora(const uint8_t *data, uint16_t len)
+{
+    if (LORA_IsEnabled() && LORA_IsReady()) {
+        (void)LORA_Transmit((uint8_t *)data, len);
+    }
+}
+
 int Fsy_Link_WriteUpload(const uint8_t *data, uint16_t len)
 {
+    int uart_rc;
+
     if ((data == NULL) || (len == 0U)) {
         return -1;
     }
 
-    (void)Uart1_Port_Write(data, len);
+    uart_rc = Uart1_Port_Write(data, len);
     (void)Net_Tcp_Write(data, len);
     fsy_link_mirror_can(data, len);
-    return (int)len;
+    fsy_link_mirror_lora(data, len);
+
+    return (uart_rc == (int)len) ? (int)len : -1;
 }
 
 int Fsy_Link_WriteUart(const uint8_t *data, uint16_t len)

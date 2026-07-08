@@ -36,11 +36,13 @@ typedef enum{
 
 extern void Beep_On(void);
 extern void Beep_Off(void);
+void Beep_SetVolumePercent(float volume);
 static bool Beep_Alternate(uint16_t time,uint8_t cnt,bool ref);
 
 extern uint8_t beep_event;
 extern void Beep_Ctr(uint8_t req_event);
 void Beep_PinEnsure(void);
+void Beep_GpioHighTestHold(void);
 void Beep_DebugProbe(void);
 
 

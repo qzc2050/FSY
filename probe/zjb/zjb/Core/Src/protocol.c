@@ -8,6 +8,41 @@
 #include "main.h"
 
 #include <string.h>
+#include <stdio.h>
+
+/* 1=USART1 打印 LoRa 完整帧 hex（CRC 通过后）；接 App 时改 0 */
+#define LORA_RX_LOG           0
+#define LORA_LOG_RX_HEX_MAX   64U
+
+#if LORA_RX_LOG
+static void Lora_LogFrame(const uint8_t *data, uint16_t len)
+{
+  uint16_t i;
+  uint16_t show;
+
+  if ((data == NULL) || (len == 0U))
+  {
+    return;
+  }
+
+  show = len;
+  if (show > LORA_LOG_RX_HEX_MAX)
+  {
+    show = LORA_LOG_RX_HEX_MAX;
+  }
+
+  printf("[LORA] frame addr=%02X %u bytes:", (unsigned)data[0], (unsigned)len);
+  for (i = 0U; i < show; i++)
+  {
+    printf(" %02X", (unsigned)data[i]);
+  }
+  if (len > show)
+  {
+    printf(" ...");
+  }
+  printf("\r\n");
+}
+#endif
 
 /* 使用 0xEF 作为本机协议地址（低字节），后续也可用 g_config.address */
 #define PROTOCOL_ADDR          0xEFU
@@ -44,6 +79,8 @@
 /* OTA 数据包最大 128 字节数据 + 帧头尾 = 137 字节，留余量用 256 */
 static uint8_t s_rx_buf[256];
 static uint16_t s_rx_len = 0U;
+static uint8_t s_lora_rx_buf[256];
+static uint16_t s_lora_rx_len = 0U;
 
 static uint16_t Protocol_CalcCrc(const uint8_t *buf, uint16_t len)
 {
@@ -142,6 +179,89 @@ static uint16_t Protocol_RtuFrameLen(const uint8_t *buf, uint16_t avail)
 static void Protocol_Send(uint8_t *buf, uint16_t len)
 {
   (void)USART1_Tx(buf, len, 100U);
+}
+
+static void Protocol_ForwardFromLora(const uint8_t *buf, uint16_t len);
+static void Protocol_HandleWriteMultiple(const uint8_t *frame, uint16_t len);
+static void Protocol_HandleWriteSingle(const uint8_t *frame, uint16_t len);
+static void Protocol_HandleReadMultiple(const uint8_t *frame, uint16_t len);
+
+static void Protocol_LoraParseStream(void)
+{
+  for (;;)
+  {
+    uint16_t frame_len = Protocol_RtuFrameLen(s_lora_rx_buf, s_lora_rx_len);
+    if (frame_len == PROTOCOL_RTU_FL_NEED_MORE)
+    {
+      return;
+    }
+    if (frame_len == 0U)
+    {
+      if (s_lora_rx_len < 1U)
+      {
+        return;
+      }
+      memmove(s_lora_rx_buf, &s_lora_rx_buf[1], s_lora_rx_len - 1U);
+      s_lora_rx_len--;
+      continue;
+    }
+    if (frame_len > sizeof(s_lora_rx_buf))
+    {
+      memmove(s_lora_rx_buf, &s_lora_rx_buf[1], s_lora_rx_len - 1U);
+      s_lora_rx_len--;
+      continue;
+    }
+
+    uint8_t addr = s_lora_rx_buf[0];
+    uint8_t func = s_lora_rx_buf[1];
+
+    if (s_lora_rx_len < frame_len)
+    {
+      return;
+    }
+
+    uint16_t crc_calc = Protocol_CalcCrc(s_lora_rx_buf, (uint16_t)(frame_len - 2U));
+    uint16_t crc_recv = (uint16_t)s_lora_rx_buf[frame_len - 2U] |
+                        ((uint16_t)s_lora_rx_buf[frame_len - 1U] << 8);
+    if (crc_calc != crc_recv)
+    {
+      memmove(s_lora_rx_buf, &s_lora_rx_buf[1], s_lora_rx_len - 1U);
+      s_lora_rx_len--;
+      continue;
+    }
+
+#if LORA_RX_LOG
+    Lora_LogFrame(s_lora_rx_buf, frame_len);
+#endif
+
+    if (addr != (uint8_t)PROTOCOL_ADDR)
+    {
+      Protocol_ForwardFromLora(s_lora_rx_buf, frame_len);
+    }
+    else if (func == 0x10U)
+    {
+      Protocol_HandleWriteMultiple(s_lora_rx_buf, frame_len);
+    }
+    else if (func == 0x06U)
+    {
+      Protocol_HandleWriteSingle(s_lora_rx_buf, frame_len);
+    }
+    else if (func == 0x03U)
+    {
+      Protocol_HandleReadMultiple(s_lora_rx_buf, frame_len);
+    }
+
+    if (s_lora_rx_len > frame_len)
+    {
+      memmove(s_lora_rx_buf, &s_lora_rx_buf[frame_len], s_lora_rx_len - frame_len);
+      s_lora_rx_len = (uint16_t)(s_lora_rx_len - frame_len);
+    }
+    else
+    {
+      s_lora_rx_len = 0U;
+      return;
+    }
+  }
 }
 
 /* ---------------- CAN Rx -> 组帧 -> USART1 转发 ---------------- */
@@ -296,8 +416,15 @@ static void CanCache_TryParseAndForward(CanSlaveCache *c)
       continue;
     }
 
-    /* CRC 通过：认为是一帧完整 RTU，原样从 USART1 发给 APP */
-    (void)USART1_Tx(c->buf, frame_len, 100U);
+    /* CRC 通过：CAN 始终转发；LoRa 转发看 bit9 */
+    {
+      uint8_t addr = c->buf[0];
+      (void)USART1_Tx(c->buf, frame_len, 100U);
+      if ((addr != (uint8_t)PROTOCOL_ADDR) && Config_LoraEnabled())
+      {
+        (void)USART2_Tx(c->buf, frame_len, 100U);
+      }
+    }
 
     if (c->len > frame_len)
     {
@@ -368,47 +495,63 @@ void Protocol_OnCanFrames(void)
   }
 }
 
-/* 转发：非本机地址的帧通过串口 + CAN 发出去（可改为其他 UART/CAN 配置） */
-static void Protocol_Forward(const uint8_t *buf, uint16_t len)
+/* 转发到 CAN：StdId = RTU addr，8 字节切片 */
+static void Protocol_ForwardToCan(const uint8_t *buf, uint16_t len)
 {
-  /* 串口转发：原样从 USART2 发出（包含 CRC） */
-  (void)HAL_UART_Transmit(&huart2, (uint8_t *)buf, len, 100U);
-
-  /* CAN 转发（按你约定）：
-   * - StdId = RTU addr（buf[0]）
-   * - Payload 8 字节原封不动切片（包含 addr/func/data/crc）
-   * - 超过 8 字节则发多帧，StdId 不变 */
-  if (len >= 1U)
+  if (len < 1U)
   {
-    uint8_t addr = buf[0];
+    return;
+  }
 
-    CAN_TxHeaderTypeDef txHeader;
-    uint32_t txMailbox;
-    uint8_t data[8];
+  uint8_t addr = buf[0];
 
-    txHeader.StdId = (uint32_t)addr;
-    txHeader.ExtId = 0U;
-    txHeader.IDE = CAN_ID_STD;
-    txHeader.RTR = CAN_RTR_DATA;
-    txHeader.TransmitGlobalTime = DISABLE;
+  CAN_TxHeaderTypeDef txHeader;
+  uint32_t txMailbox;
+  uint8_t data[8];
 
-    uint16_t offset = 0U;
-    while (offset < len)
+  txHeader.StdId = (uint32_t)addr;
+  txHeader.ExtId = 0U;
+  txHeader.IDE = CAN_ID_STD;
+  txHeader.RTR = CAN_RTR_DATA;
+  txHeader.TransmitGlobalTime = DISABLE;
+
+  uint16_t offset = 0U;
+  while (offset < len)
+  {
+    uint8_t dlc = (uint8_t)(((len - offset) > 8U) ? 8U : (len - offset));
+    memset(data, 0, sizeof(data));
+    memcpy(data, &buf[offset], dlc);
+
+    txHeader.DLC = dlc;
+    (void)HAL_CAN_AddTxMessage(&hcan, &txHeader, data, &txMailbox);
+    offset = (uint16_t)(offset + dlc);
+    if (offset < len)
     {
-      uint8_t dlc = (uint8_t)(((len - offset) > 8U) ? 8U : (len - offset));
-      memset(data, 0, sizeof(data));
-      memcpy(data, &buf[offset], dlc);
-
-      txHeader.DLC = dlc;
-      (void)HAL_CAN_AddTxMessage(&hcan, &txHeader, data, &txMailbox);
-      offset = (uint16_t)(offset + dlc);
-      /* 多帧切片时帧间隔 1ms，减轻对端接收压力 */
-      if (offset < len)
-      {
-        HAL_Delay(1U);
-      }
+      HAL_Delay(1U);
     }
   }
+}
+
+/* App/CAN → LoRa + CAN */
+static void Protocol_ForwardFromApp(const uint8_t *buf, uint16_t len)
+{
+  if (Config_LoraEnabled())
+  {
+    (void)USART2_Tx(buf, len, 100U);
+  }
+  Protocol_ForwardToCan(buf, len);
+}
+
+/* LoRa → App + CAN */
+static void Protocol_ForwardFromLora(const uint8_t *buf, uint16_t len)
+{
+  if (!Config_LoraEnabled())
+  {
+    return;
+  }
+
+  (void)USART1_Tx(buf, len, 100U);
+  Protocol_ForwardToCan(buf, len);
 }
 
 static void Protocol_HandleWriteMultiple(const uint8_t *frame, uint16_t len)
@@ -817,10 +960,10 @@ void Protocol_OnUart1Bytes(void)
       continue;
     }
 
-    /* 非本机地址：整帧转发到 USART2 + CAN，不做本地解析 */
+    /* 非本机地址：整帧转发到 LoRa + CAN，不做本地解析 */
     if (addr != (uint8_t)PROTOCOL_ADDR)
     {
-      Protocol_Forward(s_rx_buf, frame_len);
+      Protocol_ForwardFromApp(s_rx_buf, frame_len);
       if (s_rx_len > frame_len)
       {
         memmove(s_rx_buf, &s_rx_buf[frame_len], s_rx_len - frame_len);
@@ -859,6 +1002,33 @@ void Protocol_OnUart1Bytes(void)
       s_rx_len = 0U;
       return;
     }
+  }
+}
+
+void Protocol_OnUart2Bytes(void)
+{
+  uint16_t n;
+  uint8_t tmp[64];
+
+  for (;;)
+  {
+    n = USART2_Rx_GetCount();
+    if (n == 0U)
+    {
+      break;
+    }
+    if (n > sizeof(tmp))
+    {
+      n = sizeof(tmp);
+    }
+    n = USART2_Rx_Read(tmp, n);
+    if ((s_lora_rx_len + n) > sizeof(s_lora_rx_buf))
+    {
+      s_lora_rx_len = 0U;
+    }
+    memcpy(&s_lora_rx_buf[s_lora_rx_len], tmp, n);
+    s_lora_rx_len = (uint16_t)(s_lora_rx_len + n);
+    Protocol_LoraParseStream();
   }
 }
 

@@ -29,6 +29,7 @@
 /* USER CODE BEGIN Includes */
 #include "config_flash.h"
 #include "ota.h"
+#include "lora_boot.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -104,6 +105,7 @@ int main(void)
   OTA_Init();
   Config_Load();
   Config_ApplyIoOutputs();
+  (void)Lora_BootPrintConfig();
 
   /* USER CODE END 2 */
 

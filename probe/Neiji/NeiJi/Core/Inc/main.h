@@ -42,9 +42,12 @@ extern "C" {
 /* Exported constants --------------------------------------------------------*/
 /* USER CODE BEGIN EC */
 /* LVGL/显示探针版本：每次改探针或 flush 逻辑后 +1，便于串口日志对版 */
-#define NEIJI_DIAG_BUILD  15U   /* 15=关 VSYNC(局部 flush 每块等 16ms 会拖死整机) */
+#define NEIJI_DIAG_BUILD  16U   /* 16=UDP 组播诊断日志(tx ok/fail) */
 #ifndef NEIJI_BEEP_PROBE
 #define NEIJI_BEEP_PROBE  0U   /* 1=上电串口蜂鸣探针；硬件已确认后保持 0 */
+#endif
+#ifndef NEIJI_BEEP_GPIO_HIGH_TEST
+#define NEIJI_BEEP_GPIO_HIGH_TEST  0U   /* 1=PH9 常驻 GPIO 高电平硬件测试；测完改回 0 */
 #endif
 #ifndef NEIJI_UI_LIVE_REFRESH
 #define NEIJI_UI_LIVE_REFRESH  1U   /* 1=主界面每秒刷新传感器/剂量/时间 */

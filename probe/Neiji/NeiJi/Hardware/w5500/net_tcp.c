@@ -14,6 +14,7 @@ static SemaphoreHandle_t s_net_tx_mutex = NULL;
 static uint8_t g_tcp_sock_ready = 0;
 static uint8_t s_phy_link_up = 1;
 static uint32_t s_sock_con_ms = 0;
+static uint32_t s_listen_retry_ms = 0;
 static uint8_t s_sock_prev_st = SOCK_CLOSED;
 
 static void net_tx_mutex_init(void)
@@ -27,34 +28,81 @@ static bool net_local_ip_valid(void)
 {
     uint8_t ip[4];
 
-    getSIPR(ip);
-    if ((ip[0] | ip[1] | ip[2] | ip[3]) == 0U) {
-        return false;
+    W5500_Get_Active_IP(ip);
+    return W5500_Is_IP_Valid_Buf(ip);
+}
+
+static bool net_tcp_wait_sock_init(uint8_t sock)
+{
+    uint32_t start = HAL_GetTick();
+
+    while ((HAL_GetTick() - start) < NET_TCP_SOCK_INIT_WAIT_MS) {
+        if (getSn_SR(sock) == SOCK_INIT) {
+            return true;
+        }
     }
-    if (ip[0] == 255U && ip[1] == 255U && ip[2] == 255U && ip[3] == 255U) {
-        return false;
-    }
-    return true;
+    return (getSn_SR(sock) == SOCK_INIT);
 }
 
 static bool net_tcp_listen(uint8_t sock, uint16_t port, bool reopen)
 {
+    uint8_t sr;
+
     if (reopen) {
         close(sock);
     } else {
         printf("Opening Socket %u TCP port %u...\r\n", (unsigned)sock, (unsigned)port);
     }
 
-    if (socket(sock, Sn_MR_TCP, port, 0x00) != 1 || !listen(sock)) {
-        printf("Socket %u listen failed on port %u\r\n", (unsigned)sock, (unsigned)port);
+    if (socket(sock, Sn_MR_TCP, port, 0x00) != 1) {
+        printf("[TCP] Socket %u open failed sr=0x%02X\r\n",
+               (unsigned)sock, (unsigned)getSn_SR(sock));
+        return false;
+    }
+
+    if (!net_tcp_wait_sock_init(sock)) {
+        printf("[TCP] Socket %u not SOCK_INIT after open sr=0x%02X\r\n",
+               (unsigned)sock, (unsigned)getSn_SR(sock));
+        return false;
+    }
+
+    if (!listen(sock)) {
+        printf("[TCP] Socket %u listen cmd failed port %u sr=0x%02X\r\n",
+               (unsigned)sock, (unsigned)port, (unsigned)getSn_SR(sock));
+        return false;
+    }
+
+    sr = getSn_SR(sock);
+    if (sr != SOCK_LISTEN) {
+        printf("[TCP] Socket %u not LISTEN after listen port %u sr=0x%02X\r\n",
+               (unsigned)sock, (unsigned)port, (unsigned)sr);
         return false;
     }
 
     if (!reopen) {
-        printf("Socket %u listen OK port %u sr=0x%02X\r\n",
-               (unsigned)sock, (unsigned)port, (unsigned)getSn_SR(sock));
+        printf("[TCP] Socket %u listen OK port %u sr=0x%02X\r\n",
+               (unsigned)sock, (unsigned)port, (unsigned)sr);
     }
     return true;
+}
+
+static bool net_tcp_ensure_listen(void)
+{
+    uint8_t sr = getSn_SR(SETTING_SOCKET_NUM);
+
+    if (sr == SOCK_LISTEN) {
+        g_tcp_sock_ready = 1;
+        return true;
+    }
+
+    if (net_tcp_listen(SETTING_SOCKET_NUM, SETTING_SOCKET_PORT, true)) {
+        g_tcp_sock_ready = 1;
+        s_sock_prev_st = getSn_SR(SETTING_SOCKET_NUM);
+        return true;
+    }
+
+    g_tcp_sock_ready = 0;
+    return false;
 }
 
 static void net_tcp_recover_listen(uint8_t sock, uint16_t port)
@@ -69,7 +117,11 @@ static void net_tcp_recover_listen(uint8_t sock, uint16_t port)
     }
 
     if (getSn_SR(sock) != SOCK_LISTEN) {
-        (void)net_tcp_listen(sock, port, true);
+        if (net_tcp_listen(sock, port, true)) {
+            g_tcp_sock_ready = 1;
+        } else {
+            g_tcp_sock_ready = 0;
+        }
     }
 
     s_sock_prev_st = getSn_SR(sock);
@@ -85,17 +137,21 @@ static void net_phy_link_maintain(void)
         return;
     }
 
-    s_phy_link_up = link_up;
-    printf("PHY link %s\r\n", link_up ? "up" : "down");
-
-    if (!g_tcp_sock_ready) {
+    /* 冷上电宽限：仅忽略 link down（不关 TCP）；link up 仍要恢复 listen */
+    if (falling && W5500_Is_NetBootGrace() && net_local_ip_valid()) {
         return;
     }
 
+    s_phy_link_up = link_up;
+    printf("PHY link %s\r\n", link_up ? "up" : "down");
+
     if (rising) {
-        (void)net_tcp_listen(SETTING_SOCKET_NUM, SETTING_SOCKET_PORT, true);
+        if (net_local_ip_valid()) {
+            (void)net_tcp_ensure_listen();
+        }
     } else if (falling) {
         close(SETTING_SOCKET_NUM);
+        g_tcp_sock_ready = 0;
     }
 }
 
@@ -178,7 +234,11 @@ static void net_tcp_socket_maintain(uint8_t sock, uint16_t port)
 
     case SOCK_CLOSED:
     case SOCK_INIT:
-        (void)net_tcp_listen(sock, port, true);
+        if (net_tcp_listen(sock, port, true)) {
+            g_tcp_sock_ready = 1;
+        } else {
+            g_tcp_sock_ready = 0;
+        }
         break;
 
     case SOCK_SYNSENT:
@@ -220,18 +280,24 @@ bool Net_Tcp_Init(void)
 void Net_Tcp_RebindOnIpChange(void)
 {
     if (!net_local_ip_valid()) {
-        return;
-    }
-
-    if (net_tcp_listen(SETTING_SOCKET_NUM, SETTING_SOCKET_PORT, true)) {
-        g_tcp_sock_ready = 1;
-    } else {
+        printf("[TCP] skip listen rebound: IP invalid\r\n");
         g_tcp_sock_ready = 0;
+        return;
     }
 
     s_sock_con_ms = 0;
     s_sock_prev_st = SOCK_CLOSED;
-    printf("TCP listen rebound after IP update\r\n");
+    s_listen_retry_ms = HAL_GetTick();
+
+    if (net_tcp_ensure_listen()) {
+        printf("[TCP] listen rebound OK port %u sr=0x%02X\r\n",
+               (unsigned)SETTING_SOCKET_PORT,
+               (unsigned)getSn_SR(SETTING_SOCKET_NUM));
+    } else {
+        printf("[TCP] listen rebound FAILED port %u sr=0x%02X\r\n",
+               (unsigned)SETTING_SOCKET_PORT,
+               (unsigned)getSn_SR(SETTING_SOCKET_NUM));
+    }
 }
 
 void Net_Tcp_DeInit(void)
@@ -245,14 +311,33 @@ void Net_Tcp_DeInit(void)
 
 void Net_Tcp_PeriodicMaintain(void)
 {
+    uint32_t now;
+
     if (W5500_Is_Network_Recovering()) {
         return;
     }
 
     net_phy_link_maintain();
 
-    if (!net_local_ip_valid() || !g_tcp_sock_ready) {
+    if (!net_local_ip_valid()) {
+        g_tcp_sock_ready = 0;
         return;
+    }
+
+    if (!g_tcp_sock_ready || (getSn_SR(SETTING_SOCKET_NUM) != SOCK_LISTEN &&
+                              getSn_SR(SETTING_SOCKET_NUM) != SOCK_ESTABLISHED)) {
+        now = HAL_GetTick();
+        if ((now - s_listen_retry_ms) >= NET_TCP_LISTEN_RETRY_MS) {
+            s_listen_retry_ms = now;
+            if (net_tcp_ensure_listen()) {
+                printf("[TCP] listen recovered port %u sr=0x%02X\r\n",
+                       (unsigned)SETTING_SOCKET_PORT,
+                       (unsigned)getSn_SR(SETTING_SOCKET_NUM));
+            }
+        }
+        if (!g_tcp_sock_ready) {
+            return;
+        }
     }
 
     net_tcp_socket_maintain(SETTING_SOCKET_NUM, SETTING_SOCKET_PORT);

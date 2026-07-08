@@ -77,6 +77,7 @@ static void NetTask(void *argument)
     Reset_W5500();
     printf("[net] set_w5500_default...\r\n");
     set_w5500_default();
+    W5500_Network_OnBoot();
     printf("[net] set_w5500_network...\r\n");
     set_w5500_network();
     printf("[net] phase %d init done\r\n", NET_TASK_PHASE);

@@ -54,7 +54,7 @@ void Config_SetDefault(void)
 
   g_config.address     = 0x00EFU;  /* 默认协议地址，实际可由上位机修改 */
   g_config.control_bit = 0x0000U;  /* 默认全部启用声/光/屏幕 */
-  g_config.control_bit2 = 0x00000386U; /* 默认 IO：bit3/4/5 蓝牙 PIO2/3/4 低电平，bit8=1 选 USB3（调试） */ 
+  g_config.control_bit2 = CTRL2_DEFAULT;
 
   /* 默认序列号填零 */
   memset(g_config.serialnum, 0, sizeof(g_config.serialnum));
@@ -103,8 +103,58 @@ void Config_Load(void)
 
   Config_ReadFromFlash(&tmp);
 
-  if ((tmp.magic == CONFIG_MAGIC) &&
-      (tmp.version == CONFIG_VERSION))
+  if (tmp.magic != CONFIG_MAGIC) {
+    goto use_default;
+  }
+
+  if (tmp.version == CONFIG_VERSION_V1)
+  {
+    uint32_t crc = Config_CalcCrc(&tmp);
+    if (crc == tmp.crc)
+    {
+      memcpy(&g_config, &tmp, sizeof(SystemConfig_t));
+      g_config.control_bit2 |= CTRL2_DEFAULT_NEIJI_CTRL;
+      g_config.version = CONFIG_VERSION;
+      Config_Save();
+      return;
+    }
+  }
+
+  if (tmp.version == CONFIG_VERSION_V2)
+  {
+    uint32_t crc = Config_CalcCrc(&tmp);
+    if (crc == tmp.crc)
+    {
+      uint32_t m;
+
+      memcpy(&g_config, &tmp, sizeof(SystemConfig_t));
+      m = g_config.control_bit2;
+      if ((m & (1UL << 13)) != 0U) {
+        m |= (1UL << CTRL2_BIT_LORA_POWER);
+      }
+      m &= ~((1UL << 12) | (1UL << 15));
+      m |= CTRL2_DEFAULT_NEIJI_CTRL;
+      g_config.control_bit2 = m;
+      g_config.version = CONFIG_VERSION;
+      Config_Save();
+      return;
+    }
+  }
+
+  if (tmp.version == CONFIG_VERSION_V3)
+  {
+    uint32_t crc = Config_CalcCrc(&tmp);
+    if (crc == tmp.crc)
+    {
+      memcpy(&g_config, &tmp, sizeof(SystemConfig_t));
+      g_config.control_bit2 &= ~((1UL << 12) | (1UL << 15));
+      g_config.version = CONFIG_VERSION;
+      Config_Save();
+      return;
+    }
+  }
+
+  if (tmp.version == CONFIG_VERSION)
   {
     uint32_t crc = Config_CalcCrc(&tmp);
     if (crc == tmp.crc)
@@ -114,9 +164,15 @@ void Config_Load(void)
     }
   }
 
+use_default:
   /* Flash 中无效，加载默认值并写回 */
   Config_SetDefault();
   Config_Save();
+}
+
+int Config_LoraEnabled(void)
+{
+  return (g_config.control_bit2 & (1UL << CTRL2_BIT_LORA_POWER)) != 0U;
 }
 
 void Config_Save(void)
@@ -170,9 +226,9 @@ void Config_ApplyIoOutputs(void)
   HAL_GPIO_WritePin(USB_SEL_GPIO_Port, USB_SEL_Pin,
                     (m & (1UL << 8)) != 0U ? GPIO_PIN_SET : GPIO_PIN_RESET);
 
-  /* bit9: LORA 电源 */
+  /* bit9: LoRa 电源（0=拉低断电，1=拉高上电；桥接随 bit9） */
   HAL_GPIO_WritePin(LORA_POWER_EN_GPIO_Port, LORA_POWER_EN_Pin,
-                    (m & (1UL << 9)) != 0U ? GPIO_PIN_SET : GPIO_PIN_RESET);
+                    (m & (1UL << CTRL2_BIT_LORA_POWER)) != 0U ? GPIO_PIN_SET : GPIO_PIN_RESET);
 
   /* bit10: LORA M1 */
   HAL_GPIO_WritePin(LORA_M1_GPIO_Port, LORA_M1_Pin,

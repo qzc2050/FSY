@@ -11,6 +11,9 @@ object NeijiProbeRegs {
     const val ALARM_VOLUME = 0x007A
     /** reg123：bit13 光报警，bit14 背光，bit15 外置报警在线（只读） */
     const val CONTROL_BIT2 = 0x007B
+    /** reg94：RTC 时间 8B `[年%100,月,日,时,分,秒,0,0]`，写满 4 reg 生效 */
+    const val TIME = 0x005E
+    const val TIME_REG_COUNT = 4
 
     /** uint32 阈值 / 使能 / control2 占 2 个 holding reg（4 字节） */
     const val U32_REG_COUNT = 2

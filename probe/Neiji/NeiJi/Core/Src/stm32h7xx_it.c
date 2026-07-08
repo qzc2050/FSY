@@ -26,6 +26,7 @@
 /* USER CODE BEGIN Includes */
 #include "uart_diag.h"
 #include "hal/lv_hal_tick.h"
+#include "lora.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -241,6 +242,14 @@ void USART3_IRQHandler(void)
   /* USER CODE BEGIN USART3_IRQn 1 */
 
   /* USER CODE END USART3_IRQn 1 */
+}
+
+/**
+  * @brief This function handles UART5 global interrupt (E32 LoRa).
+  */
+void UART5_IRQHandler(void)
+{
+  LORA_UART_IRQHandler();
 }
 
 /* USER CODE BEGIN 1 */

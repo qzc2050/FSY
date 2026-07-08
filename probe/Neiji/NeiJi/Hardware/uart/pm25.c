@@ -1,11 +1,11 @@
 #include "pm25.h"
 #include "usart.h"
 #include "main.h"
+#include "sensor_common.h"
 
 #define PM25_HEADER1      0x42U
 #define PM25_HEADER2      0x4DU
 #define PM25_FRAME_LEN    32U
-#define PM25_OFFLINE_MS   5000U
 
 typedef enum {
     PM25_STATE_WAIT_HEADER1 = 0,
@@ -95,15 +95,12 @@ void PM25_ProcessByte(uint8_t byte)
 
 void PM25_GetData(PM25_Data_t *out)
 {
-    uint32_t diff;
-
     if (out == NULL) {
         return;
     }
 
     *out = s_data;
-    diff = HAL_GetTick() - s_data.last_update_tick;
-    if ((s_data.last_update_tick == 0U) || (diff > PM25_OFFLINE_MS)) {
+    if (sensor_tick_is_stale(s_data.last_update_tick, SENSOR_OFFLINE_MS)) {
         out->online = 0U;
     }
 }

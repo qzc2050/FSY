@@ -1,6 +1,8 @@
 #include "aht20.h"
 #include "i2c.h"
 #include "main.h"
+#include "sensor_common.h"
+#include "cmsis_os.h"
 
 #define AHT20_I2C_ADDR  (0x38U << 1)
 
@@ -22,7 +24,7 @@ static HAL_StatusTypeDef AHT20_WriteCmd(uint8_t cmd, const uint8_t *data, uint16
         buf[2] = data[1];
     }
 
-    return HAL_I2C_Master_Transmit(&hi2c4, AHT20_I2C_ADDR, buf, (uint16_t)(1U + len), 50U);
+    return I2C4_Master_Transmit(AHT20_I2C_ADDR, buf, (uint16_t)(1U + len), 50U);
 }
 
 void AHT20_Init(void)
@@ -37,7 +39,7 @@ void AHT20_Init(void)
     data[0] = 0x08U;
     data[1] = 0x00U;
     (void)AHT20_WriteCmd(0xBEU, data, 2U);
-    HAL_Delay(20U);
+    osDelay(20U);
 }
 
 void AHT20_Update(void)
@@ -53,9 +55,9 @@ void AHT20_Update(void)
         return;
     }
 
-    HAL_Delay(80U);
+    osDelay(80U);
 
-    if (HAL_I2C_Master_Receive(&hi2c4, AHT20_I2C_ADDR, buf, sizeof(buf), 50U) != HAL_OK) {
+    if (I2C4_Master_Receive(AHT20_I2C_ADDR, buf, sizeof(buf), 50U) != HAL_OK) {
         return;
     }
 
@@ -70,15 +72,12 @@ void AHT20_Update(void)
 
 void AHT20_GetData(AHT20_Data_t *out)
 {
-    uint32_t diff;
-
     if (out == NULL) {
         return;
     }
 
     *out = s_aht20;
-    diff = HAL_GetTick() - s_aht20.last_update_tick;
-    if ((s_aht20.last_update_tick == 0U) || (diff > 5000U)) {
+    if (sensor_tick_is_stale(s_aht20.last_update_tick, SENSOR_OFFLINE_MS)) {
         out->online = 0U;
     }
 }

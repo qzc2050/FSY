@@ -9,6 +9,46 @@
 #include <string.h>
 #include <stdio.h>
 
+#if !CAN_DRIVER_ENABLE
+
+bool CanDriver_Init(void)
+{
+    UartDiag_Write("[CAN] disabled (CAN_DRIVER_ENABLE=0)\r\n");
+    return false;
+}
+
+bool CanDriver_IsReady(void)
+{
+    return false;
+}
+
+bool CanDriver_TransmitStd(uint16_t std_id, const uint8_t *data, uint8_t dlc)
+{
+    (void)std_id;
+    (void)data;
+    (void)dlc;
+    return false;
+}
+
+bool CanDriver_TransmitRtu(const uint8_t *frame, uint16_t len)
+{
+    (void)frame;
+    (void)len;
+    return false;
+}
+
+bool CanDriver_RxPop(CanRxItem *out)
+{
+    (void)out;
+    return false;
+}
+
+void CanDriver_Poll(void)
+{
+}
+
+#else /* CAN_DRIVER_ENABLE */
+
 /* -------------------------------------------------------------------------- */
 /*  与 zjb can.c / RAD-I fdcan.c 对齐：Classic CAN @ 500 kbps                  */
 /*  FDCAN 时钟 120 MHz：120M / (15 * (1+13+2)) = 500 kbps                     */
@@ -227,7 +267,8 @@ static bool can_hw_init(void)
     s_hfdcan2.Instance = FDCAN2;
     s_hfdcan2.Init.FrameFormat = FDCAN_FRAME_CLASSIC;
     s_hfdcan2.Init.Mode = FDCAN_MODE_NORMAL;
-    s_hfdcan2.Init.AutoRetransmission = ENABLE;
+    /* 与 zjb can.c 一致：无 ACK 时不无限重发，避免未接线时 TX FIFO 堆满 / Bus-Off */
+    s_hfdcan2.Init.AutoRetransmission = DISABLE;
     s_hfdcan2.Init.TransmitPause = DISABLE;
     s_hfdcan2.Init.ProtocolException = DISABLE;
     s_hfdcan2.Init.NominalPrescaler = 15;
@@ -484,3 +525,5 @@ void CanDriver_Poll(void)
         }
     }
 }
+
+#endif /* CAN_DRIVER_ENABLE */

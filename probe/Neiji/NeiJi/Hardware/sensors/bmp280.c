@@ -1,6 +1,8 @@
 #include "bmp280.h"
 #include "i2c.h"
 #include "main.h"
+#include "sensor_common.h"
+#include "cmsis_os.h"
 
 #define BMP280_I2C_ADDR  (0x76U << 1)
 
@@ -27,12 +29,12 @@ static int16_t dig_P9;
 
 static HAL_StatusTypeDef BMP280_ReadRegs(uint8_t reg, uint8_t *buf, uint16_t len)
 {
-    return HAL_I2C_Mem_Read(&hi2c4, BMP280_I2C_ADDR, reg, I2C_MEMADD_SIZE_8BIT, buf, len, 50U);
+    return I2C4_Mem_Read(BMP280_I2C_ADDR, reg, buf, len, 50U);
 }
 
 static HAL_StatusTypeDef BMP280_WriteReg(uint8_t reg, uint8_t value)
 {
-    return HAL_I2C_Mem_Write(&hi2c4, BMP280_I2C_ADDR, reg, I2C_MEMADD_SIZE_8BIT, &value, 1U, 50U);
+    return I2C4_Mem_Write(BMP280_I2C_ADDR, reg, &value, 1U, 50U);
 }
 
 static void BMP280_ReadCalibration(void)
@@ -71,7 +73,7 @@ void BMP280_Init(void)
     }
 
     (void)BMP280_WriteReg(BMP280_REG_RESET, 0xB6U);
-    HAL_Delay(10U);
+    osDelay(10U);
     BMP280_ReadCalibration();
     (void)BMP280_WriteReg(BMP280_REG_CTRL_MEAS, 0x27U);
     (void)BMP280_WriteReg(BMP280_REG_CONFIG, 0xA0U);
@@ -125,15 +127,12 @@ void BMP280_Update(void)
 
 void BMP280_GetData(BMP280_Data_t *out)
 {
-    uint32_t diff;
-
     if (out == NULL) {
         return;
     }
 
     *out = s_bmp280;
-    diff = HAL_GetTick() - s_bmp280.last_update_tick;
-    if ((s_bmp280.last_update_tick == 0U) || (diff > 5000U)) {
+    if (sensor_tick_is_stale(s_bmp280.last_update_tick, SENSOR_OFFLINE_MS)) {
         out->online = 0U;
     }
 }

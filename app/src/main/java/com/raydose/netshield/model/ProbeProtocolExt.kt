@@ -2,6 +2,7 @@ package com.raydose.netshield.model
 
 import com.raydose.netshield.net.buildWriteMultiRegsFrame
 import com.raydose.netshield.net.buildWriteSingleRegFrame
+import com.raydose.netshield.net.buildWriteTimeFrame
 import com.raydose.netshield.net.u32ToLe
 import kotlin.math.roundToInt
 
@@ -20,6 +21,14 @@ fun isExternalAlarmConnected(alarmBit: Long): Boolean {
     val lightOffline = (alarmBit shr 30) and 1L != 0L
     return !soundOffline || !lightOffline
 }
+
+/** 与 Neiji GEIGER_RATE_LIMIT / CFG_RATE_LIMIT 一致 */
+const val PROBE_DOSE_MAX_USV_H = 10000.0
+const val PROBE_DOSE_MAX_X100 = 1_000_000L
+
+/** 实时 0x23 reg1：剂量×100 是否在固件量程内 */
+fun isPlausibleRealtimeDoseX100(doseX100: Long): Boolean =
+    doseX100 in 0L..PROBE_DOSE_MAX_X100
 
 /** alarm_bit bit0=辐射上限报警，bit1=辐射下限报警（与 0x52 使能位同序；1=正在报警） */
 private const val RADIATION_UPPER_ALARM_BIT = 0
@@ -147,6 +156,20 @@ fun ProbeManageDraft.buildDoseUpperWriteFrame(): ByteArray? =
             savedProbe.modbusDeviceAddr(),
         )
     }
+
+/** 写 reg94：本机当前时间同步到 Neiji RTC */
+fun SavedProbe.buildTimeSyncWriteFrame(): ByteArray {
+    val cal = java.util.Calendar.getInstance()
+    return buildWriteTimeFrame(
+        year2d = cal.get(java.util.Calendar.YEAR) % 100,
+        month = cal.get(java.util.Calendar.MONTH) + 1,
+        day = cal.get(java.util.Calendar.DAY_OF_MONTH),
+        hour = cal.get(java.util.Calendar.HOUR_OF_DAY),
+        minute = cal.get(java.util.Calendar.MINUTE),
+        second = cal.get(java.util.Calendar.SECOND),
+        deviceAddr = modbusDeviceAddr(),
+    )
+}
 
 /** 辐射报警下限 → reg 52 */
 fun ProbeManageDraft.buildDoseLowerWriteFrame(): ByteArray? =

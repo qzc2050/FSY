@@ -7,6 +7,7 @@ import com.raydose.netshield.model.DiscoveredDevice
 import com.raydose.netshield.model.NeijiProbeRegs
 import com.raydose.netshield.model.ProbeCommandLink
 import com.raydose.netshield.model.SavedProbe
+import com.raydose.netshield.model.isPlausibleRealtimeDoseX100
 import com.raydose.netshield.model.matchesSaved
 import com.raydose.netshield.net.FsyBroadcast
 import com.raydose.netshield.net.FsyProtocolFrameCollector
@@ -16,20 +17,19 @@ import com.raydose.netshield.net.FsyTcpClient
 import com.raydose.netshield.net.buildReadRegsFrame
 import com.raydose.netshield.net.findRoutesToHost
 import com.raydose.netshield.net.listFsyNetworkOptions
+import com.raydose.netshield.net.pickFsyNetworkForMulticast
 import com.raydose.netshield.net.parseFsyBroadcast
 import com.raydose.netshield.net.parseFsyTcpFrame
-import com.raydose.netshield.net.ParsedFsyFrame
 import com.raydose.netshield.net.pickBestRoute
+import java.util.concurrent.Executors
 import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
-import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.AtomicReference
 import kotlin.concurrent.thread
 
 /**
  * 组播发现 + 对已保存探头维持 TCP，解析 0x23 实时数据。
- * 断电/断线后：退避自动重连 + 组播再次出现立即重连。
+ * TCP 连接前须先收到组播，确认序列号与 IP；断线后清除锚点，等下一次组播再连。
  */
 class ProbeConnectionManager(
     context: Context,
@@ -47,17 +47,24 @@ class ProbeConnectionManager(
     private val connectGeneration = ConcurrentHashMap<String, AtomicInteger>()
     private val probeOnline = ConcurrentHashMap<String, Boolean>()
     private val savedProbesRef = AtomicReference<List<SavedProbe>>(emptyList())
-    private val retryDelayMs = ConcurrentHashMap<String, AtomicLong>()
-    private val reconnectGate = ConcurrentHashMap<String, AtomicBoolean>()
     private val lastDiscoveryReconnectMs = ConcurrentHashMap<String, Long>()
     private val lastConnectAttemptMs = ConcurrentHashMap<String, Long>()
     private val connectLocks = ConcurrentHashMap<String, Any>()
-    private val frameStatsByProbe = ConcurrentHashMap<String, TcpFrameStats>()
     /** 任意 0x23（实时/阈值/5min/其它）收到时刷新，用于僵死连接判定 */
     private val lastRx23Ms = ConcurrentHashMap<String, Long>()
     private val tcpConnectedAtMs = ConcurrentHashMap<String, Long>()
     /** 组播发现日志去重：同一设备 60s 内只打一条 */
     private val lastDiscoveryLogMs = ConcurrentHashMap<String, Long>()
+    /** 组播已确认的 serial/ip，TCP 连接唯一依据 */
+    private val tcpDiscoveryAnchors = ConcurrentHashMap<String, TcpDiscoveryAnchor>()
+
+    private data class TcpDiscoveryAnchor(
+        val serial: String,
+        val ip: String,
+        val controlPort: Int,
+        val dataPort: Int,
+        val seenAtMillis: Long,
+    )
 
     @Volatile
     private var preferredNetwork: Network? = null
@@ -76,18 +83,20 @@ class ProbeConnectionManager(
 
     private var watchdogThread: Thread? = null
 
-    @Volatile
-    private var statsReporterRunning = false
-
-    private var statsReporterThread: Thread? = null
+    /** 组播收包线程只做解析/回调；TCP 调度放到独立线程，避免阻塞 UDP receive */
+    private val discoveryFollowUp = Executors.newSingleThreadExecutor { runnable ->
+        Thread(runnable, "fsy-mcast-followup").apply { isDaemon = true }
+    }
 
     private val discovery = FsyMulticastDiscovery(
         appContext = appContext,
         onDatagram = { text ->
             onDiscoveredRaw(text)
             parseFsyBroadcast(text)?.let { broadcast ->
-                maybeLogDiscovery(broadcast)
-                tryReconnectOnDiscovery(broadcast)
+                discoveryFollowUp.execute {
+                    maybeLogDiscovery(broadcast)
+                    tryReconnectOnDiscovery(broadcast)
+                }
             }
         },
         onError = { msg -> Log.w(TAG, "组播: $msg") },
@@ -100,28 +109,37 @@ class ProbeConnectionManager(
 
     fun refreshNetworkPreference() {
         val options = listFsyNetworkOptions(appContext)
-        val pick = options.firstOrNull { it.isDefault }
-            ?: options.firstOrNull()
+        val pick = pickFsyNetworkForMulticast(options)
         preferredNetwork = pick?.network
         preferredInterfaceName = pick?.interfaceName
         preferredLocalIpv4 = pick?.localIpv4
+    }
+
+    /** 打开「添加探头」等场景下刷新网卡并重启组播监听（网线后插、DHCP 变更时有用） */
+    fun restartDiscovery() {
+        refreshNetworkPreference()
+        discovery.start(preferredNetwork, preferredInterfaceName)
+        if (!watchdogRunning) startWatchdog()
+        Log.i(
+            TAG,
+            "组播发现已重启 iface=$preferredInterfaceName ip=$preferredLocalIpv4 net=$preferredNetwork",
+        )
     }
 
     fun startDiscovery() {
         refreshNetworkPreference()
         discovery.start(preferredNetwork, preferredInterfaceName)
         startWatchdog()
-        startFrameStatsReporter()
-        Log.i(TAG, "组播发现已启动 iface=$preferredInterfaceName")
+        Log.i(
+            TAG,
+            "组播发现已启动 iface=$preferredInterfaceName ip=$preferredLocalIpv4 net=$preferredNetwork",
+        )
     }
 
     fun stopDiscovery() {
         watchdogRunning = false
         watchdogThread?.interrupt()
         watchdogThread = null
-        statsReporterRunning = false
-        statsReporterThread?.interrupt()
-        statsReporterThread = null
         discovery.stop()
     }
 
@@ -132,16 +150,24 @@ class ProbeConnectionManager(
             disconnectAll()
             refreshNetworkPreference()
             probes.forEach { probe ->
-                resetRetryDelay(probe.id)
-                scheduleConnect(probe)
+                tcpDiscoveryAnchors.remove(probe.id)
             }
+            Log.i(TAG, "探头列表已刷新，等待组播确认 serial/ip 后建立 TCP")
         } finally {
             suppressAutoReconnect = false
         }
     }
 
     fun connect(probe: SavedProbe) {
-        resetRetryDelay(probe.id)
+        scheduleConnect(probe)
+    }
+
+    /** 从「添加探头」等已确认的发现项建立 TCP（写入组播锚点后连接）。 */
+    fun connectAfterDiscovery(probe: SavedProbe, device: DiscoveredDevice) {
+        if (!recordDiscoveryAnchor(device, probe)) {
+            Log.i(TAG, "跳过 TCP 连接 ${probe.displayName}：发现项缺少 serial/ip")
+            return
+        }
         scheduleConnect(probe)
     }
 
@@ -281,13 +307,17 @@ class ProbeConnectionManager(
     }
 
     private fun scheduleConnect(probe: SavedProbe) {
-        lastConnectAttemptMs[probe.id] = System.currentTimeMillis()
-        val generation = nextConnectGeneration(probe.id)
-        thread(name = "fsy-tcp-connect-${probe.id}") {
-            val lock = connectLocks.getOrPut(probe.id) { Any() }
+        val resolved = resolveProbeForTcpConnect(probe) ?: run {
+            Log.i(TAG, "跳过 TCP 连接 ${probe.displayName}：等待组播确认 serial/ip")
+            return
+        }
+        lastConnectAttemptMs[resolved.id] = System.currentTimeMillis()
+        val generation = nextConnectGeneration(resolved.id)
+        val lock = connectLocks.getOrPut(resolved.id) { Any() }
+        thread(name = "fsy-tcp-connect-${resolved.id}") {
             synchronized(lock) {
-                if (isStaleConnect(probe.id, generation)) return@synchronized
-                connectOnWorker(probe, generation)
+                if (isStaleConnect(resolved.id, generation)) return@synchronized
+                connectOnWorker(resolved, generation)
             }
         }
     }
@@ -310,20 +340,28 @@ class ProbeConnectionManager(
         if (was != online) {
             onProbeOnlineChanged(probeId, online)
         }
-        if (online) {
-            resetRetryDelay(probeId)
-        }
     }
 
     private fun handleConnectionLost(probe: SavedProbe, reason: String) {
+        resetTcpConnection(probe, reason, clearDiscoveryAnchor = true)
+    }
+
+    /** 组播已确认时重置 TCP，可选保留锚点以便立即重连 */
+    private fun resetTcpConnection(
+        probe: SavedProbe,
+        reason: String,
+        clearDiscoveryAnchor: Boolean,
+    ) {
         if (!isProbeOnline(probe.id) && clients[probe.id] == null) return
         Log.i(TAG, "TCP 断开 ${probe.displayName}@${probe.ip}: $reason")
         closeClientOnly(probe.id)
         setProbeOnline(probe.id, false)
-        if (reason.contains("对端关闭") || reason.contains("ECONNREFUSED")) {
-            applyBootingRetryDelay(probe.id)
+        if (clearDiscoveryAnchor) {
+            tcpDiscoveryAnchors.remove(probe.id)
+            Log.i(TAG, "已清除 ${probe.displayName} 组播锚点，等待组播再次确认 serial/ip")
+        } else {
+            Log.i(TAG, "保留 ${probe.displayName} 组播锚点，立即重连 TCP")
         }
-        scheduleReconnect(probe.id)
     }
 
     private fun connectOnWorker(probe: SavedProbe, generation: Int) {
@@ -339,30 +377,27 @@ class ProbeConnectionManager(
 
         val collector = FsyProtocolFrameCollector()
         collectors[probe.id] = collector
-        val client = FsyTcpClient(
+        lateinit var client: FsyTcpClient
+        client = FsyTcpClient(
             appContext = appContext,
             onReceive = { chunk ->
                 val frames = collector.feed(chunk)
                 frames.forEach { frame ->
-                    val parsed = parseFsyTcpFrame(frame)
-                    if (parsed == null) {
-                        statsForProbe(probe.id).parseFail.incrementAndGet()
-                        logTcpRxParseFail(probe, frame)
-                        return@forEach
-                    }
-                    logTcpRxFrame(probe, frame, parsed)
-                    recordFrameStats(probe.id, parsed)
+                    val parsed = parseFsyTcpFrame(frame) ?: return@forEach
+                    if (!recordRx23AndShouldDispatch(probe.id, parsed)) return@forEach
                     onTcpFrame(probe.id, parsed)
                 }
             },
             onError = { msg ->
                 Log.w(TAG, "TCP ${probe.displayName}@${probe.ip}: $msg")
-                if (isProbeOnline(probe.id)) {
+                if (clients[probe.id] === client) {
                     handleConnectionLost(probe, msg)
                 }
             },
             onRemoteDisconnected = {
-                handleConnectionLost(probe, "对端关闭连接")
+                if (clients[probe.id] === client) {
+                    handleConnectionLost(probe, "对端关闭连接")
+                }
             },
         )
         clients[probe.id] = client
@@ -398,23 +433,15 @@ class ProbeConnectionManager(
         }
 
         if (ok) {
+            client.beginReading()
             val now = System.currentTimeMillis()
             tcpConnectedAtMs[probe.id] = now
-            lastRx23Ms[probe.id] = now
-            setProbeOnline(probe.id, true)
-            Log.i(TAG, "TCP 已连接 ${probe.displayName} ${probe.ip}:${probe.controlPort}")
+            Log.i(TAG, "TCP 已建立 ${probe.displayName} ${probe.ip}:${probe.controlPort}，等待 0x23")
         } else {
             setProbeOnline(probe.id, false)
-            applyBootingRetryDelay(probe.id)
-            Log.w(TAG, "TCP 连接失败 ${probe.ip}:${probe.controlPort}，将自动重试")
-            scheduleReconnect(probe.id)
+            tcpDiscoveryAnchors.remove(probe.id)
+            Log.w(TAG, "TCP 连接失败 ${probe.ip}:${probe.controlPort}，等待组播再次确认 serial/ip")
         }
-    }
-
-    /** 从机上电后 TCP 常晚于组播就绪，避免 3s 就刷 ECONNREFUSED */
-    private fun applyBootingRetryDelay(probeId: String) {
-        retryDelayMs.getOrPut(probeId) { AtomicLong(INITIAL_RETRY_MS) }
-            .updateAndGet { current -> maxOf(current, BOOTING_RETRY_MS) }
     }
 
     private fun maybeLogDiscovery(broadcast: FsyBroadcast) {
@@ -426,84 +453,105 @@ class ProbeConnectionManager(
         Log.d(TAG, "发现 ${broadcast.model} ${broadcast.ip} id=${broadcast.protoAddr}")
     }
 
-    /** 组播再次发现已保存探头：离线则重连；在线但 0x23 已停（内机重启等）也重连 */
+    /** 组播再次发现已保存探头：确认 serial/ip 后建立或重建 TCP（0x23 超时由组播触发重连） */
     private fun tryReconnectOnDiscovery(broadcast: FsyBroadcast) {
         if (suppressAutoReconnect) return
         val device = DiscoveredDevice.fromBroadcast(broadcast)
         val probe = savedProbesRef.get().firstOrNull { matchesSaved(it, device) } ?: return
+        if (!recordDiscoveryAnchor(device, probe)) return
+        val resolved = resolveProbeForTcpConnect(probe) ?: return
 
         val now = System.currentTimeMillis()
-        val online = isProbeOnline(probe.id)
-        if (online) {
-            val lastRx = lastRx23Ms[probe.id] ?: tcpConnectedAtMs[probe.id] ?: return
-            if (now - lastRx < DISCOVERY_STALE_RECONNECT_MS) return
-            Log.i(
-                TAG,
-                "组播活跃但 ${now - lastRx}ms 无 0x23，软重连 ${probe.displayName}（不断开 UI）",
+        val staleReason = tcpStaleReconnectReason(resolved.id, now)
+        if (staleReason != null) {
+            Log.i(TAG, "${staleReason.logLabel}，组播触发重连 ${resolved.displayName}")
+            lastDiscoveryReconnectMs[resolved.id] = now
+            resetTcpConnection(
+                probe = resolved,
+                reason = staleReason.disconnectReason,
+                clearDiscoveryAnchor = false,
             )
-        } else {
-            val lastDiscovery = lastDiscoveryReconnectMs[probe.id] ?: 0L
-            if (now - lastDiscovery < DISCOVERY_RECONNECT_DEBOUNCE_MS) return
-            val lastAttempt = lastConnectAttemptMs[probe.id] ?: 0L
-            if (now - lastAttempt < CONNECT_COOLDOWN_MS) return
-            Log.i(TAG, "组播发现离线探头 ${probe.displayName}，触发重连")
+            scheduleConnect(resolved)
+            return
+        }
+        if (clients[resolved.id] != null) {
+            return
         }
 
-        lastDiscoveryReconnectMs[probe.id] = now
-        resetRetryDelay(probe.id)
-        if (online) {
-            reconnectTcpSoft(probe)
-        } else {
-            scheduleConnect(probe)
+        val lastDiscovery = lastDiscoveryReconnectMs[resolved.id] ?: 0L
+        if (now - lastDiscovery < DISCOVERY_RECONNECT_DEBOUNCE_MS) return
+        val lastAttempt = lastConnectAttemptMs[resolved.id] ?: 0L
+        if (now - lastAttempt < CONNECT_ATTEMPT_GUARD_MS) return
+        Log.i(
+            TAG,
+            "组播确认 ${resolved.serial}@${resolved.ip}，建立 TCP ${resolved.displayName}",
+        )
+        lastDiscoveryReconnectMs[resolved.id] = now
+        scheduleConnect(resolved)
+    }
+
+    private enum class TcpStaleReconnectReason(
+        val disconnectReason: String,
+        val logLabel: String,
+    ) {
+        FIRST_RX23_TIMEOUT(
+            disconnectReason = "TCP 已建立但首帧 0x23 超时",
+            logLabel = "首帧 0x23 超时",
+        ),
+        RX23_STALE(
+            disconnectReason = "0x23 超时无数据",
+            logLabel = "0x23 超时",
+        ),
+    }
+
+    /** TCP 已连但 0x23 超时 → 返回重连原因；连接正常或仍在等待首帧则 null */
+    private fun tcpStaleReconnectReason(probeId: String, now: Long): TcpStaleReconnectReason? {
+        if (clients[probeId] == null) return null
+        val connectedAt = tcpConnectedAtMs[probeId] ?: return null
+        val lastRx = lastRx23Ms[probeId] ?: 0L
+        if (!isProbeOnline(probeId)) {
+            val base = maxOf(connectedAt, lastRx)
+            if (now - base < FIRST_RX23_WAIT_MS) return null
+            return TcpStaleReconnectReason.FIRST_RX23_TIMEOUT
         }
+        val base = if (lastRx > 0L) lastRx else connectedAt
+        if (now - base < TELEMETRY_STALE_MS) return null
+        return TcpStaleReconnectReason.RX23_STALE
     }
 
-    /** 在线态 TCP 僵死/超时：重建连接但保持 UI 在线，避免剂量闪 --- */
-    private fun reconnectTcpSoft(probe: SavedProbe) {
-        closeClientOnly(probe.id)
-        scheduleConnect(probe)
-    }
-
-    private fun scheduleReconnect(probeId: String) {
-        if (suppressAutoReconnect) return
-        if (savedProbesRef.get().none { it.id == probeId }) return
-        if (isProbeOnline(probeId)) return
-
-        val gate = reconnectGate.getOrPut(probeId) { AtomicBoolean(false) }
-        if (!gate.compareAndSet(false, true)) return
-
-        val delay = currentRetryDelay(probeId)
-        thread(name = "fsy-tcp-retry-$probeId") {
-            try {
-                Thread.sleep(delay)
-                bumpRetryDelay(probeId)
-                if (suppressAutoReconnect || isProbeOnline(probeId)) return@thread
-                val probe = savedProbesRef.get().find { it.id == probeId } ?: return@thread
-                Log.i(TAG, "TCP 自动重连 ${probe.displayName}（${delay}ms 后）")
-                scheduleConnect(probe)
-            } catch (_: InterruptedException) {
-            } finally {
-                gate.set(false)
-            }
+    private fun recordDiscoveryAnchor(source: DiscoveredDevice, probe: SavedProbe): Boolean {
+        val serial = source.serial.trim()
+        val ip = source.ip.trim()
+        if (serial.isEmpty() || ip.isBlank()) return false
+        val probeSerial = probe.serial.trim()
+        if (probeSerial.isNotEmpty() && !probeSerial.equals(serial, ignoreCase = true)) {
+            return false
         }
+        val seenAt = System.currentTimeMillis()
+        tcpDiscoveryAnchors[probe.id] = TcpDiscoveryAnchor(
+            serial = serial,
+            ip = ip,
+            controlPort = source.controlPort,
+            dataPort = source.dataPort,
+            seenAtMillis = seenAt,
+        )
+        linkRouter.recordMulticastKeepalive(probe.id)
+        return true
     }
 
-    private fun currentRetryDelay(probeId: String): Long =
-        retryDelayMs.getOrPut(probeId) { AtomicLong(INITIAL_RETRY_MS) }.get()
-
-    private fun bumpRetryDelay(probeId: String) {
-        val ref = retryDelayMs.getOrPut(probeId) { AtomicLong(INITIAL_RETRY_MS) }
-        val next = (ref.get() * 1.5).toLong().coerceIn(INITIAL_RETRY_MS, MAX_RETRY_MS)
-        ref.set(next)
-    }
-
-    private fun resetRetryDelay(probeId: String) {
-        retryDelayMs.getOrPut(probeId) { AtomicLong(INITIAL_RETRY_MS) }.set(INITIAL_RETRY_MS)
-    }
-
-    private fun shouldWatchdogRetry(probeId: String): Boolean {
-        val last = lastConnectAttemptMs[probeId] ?: 0L
-        return System.currentTimeMillis() - last >= WATCHDOG_MIN_GAP_MS
+    private fun resolveProbeForTcpConnect(probe: SavedProbe): SavedProbe? {
+        if (probe.ip.isBlank()) return null
+        val anchor = tcpDiscoveryAnchors[probe.id] ?: return null
+        if (anchor.ip.isBlank()) return null
+        val probeSerial = probe.serial.trim()
+        if (probeSerial.isEmpty() || !probeSerial.equals(anchor.serial.trim(), ignoreCase = true)) {
+            return null
+        }
+        return probe.copy(
+            ip = anchor.ip,
+            controlPort = anchor.controlPort.takeIf { it > 0 } ?: probe.controlPort,
+            dataPort = anchor.dataPort.takeIf { it > 0 } ?: probe.dataPort,
+        )
     }
 
     private fun startWatchdog() {
@@ -515,9 +563,7 @@ class ProbeConnectionManager(
                     Thread.sleep(WATCHDOG_INTERVAL_MS)
                     if (suppressAutoReconnect) continue
                     savedProbesRef.get().forEach { probe ->
-                        if (!isProbeOnline(probe.id) && shouldWatchdogRetry(probe.id)) {
-                            scheduleReconnect(probe.id)
-                        } else if (isProbeOnline(probe.id)) {
+                        if (clients[probe.id] != null) {
                             checkTelemetryStale(probe)
                         }
                     }
@@ -532,6 +578,7 @@ class ProbeConnectionManager(
         nextConnectGeneration(probeId)
         closeClientOnly(probeId)
         setProbeOnline(probeId, false)
+        tcpDiscoveryAnchors.remove(probeId)
     }
 
     fun disconnectAll() {
@@ -545,158 +592,62 @@ class ProbeConnectionManager(
     private fun closeClientOnly(probeId: String) {
         clients.remove(probeId)?.close()
         collectors.remove(probeId)
-        frameStatsByProbe.remove(probeId)
         lastRx23Ms.remove(probeId)
         tcpConnectedAtMs.remove(probeId)
     }
 
-    private fun statsForProbe(probeId: String): TcpFrameStats =
-        frameStatsByProbe.getOrPut(probeId) { TcpFrameStats() }
+    private fun recordRx23AndShouldDispatch(
+        probeId: String,
+        parsed: com.raydose.netshield.net.ParsedFsyFrame,
+    ): Boolean {
+        if (parsed.func != 0x23) return isProbeOnline(probeId)
 
-    private fun logTcpRxFrame(probe: SavedProbe, raw: ByteArray, parsed: ParsedFsyFrame) {
-        val crcTag = if (parsed.crcOk) "OK" else "BAD"
-        Log.d(
-            TAG,
-            "[TCP RX] ${probe.displayName}@${probe.ip} len=${raw.size} " +
-                "addr=0x${parsed.addr.toString(16)} func=0x${parsed.func.toString(16).uppercase()} " +
-                "crc=$crcTag | ${parsed.summary} | hex=${formatBytesHex(raw)}",
-        )
-    }
-
-    private fun logTcpRxParseFail(probe: SavedProbe, raw: ByteArray) {
-        Log.w(
-            TAG,
-            "[TCP RX] ${probe.displayName}@${probe.ip} 解析失败 len=${raw.size} hex=${formatBytesHex(raw)}",
-        )
-    }
-
-    private fun formatBytesHex(data: ByteArray, maxBytes: Int = 64): String {
-        val n = minOf(data.size, maxBytes)
-        val hex = data.take(n).joinToString(" ") { "%02X".format(it.toUByte().toInt()) }
-        return if (data.size > maxBytes) "$hex ...(+${data.size - maxBytes})" else hex
-    }
-
-    private fun recordFrameStats(probeId: String, parsed: com.raydose.netshield.net.ParsedFsyFrame) {
-        val stats = statsForProbe(probeId)
-        when (parsed.func) {
-            0x23 -> {
-                when {
-                    parsed.uploadValues != null && parsed.uploadValues.size >= 8 -> {
-                        stats.rx23Realtime.incrementAndGet()
-                        stats.lastDoseX100.set(parsed.uploadValues[0])
-                    }
-                    parsed.thresholdValues != null -> stats.rx23Threshold.incrementAndGet()
-                    parsed.fiveMinUpload != null -> stats.rx23FiveMin.incrementAndGet()
-                    else -> stats.rx23Other.incrementAndGet()
-                }
-                lastRx23Ms[probeId] = System.currentTimeMillis()
-            }
-            0x13 -> stats.rx13.incrementAndGet()
-            else -> stats.rxOther.incrementAndGet()
-        }
-    }
-
-    private fun startFrameStatsReporter() {
-        if (statsReporterRunning) return
-        statsReporterRunning = true
-        statsReporterThread = thread(name = "fsy-tcp-stats", isDaemon = true) {
-            while (statsReporterRunning) {
-                try {
-                    Thread.sleep(FRAME_STATS_INTERVAL_MS)
-                    logFrameStatsWindow()
-                } catch (_: InterruptedException) {
-                    break
-                }
-            }
-        }
-    }
-
-    /** TCP 仍标记在线但长时间无任何 0x23 → 视为僵死连接并重连 */
-    private fun checkTelemetryStale(probe: SavedProbe) {
-        if (clients[probe.id] == null) return
         val now = System.currentTimeMillis()
-        val lastRx = lastRx23Ms[probe.id]
-            ?: tcpConnectedAtMs[probe.id]
-            ?: return
-        if (now - lastRx < TELEMETRY_STALE_MS) return
-        Log.w(
-            TAG,
-            "0x23 超时 ${now - lastRx}ms 无 0x23，软重连 ${probe.displayName}@${probe.ip}",
-        )
-        reconnectTcpSoft(probe)
+        lastRx23Ms[probeId] = now
+        if (isProbeOnline(probeId)) return true
+
+        val values = parsed.uploadValues
+        if (values == null || values.size < 8 || !isPlausibleRealtimeDoseX100(values[0])) {
+            return false
+        }
+
+        setProbeOnline(probeId, true)
+        Log.i(TAG, "TCP 在线 probe=$probeId")
+        return true
     }
 
-    /** 每 10s 汇总上一窗口内各探头收到的 0x23/0x13 等帧数，便于排查卡片读数不刷新 */
-    private fun logFrameStatsWindow() {
-        val probes = savedProbesRef.get()
-        if (probes.isEmpty()) return
-
-        probes.forEach { probe ->
-            val stats = frameStatsByProbe[probe.id]
-            val hasClient = clients[probe.id] != null
-            val online = isProbeOnline(probe.id) && hasClient
-            val rx23Realtime = stats?.rx23Realtime?.getAndSet(0) ?: 0L
-            val rx23Threshold = stats?.rx23Threshold?.getAndSet(0) ?: 0L
-            val rx23FiveMin = stats?.rx23FiveMin?.getAndSet(0) ?: 0L
-            val rx23Other = stats?.rx23Other?.getAndSet(0) ?: 0L
-            val rx13 = stats?.rx13?.getAndSet(0) ?: 0L
-            val rxOther = stats?.rxOther?.getAndSet(0) ?: 0L
-            val parseFail = stats?.parseFail?.getAndSet(0) ?: 0L
-            val rx23Total = rx23Realtime + rx23Threshold + rx23FiveMin + rx23Other
-            val doseX100 = stats?.lastDoseX100?.get() ?: -1L
-            val doseText = if (doseX100 >= 0) "%.2f uSv/h".format(doseX100 / 100.0) else "—"
-            val lastRx = lastRx23Ms[probe.id]
-            val staleSec = if (online && lastRx != null) {
-                ((System.currentTimeMillis() - lastRx) / 1000L).coerceAtLeast(0L)
-            } else {
-                null
+    /** TCP 已建立后长时间无 0x23 → 断开，等组播再次触发重连 */
+    private fun checkTelemetryStale(probe: SavedProbe) {
+        val now = System.currentTimeMillis()
+        when (tcpStaleReconnectReason(probe.id, now)) {
+            null -> Unit
+            TcpStaleReconnectReason.FIRST_RX23_TIMEOUT -> {
+                Log.w(
+                    TAG,
+                    "首帧 0x23 超时，断开 ${probe.displayName}@${probe.ip}，等待组播重连",
+                )
+                handleConnectionLost(probe, TcpStaleReconnectReason.FIRST_RX23_TIMEOUT.disconnectReason)
             }
-
-            val line = buildString {
-                append("[0x23统计 10s] ${probe.displayName}@${probe.ip} ")
-                append("tcp=${if (online) "在线" else if (isProbeOnline(probe.id) && !hasClient) "半开" else "离线"} ")
-                append("0x23合计=$rx23Total ")
-                append("(实时=$rx23Realtime 阈值=$rx23Threshold 5min=$rx23FiveMin 其它=$rx23Other) ")
-                append("0x13=$rx13 其它功能=$rxOther 解析失败=$parseFail ")
-                append("末帧剂量=$doseText")
-                if (staleSec != null && rx23Realtime == 0L) {
-                    append(" 距上次实时=${staleSec}s")
-                }
-            }
-            if (rx23Total == 0L && online) {
-                Log.w(TAG, line)
-            } else {
-                Log.d(TAG, line)
+            TcpStaleReconnectReason.RX23_STALE -> {
+                Log.w(
+                    TAG,
+                    "0x23 超时，断开 ${probe.displayName}@${probe.ip}，等待组播重连",
+                )
+                handleConnectionLost(probe, TcpStaleReconnectReason.RX23_STALE.disconnectReason)
             }
         }
-    }
-
-    private class TcpFrameStats {
-        val rx23Realtime = AtomicLong(0)
-        val rx23Threshold = AtomicLong(0)
-        val rx23FiveMin = AtomicLong(0)
-        val rx23Other = AtomicLong(0)
-        val rx13 = AtomicLong(0)
-        val rxOther = AtomicLong(0)
-        val parseFail = AtomicLong(0)
-        val lastDoseX100 = AtomicLong(-1)
     }
 
     companion object {
         const val TAG = "NetShield"
-        private const val INITIAL_RETRY_MS = 3_000L
-        private const val BOOTING_RETRY_MS = 10_000L
-        private const val MAX_RETRY_MS = 30_000L
         private const val DISCOVERY_RECONNECT_DEBOUNCE_MS = 4_000L
-        /** 仍标记在线但超过此间隔无 0x23，组播再次出现时软重连（DHCP 续租常暂停 TCP ~10s） */
-        private const val DISCOVERY_STALE_RECONNECT_MS = 20_000L
-        private const val CONNECT_COOLDOWN_MS = 5_000L
-        private const val WATCHDOG_INTERVAL_MS = 20_000L
-        private const val WATCHDOG_MIN_GAP_MS = 18_000L
+        private const val FIRST_RX23_WAIT_MS = 5_000L
+        /** 上次 TCP 连接开始后此时间内不因组播再次调度（单次 connect 含多路由 8s 超时） */
+        private const val CONNECT_ATTEMPT_GUARD_MS = 15_000L
+        private const val WATCHDOG_INTERVAL_MS = 3_000L
         private const val CONFIG_READ_GAP_MS = 100L
-        private const val FRAME_STATS_INTERVAL_MS = 10_000L
         private const val DISCOVERY_LOG_DEBOUNCE_MS = 60_000L
-        /** 内机约 1s 一帧 0x23；超过此间隔无任何 0x23 则重连 */
-        private const val TELEMETRY_STALE_MS = 25_000L
+        /** 5s 无 0x23 则断 TCP，等组播再连 */
+        private const val TELEMETRY_STALE_MS = 5_000L
     }
 }

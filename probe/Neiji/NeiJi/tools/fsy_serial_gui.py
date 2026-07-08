@@ -11,7 +11,7 @@ import time
 import tkinter as tk
 from dataclasses import dataclass
 from datetime import datetime
-from tkinter import filedialog, messagebox, scrolledtext, simpledialog, ttk
+from tkinter import filedialog, messagebox, scrolledtext, ttk
 from typing import Callable, Optional
 
 import serial
@@ -36,8 +36,12 @@ from fsy_protocol import (
     REG_CONTROL_BIT2,
     REG_CONTROL_BIT2_COUNT,
     NEIJI_CTRL2_DEFAULT,
+    ZJB_PROTOCOL_ADDR,
+    ZJB_CTRL2_DEFAULT,
     control_bit2_enables,
     merge_control_bit2,
+    merge_zjb_control_bit2,
+    zjb_control_bit2_flags,
     REG_DOSE_HI_TH,
     REG_DOSE_LO_TH,
     REG_PRODUCT_MODEL,
@@ -48,6 +52,7 @@ from fsy_protocol import (
     REG_CURRENT_IP_COUNT,
     REG_STATIC_IP,
     REG_STATIC_IP_COUNT,
+    REG_DHCP_ENABLE,
     REG_GEIGER_SENS,
     REG_GEIGER_SEC_CPS,
     REG_GEIGER_SEC_CPS_COUNT,
@@ -58,6 +63,7 @@ from fsy_protocol import (
     REG_EWMA_BOOST_DURATION,
     REG_RATE_LIMIT,
     REG_GEIGER_BACKGROUND_CPM,
+    REG_GEIGER_DEAD_TIME_US,
     REG_GEIGER_PARAM_COUNT,
     REG_HW_VERSION,
     REG_HW_VERSION_COUNT,
@@ -403,6 +409,7 @@ class FactoryApp(tk.Tk):
             width=5,
         )
         self.slave_spin.pack(side=tk.LEFT, padx=4)
+        self.slave_addr_var.trace_add("write", lambda *_: self._update_cfg_target_hint())
         self.btn_connect = ttk.Button(
             ctrl, text="连接", command=self.toggle_connect, width=10
         )
@@ -492,6 +499,15 @@ class FactoryApp(tk.Tk):
         self._control_bit2_raw = NEIJI_CTRL2_DEFAULT
 
         row = 0
+        self._cfg_mode_hint = ttk.Label(
+            form,
+            text="",
+            foreground="#0066CC",
+            wraplength=820,
+        )
+        self._cfg_mode_hint.grid(row=row, column=0, columnspan=4, sticky=tk.W, pady=(0, 8))
+        row += 1
+
         ttk.Label(form, text="序列号 (reg 86):").grid(row=row, column=0, sticky=tk.W, pady=6)
         self.sn_var = tk.StringVar()
         ttk.Entry(form, textvariable=self.sn_var, width=28).grid(
@@ -558,10 +574,33 @@ class FactoryApp(tk.Tk):
         ttk.Entry(
             form, textvariable=self.current_ip_var, width=28, state="readonly"
         ).grid(row=row, column=1, sticky=tk.W, padx=8, pady=6)
-        ttk.Label(form, text="只读；静态 IP 写 reg 138", foreground="#666").grid(
+        ttk.Label(form, text="只读；设备实时在用 IP（W5500 SIPR）", foreground="#666").grid(
+            row=row, column=2, sticky=tk.W
+        )
+        row += 1
+
+        ttk.Label(form, text="静态 IP (reg 138):").grid(row=row, column=0, sticky=tk.W, pady=6)
+        self.static_ip_var = tk.StringVar(value="192.168.16.12")
+        ttk.Entry(form, textvariable=self.static_ip_var, width=28).grid(
+            row=row, column=1, sticky=tk.W, padx=8, pady=6
+        )
+        ttk.Label(form, text="写入 W25Q；DHCP 关闭时复位后生效", foreground="#666").grid(
             row=row, column=2, sticky=tk.W
         )
         self._cfg_write_btn(form, row, self.write_ip_only, text="写静态IP")
+        row += 1
+
+        ttk.Label(form, text="DHCP 使能 (reg 170):").grid(row=row, column=0, sticky=tk.W, pady=6)
+        self.dhcp_enable_var = tk.IntVar(value=1)
+        ttk.Checkbutton(
+            form,
+            text="启用 DHCP",
+            variable=self.dhcp_enable_var,
+        ).grid(row=row, column=1, sticky=tk.W, padx=8, pady=6)
+        ttk.Label(form, text="取消勾选=静态 IP；写入后复位生效", foreground="#666").grid(
+            row=row, column=2, sticky=tk.W
+        )
+        self._cfg_write_btn(form, row, self.write_dhcp_only, text="写模式")
         row += 1
 
         ttk.Label(form, text="剂量率上阈值 (reg 50):").grid(row=row, column=0, sticky=tk.W, pady=6)
@@ -621,22 +660,33 @@ class FactoryApp(tk.Tk):
         self._cfg_write_btn(form, row, self.write_volume_only)
         row += 1
 
-        ttk.Label(form, text="屏/光控制 (reg 123):").grid(row=row, column=0, sticky=tk.W, pady=6)
+        ttk.Label(form, text="reg123 控制 (bit):").grid(row=row, column=0, sticky=tk.W, pady=6)
         ctrl_row = ttk.Frame(form)
         ctrl_row.grid(row=row, column=1, sticky=tk.W, padx=8, pady=6)
+        self.lora_on_var = tk.IntVar(value=0)
         self.screen_on_var = tk.IntVar(value=1)
         self.light_on_var = tk.IntVar(value=1)
-        ttk.Checkbutton(ctrl_row, text="从机屏幕 bit14", variable=self.screen_on_var).pack(
-            side=tk.LEFT, padx=(0, 12)
+        self._lora_cb = ttk.Checkbutton(
+            ctrl_row, text="LoRa bit9", variable=self.lora_on_var
         )
-        ttk.Checkbutton(ctrl_row, text="报警灯光 bit13", variable=self.light_on_var).pack(
+        self._lora_cb.pack(side=tk.LEFT, padx=(0, 10))
+        self._screen_cb = ttk.Checkbutton(
+            ctrl_row, text="屏 bit14", variable=self.screen_on_var
+        )
+        self._screen_cb.pack(side=tk.LEFT, padx=(0, 10))
+        ttk.Checkbutton(ctrl_row, text="光 bit13", variable=self.light_on_var).pack(
             side=tk.LEFT
         )
-        ttk.Label(form, text="bit15 外置在线只读", foreground="#666").grid(
+        self.ctrl2_hex_var = tk.StringVar(value="—")
+        ttk.Label(form, textvariable=self.ctrl2_hex_var, foreground="#666").grid(
             row=row, column=2, sticky=tk.W
         )
         self._cfg_write_btn(form, row, self.write_control_bit2_only)
         row += 1
+        self._ctrl2_hint = ttk.Label(form, text="", foreground="#666")
+        self._ctrl2_hint.grid(row=row, column=0, columnspan=3, sticky=tk.W, pady=(0, 6))
+        row += 1
+        self._update_cfg_target_hint()
 
         ttk.Label(form, text="RTC 时间 (reg 94):").grid(row=row, column=0, sticky=tk.W, pady=6)
         self.rtc_time_var = tk.StringVar(value="—")
@@ -704,14 +754,51 @@ class FactoryApp(tk.Tk):
     def _set_language_from_reg(self, value: int) -> None:
         self.language_var.set("1 English" if value else "0 中文")
 
+    def _is_zjb(self) -> bool:
+        return self._slave_addr() == ZJB_PROTOCOL_ADDR
+
+    def _update_cfg_target_hint(self) -> None:
+        if not hasattr(self, "_cfg_mode_hint"):
+            return
+        if self._is_zjb():
+            self._cfg_mode_hint.config(
+                text="当前目标：zjb 转接板 (239)。可读写 reg123 bit9 LoRa / bit13 光 / bit14 屏"
+            )
+            if hasattr(self, "_lora_cb"):
+                if not self._lora_cb.winfo_ismapped():
+                    self._lora_cb.pack(side=tk.LEFT, padx=(0, 10), before=self._screen_cb)
+            if hasattr(self, "_ctrl2_hint"):
+                self._ctrl2_hint.config(
+                    text="zjb reg123：bit9=LoRa 电源+桥接总开关（写后立即生效并落 Flash）"
+                )
+        else:
+            addr = self._slave_addr()
+            self._cfg_mode_hint.config(
+                text=f"当前目标：Neiji 内机 (从机地址 {addr}，应等于 reg121)。"
+                "生产配置连内机串口，读写 SN / 阈值 / 屏光 / LoRa 等"
+            )
+            if hasattr(self, "_lora_cb"):
+                if not self._lora_cb.winfo_ismapped():
+                    self._lora_cb.pack(side=tk.LEFT, padx=(0, 10), before=self._screen_cb)
+            if hasattr(self, "_ctrl2_hint"):
+                self._ctrl2_hint.config(
+                    text="Neiji reg123：bit9=LoRa 协议输出开关（无电源脚，"
+                    "关=停发 0x23/停收/停 Poll）；bit13 光、bit14 屏"
+                )
+
     def _control_bit2_from_ui(self) -> int:
         light_on = bool(self.light_on_var.get())
         screen_on = bool(self.screen_on_var.get())
-        return merge_control_bit2(self._control_bit2_raw, screen_on, light_on)
+        lora_on = bool(self.lora_on_var.get())
+        return merge_zjb_control_bit2(
+            self._control_bit2_raw, lora_on, screen_on, light_on
+        )
 
     def _set_control_bit2_from_reg(self, value: int) -> None:
         self._control_bit2_raw = value & 0xFFFFFFFF
-        light_on, screen_on = control_bit2_enables(value)
+        self.ctrl2_hex_var.set(f"0x{self._control_bit2_raw:08X}")
+        lora_on, light_on, screen_on = zjb_control_bit2_flags(value)
+        self.lora_on_var.set(1 if lora_on else 0)
         self.light_on_var.set(1 if light_on else 0)
         self.screen_on_var.set(1 if screen_on else 0)
 
@@ -804,7 +891,7 @@ class FactoryApp(tk.Tk):
         self.cps_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         scroll.pack(side=tk.RIGHT, fill=tk.Y)
 
-        form = ttk.LabelFrame(parent, text="盖革 / EWMA（reg 154–169，每项 uint32 占 2 reg）", padding=12)
+        form = ttk.LabelFrame(parent, text="盖革 / EWMA（reg 154–169、171–172，每项 uint32 占 2 reg）", padding=12)
         form.pack(fill=tk.X, pady=(0, 0))
 
         rows = [
@@ -816,6 +903,7 @@ class FactoryApp(tk.Tk):
             ("EWMA boost_duration (164)", "ewma_boost_var", "20", "秒"),
             ("剂量率量程上限 (166)", "rate_limit_var", "10000.00", "μSv/h，协议值×100"),
             ("盖革本底 (168)", "background_cpm_var", "20", "CPM，参与剂量率前先扣除"),
+            ("盖革死时间 (171)", "dead_time_us_var", "200.00", "μs，协议值×100；0=不修正"),
         ]
         self.geiger_sens_var = tk.StringVar(value="600.00")
         self.ewma_cps_var = tk.StringVar(value="200")
@@ -825,6 +913,7 @@ class FactoryApp(tk.Tk):
         self.ewma_boost_var = tk.StringVar(value="20")
         self.rate_limit_var = tk.StringVar(value="10000.00")
         self.background_cpm_var = tk.StringVar(value="20")
+        self.dead_time_us_var = tk.StringVar(value="200.00")
 
         for i, (label, attr, _default, hint) in enumerate(rows):
             ttk.Label(form, text=label).grid(row=i, column=0, sticky=tk.W, pady=4)
@@ -976,6 +1065,7 @@ class FactoryApp(tk.Tk):
                 (REG_EWMA_BOOST_DURATION, int(self.ewma_boost_var.get())),
                 (REG_RATE_LIMIT, int(float(self.rate_limit_var.get()) * 100.0)),
                 (REG_GEIGER_BACKGROUND_CPM, int(self.background_cpm_var.get())),
+                (REG_GEIGER_DEAD_TIME_US, int(float(self.dead_time_us_var.get()) * 100.0)),
             ]
         except ValueError:
             messagebox.showwarning("提示", "盖革参数格式无效")
@@ -1003,6 +1093,7 @@ class FactoryApp(tk.Tk):
             (REG_EWMA_BOOST_DURATION, "boost"),
             (REG_RATE_LIMIT, "rate_limit"),
             (REG_GEIGER_BACKGROUND_CPM, "background_cpm"),
+            (REG_GEIGER_DEAD_TIME_US, "dead_time_us"),
         ]
 
         def finish() -> None:
@@ -1014,8 +1105,9 @@ class FactoryApp(tk.Tk):
             self.ewma_boost_var.set(str(results.get("boost", 0)))
             self.rate_limit_var.set(f"{results.get('rate_limit', 0) / 100.0:.2f}")
             self.background_cpm_var.set(str(results.get("background_cpm", 20)))
+            self.dead_time_us_var.set(f"{results.get('dead_time_us', 0) / 100.0:.2f}")
             self.status_var.set("盖革参数读取完成")
-            messagebox.showinfo("完成", "已读取盖革 / EWMA 参数（reg 154–169）")
+            messagebox.showinfo("完成", "已读取盖革 / EWMA 参数（reg 154–169、171–172）")
 
         def make_step(idx: int) -> None:
             reg, key = chain[idx]
@@ -1048,7 +1140,7 @@ class FactoryApp(tk.Tk):
                 if idx + 1 < len(items):
                     make_step(idx + 1)
                 else:
-                    messagebox.showinfo("完成", "盖革 / EWMA 参数已写入 W25Q")
+                    messagebox.showinfo("完成", "盖革 / EWMA 参数已写入 W25Q（含 reg 171 死时间）")
 
             req = build_write_multi(self._slave_addr(), reg, values)
             self._begin_request(
@@ -1206,6 +1298,9 @@ class FactoryApp(tk.Tk):
     def read_factory_cfg(self) -> None:
         if not self._require_connected():
             return
+        if self._is_zjb():
+            self._read_zjb_factory_cfg()
+            return
 
         results: dict[str, str | int] = {}
 
@@ -1216,6 +1311,8 @@ class FactoryApp(tk.Tk):
             self.hw_version_var.set(str(results.get("hw_version", "")))
             self.dev_addr_var.set(str(results.get("addr", self.dev_addr_var.get())))
             self.current_ip_var.set(str(results.get("current_ip", "—")))
+            self.static_ip_var.set(str(results.get("static_ip", self.static_ip_var.get())))
+            self.dhcp_enable_var.set(1 if int(results.get("dhcp_enable", 1)) != 0 else 0)
             self.dose_hi_var.set(str(results.get("dose_hi", self.dose_hi_var.get())))
             self.dose_lo_var.set(str(results.get("dose_lo", self.dose_lo_var.get())))
             alarm_enable = int(results.get("alarm_enable", 0))
@@ -1230,7 +1327,7 @@ class FactoryApp(tk.Tk):
             messagebox.showinfo(
                 "完成",
                 "已读取：SN / 名称 / 型号 / 硬件版本 / 地址 / 当前 IP / 阈值 / "
-                "报警使能 / 音量 / 屏光 / 时间 / 语言 / 版本",
+                "DHCP / 报警使能 / 音量 / 屏光 / 时间 / 语言 / 版本",
             )
 
         def read_sw_version_step() -> None:
@@ -1353,10 +1450,35 @@ class FactoryApp(tk.Tk):
 
             def on_ok(pf: ParsedFrame) -> None:
                 results["current_ip"] = reg_payload_to_ipv4(pf.payload)
-                read_dose_hi_step()
+                read_static_ip_step()
 
             self._begin_request(
                 req, FC_READ_HOLDING_RESP, on_ok, self._on_cfg_fail, expect_reg=REG_CURRENT_IP
+            )
+
+        def read_static_ip_step() -> None:
+            req = build_read_holding(
+                self._slave_addr(), REG_STATIC_IP, REG_STATIC_IP_COUNT
+            )
+
+            def on_ok(pf: ParsedFrame) -> None:
+                results["static_ip"] = reg_payload_to_ipv4(pf.payload)
+                read_dhcp_step()
+
+            self._begin_request(
+                req, FC_READ_HOLDING_RESP, on_ok, self._on_cfg_fail, expect_reg=REG_STATIC_IP
+            )
+
+        def read_dhcp_step() -> None:
+            req = build_read_holding(self._slave_addr(), REG_DHCP_ENABLE, 1)
+
+            def on_ok(pf: ParsedFrame) -> None:
+                if len(pf.payload) >= 2:
+                    results["dhcp_enable"] = int.from_bytes(pf.payload[:2], "little")
+                read_dose_hi_step()
+
+            self._begin_request(
+                req, FC_READ_HOLDING_RESP, on_ok, self._on_cfg_fail, expect_reg=REG_DHCP_ENABLE
             )
 
         def read_model_step() -> None:
@@ -1405,6 +1527,67 @@ class FactoryApp(tk.Tk):
             self._begin_request(req, FC_READ_HOLDING_RESP, on_ok, self._on_cfg_fail, expect_reg=REG_SERIALNUM)
 
         self.status_var.set("正在读取配置...")
+        read_sn_step()
+
+    def _read_zjb_factory_cfg(self) -> None:
+        results: dict[str, str | int] = {}
+
+        def finish_read() -> None:
+            self.sn_var.set(str(results.get("sn", "")))
+            self._set_control_bit2_from_reg(
+                int(results.get("control_bit2", ZJB_CTRL2_DEFAULT))
+            )
+            self.sw_version_var.set(str(results.get("sw_version", "—")))
+            self.status_var.set("zjb 配置读取完成")
+            messagebox.showinfo(
+                "完成",
+                f"已读取 zjb：SN / reg123=0x{int(results.get('control_bit2', 0)):08X} / 软件版本",
+            )
+
+        def read_sw_version_step() -> None:
+            req = build_read_holding(
+                self._slave_addr(), REG_SOFTWARE_VERSION, REG_SOFTWARE_VERSION_COUNT
+            )
+
+            def on_ok(pf: ParsedFrame) -> None:
+                results["sw_version"] = reg_payload_to_ascii(pf.payload)
+                finish_read()
+
+            self._begin_request(
+                req,
+                FC_READ_HOLDING_RESP,
+                on_ok,
+                self._on_cfg_fail,
+                expect_reg=REG_SOFTWARE_VERSION,
+            )
+
+        def read_control_bit2_step() -> None:
+            req = build_read_holding(
+                self._slave_addr(), REG_CONTROL_BIT2, REG_CONTROL_BIT2_COUNT
+            )
+
+            def on_ok(pf: ParsedFrame) -> None:
+                results["control_bit2"] = reg_payload_to_u32(pf.payload)
+                read_sw_version_step()
+
+            self._begin_request(
+                req, FC_READ_HOLDING_RESP, on_ok, self._on_cfg_fail, expect_reg=REG_CONTROL_BIT2
+            )
+
+        def read_sn_step() -> None:
+            req = build_read_holding(
+                self._slave_addr(), REG_SERIALNUM, REG_SERIALNUM_COUNT
+            )
+
+            def on_ok(pf: ParsedFrame) -> None:
+                results["sn"] = reg_payload_to_ascii(pf.payload)
+                read_control_bit2_step()
+
+            self._begin_request(
+                req, FC_READ_HOLDING_RESP, on_ok, self._on_cfg_fail, expect_reg=REG_SERIALNUM
+            )
+
+        self.status_var.set("正在读取 zjb 配置...")
         read_sn_step()
 
     def _on_cfg_fail(self, msg: str) -> None:
@@ -1492,16 +1675,9 @@ class FactoryApp(tk.Tk):
     def write_ip_only(self) -> None:
         if not self._require_connected():
             return
-        initial = self.current_ip_var.get().strip()
-        if not initial or initial == "—":
-            initial = "192.168.2.100"
-        ip_text = simpledialog.askstring(
-            "写入静态 IP (reg 138)",
-            "静态 IP 写入 W25Q，静态/DHCP 备用配置：",
-            initialvalue=initial,
-            parent=self,
-        )
+        ip_text = self.static_ip_var.get().strip()
         if not ip_text:
+            messagebox.showwarning("提示", "请先填写静态 IP")
             return
         values = self._parse_ipv4_text(ip_text, "静态 IP")
         if values is None:
@@ -1509,10 +1685,30 @@ class FactoryApp(tk.Tk):
         req = build_write_multi(self._slave_addr(), REG_STATIC_IP, values)
 
         def on_ok(_pf: ParsedFrame) -> None:
-            messagebox.showinfo("完成", f"静态 IP 已写入 W25Q: {ip_text.strip()}")
+            messagebox.showinfo(
+                "完成",
+                f"静态 IP 已写入 W25Q: {ip_text}\nDHCP 关闭时复位后生效。",
+            )
 
         self._begin_request(
             req, FC_WRITE_MULTI_RESP, on_ok, self._on_cfg_fail, expect_reg=REG_STATIC_IP
+        )
+
+    def write_dhcp_only(self) -> None:
+        if not self._require_connected():
+            return
+        enable = 1 if self.dhcp_enable_var.get() else 0
+        req = build_write_single(self._slave_addr(), REG_DHCP_ENABLE, enable)
+        mode = "DHCP" if enable else "静态 IP"
+
+        def on_ok(_pf: ParsedFrame) -> None:
+            messagebox.showinfo(
+                "完成",
+                f"网络模式已写入 W25Q: {mode}\n请复位或重新上电后生效。",
+            )
+
+        self._begin_request(
+            req, FC_WRITE_SINGLE_RESP, on_ok, self._on_cfg_fail, expect_reg=REG_DHCP_ENABLE
         )
 
     def write_language_only(self) -> None:
@@ -1622,7 +1818,12 @@ class FactoryApp(tk.Tk):
 
         def on_ok(_pf: ParsedFrame) -> None:
             self._control_bit2_raw = merged
-            messagebox.showinfo("完成", f"屏/光控制已写入 reg123: 0x{merged:08X}")
+            self.ctrl2_hex_var.set(f"0x{merged:08X}")
+            if self._is_zjb():
+                msg = f"reg123 已写入 zjb: 0x{merged:08X}（LoRa/屏/光）"
+            else:
+                msg = f"reg123 已写入 Neiji: 0x{merged:08X}（LoRa/屏/光）"
+            messagebox.showinfo("完成", msg)
 
         self._begin_request(
             req,
@@ -1706,6 +1907,9 @@ class FactoryApp(tk.Tk):
 
     def write_factory_cfg(self) -> None:
         if not self._require_connected():
+            return
+        if self._is_zjb():
+            self._write_zjb_factory_cfg()
             return
         sn = self.sn_var.get().strip()[:CFG_SN_MAX_LEN]
         name = self.name_var.get().strip()
@@ -1870,6 +2074,48 @@ class FactoryApp(tk.Tk):
 
         self.status_var.set("正在写入配置...")
         write_sn_step()
+
+    def _write_zjb_factory_cfg(self) -> None:
+        sn = self.sn_var.get().strip()[:CFG_SN_MAX_LEN]
+        control_bit2 = self._control_bit2_from_ui()
+
+        def finish_write() -> None:
+            self._control_bit2_raw = control_bit2
+            self.ctrl2_hex_var.set(f"0x{control_bit2:08X}")
+            self.status_var.set("zjb 配置写入完成")
+            messagebox.showinfo(
+                "完成",
+                f"zjb 已写入：SN / reg123=0x{control_bit2:08X}",
+            )
+
+        def write_control_bit2_step() -> None:
+            req = build_write_multi(
+                self._slave_addr(), REG_CONTROL_BIT2, u32_to_reg_values(control_bit2)
+            )
+            self._begin_request(
+                req,
+                FC_WRITE_MULTI_RESP,
+                lambda _pf: finish_write(),
+                self._on_cfg_fail,
+                expect_reg=REG_CONTROL_BIT2,
+            )
+
+        def write_sn_step() -> None:
+            values = ascii_to_reg_values(sn, REG_SERIALNUM_COUNT)
+            req = build_write_multi(self._slave_addr(), REG_SERIALNUM, values)
+            self._begin_request(
+                req,
+                FC_WRITE_MULTI_RESP,
+                lambda _pf: write_control_bit2_step(),
+                self._on_cfg_fail,
+                expect_reg=REG_SERIALNUM,
+            )
+
+        self.status_var.set("正在写入 zjb 配置...")
+        if sn:
+            write_sn_step()
+        else:
+            write_control_bit2_step()
 
     def _apply_conn_mode_ui(self) -> None:
         if self.connected:

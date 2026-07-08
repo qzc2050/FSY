@@ -42,6 +42,15 @@ W5500 技术交流 QQ 群：722479032
 /** PHY link down 防抖：连续低于此时间才认定断链（netTask ~2ms 轮询） */
 #define PHY_LINK_DOWN_DEBOUNCE_MS   (500U)
 
+/** 冷上电宽限期：已 BOUND 后不因 PHY 抖动重跑 DHCP / 清 IP */
+#define NET_BOOT_GRACE_MS           (60000U)
+
+/** 组播 send 失败后重试 init 间隔（原 3s 易造成 ~9s 空窗） */
+#define UDP_MCAST_RECOVER_MS        (1000U)
+
+/** 连续 send 失败达此次数才关闭组播 socket */
+#define UDP_MCAST_SEND_FAIL_MAX     (3U)
+
 /* DHCP 状态机 */
 typedef enum
 {
@@ -61,6 +70,13 @@ typedef enum
  * @param  无
  * @retval 无
  */
+/**
+ * @brief MCU 复位/网络栈冷启动：清组播/TCP 绑定缓存并强制重新 DHCP（PHY 未断时也需调用）
+ */
+void W5500_Network_OnBoot(void);
+
+void W5500_SyncBoundIp(const uint8_t ip[4]);
+
 void W5500_DHCP_Init(void);
 
 /**
@@ -90,6 +106,8 @@ void DHCP_Reset(void);
  */
 void DHCP_Watchdog_Task(void);
 
+bool W5500_Is_NetBootGrace(void);
+
 /**
  * @brief  W5500 是否正在执行网络硬复位/重初始化
  */
@@ -99,6 +117,11 @@ bool W5500_Is_Network_Recovering(void);
  * @brief  新一轮 netTask 循环开始前调用，使本轮内 DHCP/TCP 共用一次 PHY 采样
  */
 void W5500_PhyLink_DebouncedLoopBegin(void);
+
+/**
+ * @brief  PHY 脉冲复位后清零链路防抖，使后续能检测到 link-up 上升沿
+ */
+void W5500_PhyLink_ResetDebouncer(void);
 
 /**
  * @brief  读 PHY 链路并做 link-down 防抖；每轮 netTask 调用一次
@@ -122,6 +145,16 @@ void W5500_Get_IP(uint8_t *ip_addr);
  * @retval false : IP 无效（0.0.0.0）
  */
 bool W5500_Is_IP_Valid(void);
+
+/**
+ * @brief  检查指定 IP 缓冲区是否为可用局域网地址
+ */
+bool W5500_Is_IP_Valid_Buf(const uint8_t ip[4]);
+
+/**
+ * @brief  获取当前业务使用的 IP（DHCP 已绑定/静态时用 ConfigMsg，否则读 W5500）
+ */
+void W5500_Get_Active_IP(uint8_t ip[4]);
 
 /**
  * @brief  UDP 广播初始化

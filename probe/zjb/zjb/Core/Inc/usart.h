@@ -40,6 +40,7 @@ extern UART_HandleTypeDef huart3;
 
 /* USER CODE BEGIN Private defines */
 #define USART1_RX_BUF_SIZE  256
+#define USART2_RX_BUF_SIZE  512
 /* USER CODE END Private defines */
 
 void MX_USART1_UART_Init(void);
@@ -53,6 +54,12 @@ uint16_t USART1_Rx_Read(uint8_t *buf, uint16_t len);
 void USART1_Rx_PushByte(uint8_t byte);
 void USART1_TxInit(void);
 HAL_StatusTypeDef USART1_Tx(const uint8_t *buf, uint16_t len, uint32_t timeout);
+void USART2_Rx_Start(void);
+uint16_t USART2_Rx_GetCount(void);
+uint16_t USART2_Rx_Read(uint8_t *buf, uint16_t len);
+void USART2_Rx_PushByte(uint8_t byte);
+void USART2_TxInit(void);
+HAL_StatusTypeDef USART2_Tx(const uint8_t *buf, uint16_t len, uint32_t timeout);
 /* USER CODE END Prototypes */
 
 #ifdef __cplusplus

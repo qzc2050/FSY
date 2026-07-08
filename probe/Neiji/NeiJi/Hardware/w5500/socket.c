@@ -20,6 +20,11 @@ SPI模式1或SPI模式2通过w5500.h 文件的
 #include "socket.h"
 #include "config.h"
 #include "network_cmd.h"
+#include "main.h"
+
+#ifndef W5500_SEND_BUSY_TIMEOUT_MS
+#define W5500_SEND_BUSY_TIMEOUT_MS  500U
+#endif
 
 extern int printf(const char *fmt, ...);
 
@@ -189,10 +194,12 @@ uint16_t send(SOCKET s, const uint8_t * buf, uint16_t len)
   uint8_t status=0;
   uint16_t ret=0;
   uint16_t freesize=0;
+  uint32_t t0;
 
   if (len > getIINCHIP_TxMAX(s)) ret = getIINCHIP_TxMAX(s);
   else ret = len;
 
+  t0 = HAL_GetTick();
   do
   {
     freesize = getSn_TX_FSR(s);
@@ -202,13 +209,24 @@ uint16_t send(SOCKET s, const uint8_t * buf, uint16_t len)
       ret = 0;
       break;
     }
+    if ((HAL_GetTick() - t0) >= W5500_SEND_BUSY_TIMEOUT_MS)
+    {
+      ret = 0;
+      break;
+    }
   } while (freesize < ret);
+
+  if (ret == 0U)
+  {
+    return 0;
+  }
 
   send_data_processing(s, (uint8_t *)buf, ret);
   IINCHIP_WRITE( Sn_CR(s) ,Sn_CR_SEND);
 
   while( IINCHIP_READ(Sn_CR(s) ) );
 
+  t0 = HAL_GetTick();
   while ( (IINCHIP_READ(Sn_IR(s) ) & Sn_IR_SEND_OK) != Sn_IR_SEND_OK )
   {
     status = IINCHIP_READ(Sn_SR(s));
@@ -216,6 +234,11 @@ uint16_t send(SOCKET s, const uint8_t * buf, uint16_t len)
     {
       printf("SEND_OK Problem!!\r\n");
       close(s);
+      return 0;
+    }
+    if ((HAL_GetTick() - t0) >= W5500_SEND_BUSY_TIMEOUT_MS)
+    {
+      printf("SEND timeout\r\n");
       return 0;
     }
   }
@@ -291,15 +314,22 @@ uint16_t sendto(SOCKET s, const uint8_t * buf, uint16_t len, uint8_t * addr, uin
       while( IINCHIP_READ( Sn_CR(s) ) )
          ;
       /* ------- */
-     while( (IINCHIP_READ( Sn_IR(s) ) & Sn_IR_SEND_OK) != Sn_IR_SEND_OK )
-     {
-      if (IINCHIP_READ( Sn_IR(s) ) & Sn_IR_TIMEOUT)
       {
-            /* clear interrupt */
-         IINCHIP_WRITE( Sn_IR(s) , (Sn_IR_SEND_OK | Sn_IR_TIMEOUT)); /* clear SEND_OK & TIMEOUT */
-         return 0;
+         uint32_t t0 = HAL_GetTick();
+
+         while( (IINCHIP_READ( Sn_IR(s) ) & Sn_IR_SEND_OK) != Sn_IR_SEND_OK )
+         {
+            if (IINCHIP_READ( Sn_IR(s) ) & Sn_IR_TIMEOUT)
+            {
+               IINCHIP_WRITE( Sn_IR(s) , (Sn_IR_SEND_OK | Sn_IR_TIMEOUT));
+               return 0;
+            }
+            if ((HAL_GetTick() - t0) >= W5500_SEND_BUSY_TIMEOUT_MS)
+            {
+               return 0;
+            }
+         }
       }
-     }
       IINCHIP_WRITE( Sn_IR(s) , Sn_IR_SEND_OK);
    }
    return ret;

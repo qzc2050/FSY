@@ -64,12 +64,17 @@ fun StandbyScreen(
     onExit: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val pagerConfig = remember(state.slaveProbes) {
+    val probePagerKey = probeDisplayListKey(state.slaveProbes)
+    val pagerConfig = remember(probePagerKey) {
         resolveStandbyProbePagerConfig(state.slaveProbes)
     }
-    val displayProbes = pagerConfig.displayProbes
+    val displayProbes = if (pagerConfig.alarmPriorityActive) {
+        state.slaveProbes.filter { it.hasAlarm }
+    } else {
+        state.slaveProbes
+    }
     val autoScroll = pagerConfig.autoScroll
-    val displayListKey = remember(displayProbes) { probeDisplayListKey(displayProbes) }
+    val displayListKey = probePagerKey
     val pagerState = rememberPagerState(pageCount = { pagerConfig.pageCount.coerceAtLeast(1) })
     val showStandbyMessages = albumSettings.showStandbyMessages
     val formFactor = rememberTabletFormFactor()
@@ -94,7 +99,8 @@ fun StandbyScreen(
 
     ProbePagerAutoScroll(
         enabled = autoScroll,
-        probeCount = pagerConfig.pageCount,
+        autoScrollPageIndices = pagerConfig.autoScrollPageIndices,
+        pageCount = pagerConfig.pageCount,
         pagerState = pagerState,
         intervalMs = ScreenSpec.STANDBY_PROBE_AUTO_SCROLL_INTERVAL_MS,
     )

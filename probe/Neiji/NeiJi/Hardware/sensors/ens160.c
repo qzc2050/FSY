@@ -1,6 +1,8 @@
 #include "ens160.h"
 #include "i2c.h"
 #include "main.h"
+#include "sensor_common.h"
+#include "cmsis_os.h"
 
 #define ENS160_I2C_ADDR            (0x52U << 1)
 #define ENS160_REG_PART_ID         0x00U
@@ -22,7 +24,7 @@ static uint8_t s_init_ok;
 
 static HAL_StatusTypeDef ENS160_WriteReg(uint8_t reg, uint8_t value)
 {
-    return HAL_I2C_Mem_Write(&hi2c4, ENS160_I2C_ADDR, reg, I2C_MEMADD_SIZE_8BIT, &value, 1U, 50U);
+    return I2C4_Mem_Write(ENS160_I2C_ADDR, reg, &value, 1U, 50U);
 }
 
 static HAL_StatusTypeDef ENS160_WriteReg16Le(uint8_t reg, uint16_t value)
@@ -31,12 +33,12 @@ static HAL_StatusTypeDef ENS160_WriteReg16Le(uint8_t reg, uint16_t value)
 
     buf[0] = (uint8_t)(value & 0xFFU);
     buf[1] = (uint8_t)(value >> 8);
-    return HAL_I2C_Mem_Write(&hi2c4, ENS160_I2C_ADDR, reg, I2C_MEMADD_SIZE_8BIT, buf, 2U, 50U);
+    return I2C4_Mem_Write(ENS160_I2C_ADDR, reg, buf, 2U, 50U);
 }
 
 static HAL_StatusTypeDef ENS160_ReadRegs(uint8_t reg, uint8_t *buf, uint16_t len)
 {
-    return HAL_I2C_Mem_Read(&hi2c4, ENS160_I2C_ADDR, reg, I2C_MEMADD_SIZE_8BIT, buf, len, 50U);
+    return I2C4_Mem_Read(ENS160_I2C_ADDR, reg, buf, len, 50U);
 }
 
 static uint16_t ENS160_ReadU16Le(uint8_t reg)
@@ -77,14 +79,14 @@ void ENS160_Init(void)
     }
     if (opmode == ENS160_OPMODE_DEEP_SLEEP) {
         (void)ENS160_WriteReg(ENS160_REG_OPMODE, ENS160_OPMODE_IDLE);
-        HAL_Delay(20U);
+        osDelay(20U);
     }
     if (opmode != ENS160_OPMODE_IDLE) {
         (void)ENS160_WriteReg(ENS160_REG_OPMODE, ENS160_OPMODE_IDLE);
-        HAL_Delay(20U);
+        osDelay(20U);
     }
     (void)ENS160_WriteReg(ENS160_REG_OPMODE, ENS160_OPMODE_STANDARD);
-    HAL_Delay(100U);
+    osDelay(100U);
     s_init_ok = 1U;
 }
 
@@ -133,6 +135,8 @@ void ENS160_Update(void)
     s_ens160.device_status = status;
     s_ens160.warmup_phase = (uint8_t)((status & ENS160_STATUS_VALID_MASK) >> 2);
     if ((status & ENS160_STATUS_STATER) != 0U) {
+        s_ens160.last_update_tick = HAL_GetTick();
+        s_ens160.online = 1U;
         return;
     }
     if ((status & ENS160_STATUS_VALID_MASK) == ENS160_STATUS_VALID_BAD) {
@@ -151,8 +155,6 @@ void ENS160_Update(void)
 
 void ENS160_GetData(ENS160_Data_t *out)
 {
-    uint32_t diff;
-
     if (out == NULL) {
         return;
     }
@@ -162,8 +164,7 @@ void ENS160_GetData(ENS160_Data_t *out)
         out->online = 0U;
         return;
     }
-    diff = HAL_GetTick() - s_ens160.last_update_tick;
-    if ((s_ens160.last_update_tick == 0U) || (diff > 5000U)) {
+    if (sensor_tick_is_stale(s_ens160.last_update_tick, SENSOR_OFFLINE_MS)) {
         out->online = 0U;
     }
 }

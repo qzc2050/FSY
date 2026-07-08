@@ -40,7 +40,7 @@ int DeviceConfig_SetAlarmSound(uint8_t on);
 int DeviceConfig_SetAlarmLight(uint8_t on);
 void DeviceConfig_GetAlarmOutput(uint8_t *sound, uint8_t *light, uint8_t *volume);
 
-/** reg123 可读值 / reg15 镜像源（bit13 光、bit14 背光；bit15 外置报警暂 0） */
+/** reg123 可读值 / reg15 镜像源（bit9 LoRa、bit13 光、bit14 背光；bit15 外置报警暂 0） */
 uint32_t DeviceConfig_GetControlBit2Mirror(void);
 
 void DeviceConfig_ApplyGeigerAlgorithm(void);

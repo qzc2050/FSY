@@ -44,7 +44,15 @@ void MX_I2C1_Init(void);
 void MX_I2C4_Init(void);
 
 /* USER CODE BEGIN Prototypes */
-
+void I2C_BusMutex_Init(void);
+HAL_StatusTypeDef I2C4_Mem_Read(uint16_t DevAddress, uint16_t MemAddress,
+                              uint8_t *pData, uint16_t Size, uint32_t TimeoutMs);
+HAL_StatusTypeDef I2C4_Mem_Write(uint16_t DevAddress, uint16_t MemAddress,
+                               uint8_t *pData, uint16_t Size, uint32_t TimeoutMs);
+HAL_StatusTypeDef I2C4_Master_Transmit(uint16_t DevAddress, uint8_t *pData,
+                                     uint16_t Size, uint32_t TimeoutMs);
+HAL_StatusTypeDef I2C4_Master_Receive(uint16_t DevAddress, uint8_t *pData,
+                                      uint16_t Size, uint32_t TimeoutMs);
 /* USER CODE END Prototypes */
 
 #ifdef __cplusplus

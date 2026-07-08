@@ -10,6 +10,7 @@ import com.raydose.netshield.model.withExpiredPauseCleared
 import com.raydose.netshield.model.HostNetworkSettings
 import com.raydose.netshield.model.NetworkWifiDefaults
 import com.raydose.netshield.model.ProbeCardDisplayMode
+import com.raydose.netshield.model.ProbeTimeSyncState
 import com.raydose.netshield.model.SavedProbe
 import com.raydose.netshield.model.SlaveNetworkCard
 import com.raydose.netshield.model.TimeSettings
@@ -117,6 +118,7 @@ class HostSettingsRepository(context: Context) {
             showLunar = o.optBoolean("showLunar", true),
             showGregorian = o.optBoolean("showGregorian", true),
             showHoliday = o.optBoolean("showHoliday", false),
+            autoSyncToProbe = o.optBoolean("autoSyncToProbe", true),
         )
     }
 
@@ -126,8 +128,35 @@ class HostSettingsRepository(context: Context) {
             put("showLunar", settings.showLunar)
             put("showGregorian", settings.showGregorian)
             put("showHoliday", settings.showHoliday)
+            put("autoSyncToProbe", settings.autoSyncToProbe)
         }
         prefs.edit().putString(KEY_TIME, o.toString()).apply()
+    }
+
+    fun loadProbeTimeSyncState(probeId: String): ProbeTimeSyncState {
+        val root = loadProbeTimeSyncRoot()
+        val o = root.optJSONObject(probeId) ?: return ProbeTimeSyncState()
+        return ProbeTimeSyncState(
+            lastAutoSyncMillis = o.optLong("lastAutoSyncMillis", 0L),
+            lastOfflineMillis = o.optLong("lastOfflineMillis", 0L),
+        )
+    }
+
+    fun saveProbeTimeSyncState(probeId: String, state: ProbeTimeSyncState) {
+        val root = loadProbeTimeSyncRoot()
+        root.put(
+            probeId,
+            JSONObject().apply {
+                put("lastAutoSyncMillis", state.lastAutoSyncMillis)
+                put("lastOfflineMillis", state.lastOfflineMillis)
+            },
+        )
+        prefs.edit().putString(KEY_PROBE_TIME_SYNC, root.toString()).apply()
+    }
+
+    private fun loadProbeTimeSyncRoot(): JSONObject {
+        val raw = prefs.getString(KEY_PROBE_TIME_SYNC, null) ?: return JSONObject()
+        return runCatching { JSONObject(raw) }.getOrDefault(JSONObject())
     }
 
     fun loadAlbumSettings(): AlbumSettings {
@@ -240,6 +269,7 @@ class HostSettingsRepository(context: Context) {
         private const val KEY_HOST_NET = "host_network"
         private const val KEY_SLAVE_NET = "slave_network"
         private const val KEY_TIME = "time_settings"
+        private const val KEY_PROBE_TIME_SYNC = "probe_time_sync"
         private const val KEY_ALBUM = "album_settings"
         private const val KEY_ALBUM_MESSAGES = "album_messages"
         private const val KEY_PROBE_DETAIL_ORG_NAME = "probe_detail_org_name"

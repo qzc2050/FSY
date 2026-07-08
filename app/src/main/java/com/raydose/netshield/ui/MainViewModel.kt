@@ -40,10 +40,19 @@ import com.raydose.netshield.model.SavedProbe
 import com.raydose.netshield.model.SlaveProbeUi
 import com.raydose.netshield.model.SystemAlertLog
 import com.raydose.netshield.model.ProbeCommandLink
+import com.raydose.netshield.model.isPlausibleRealtimeDoseX100
 import com.raydose.netshield.model.applyParsedFrame
-import com.raydose.netshield.model.buildLowerAlarmCheckboxWriteFrames
-import com.raydose.netshield.model.buildUpperAlarmCheckboxWriteFrames
+import com.raydose.netshield.model.buildAlarmEnableWriteFrame
+import com.raydose.netshield.model.buildDoseLowerWriteFrame
+import com.raydose.netshield.model.buildDoseUpperWriteFrame
 import com.raydose.netshield.model.buildVolumeWriteFrame
+import com.raydose.netshield.model.buildTimeSyncWriteFrame
+import com.raydose.netshield.model.PROBE_AUTO_SYNC_STARTUP_DELAY_MS
+import com.raydose.netshield.model.hostTimeInvalidForProbeSyncHint
+import com.raydose.netshield.model.isHostTimeValidForProbeSync
+import com.raydose.netshield.model.shouldAutoSyncProbeTime
+import com.raydose.netshield.model.modbusDeviceAddr
+import com.raydose.netshield.model.usvTextToX100
 import com.raydose.netshield.model.deriveDoorState
 import com.raydose.netshield.model.matchesSaved
 import com.raydose.netshield.model.mergeFromDiscovery
@@ -54,6 +63,7 @@ import com.raydose.netshield.model.toManageDraft
 import com.raydose.netshield.model.toSlaveProbeUi
 import com.raydose.netshield.ui.settings.SettingsTab
 import com.raydose.netshield.net.parseFsyBroadcast
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -70,6 +80,7 @@ import java.util.Calendar
 import java.util.Date
 import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicLong
 
 data class ProbeSettingsUiState(
     val selectedTab: SettingsTab = SettingsTab.DisplaySound,
@@ -100,7 +111,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     )
     private var windowBrightnessApplier: ((Float) -> Unit)? = null
     private var pauseAlarmExpiryJob: Job? = null
+    private val upperThresholdDebounceJobs = ConcurrentHashMap<Int, Job>()
+    private val lowerThresholdDebounceJobs = ConcurrentHashMap<Int, Job>()
+    /** 最近一次已成功写入设备的阈值（×100），避免重复下发 */
+    private val lastCommittedUpperX100 = ConcurrentHashMap<String, Long>()
+    private val lastCommittedLowerX100 = ConcurrentHashMap<String, Long>()
     private val discoveredMap = ConcurrentHashMap<String, DiscoveredDevice>()
+    /** 组播日志序号，避免 Logcat chatty 折叠相同行 */
+    private val multicastLogSeq = AtomicLong(0L)
     private var nextAlertLogId = 1L
 
     private val sensorOfflineLogAggregator = ProbeSensorOfflineLogAggregator(
@@ -203,12 +221,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val saved = _savedProbes.value
         Log.i(ProbeConnectionManager.TAG, "已加载 ${saved.size} 个已保存探头")
         if (saved.isNotEmpty()) {
-            connectionManager.reconnectAll(saved)
-            viewModelScope.launch {
-                delay(1500L)
-                connectionManager.setSavedProbes(_savedProbes.value)
-                connectionManager.reconnectAll(_savedProbes.value)
-            }
+            connectionManager.setSavedProbes(saved)
         }
         viewModelScope.launch {
             while (true) {
@@ -220,6 +233,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
         schedulePauseAlarmExpiry(_displaySoundSettings.value.pauseAlarmUntilMillis)
         hostEnvSerialRepository.start()
+        viewModelScope.launch {
+            delay(PROBE_AUTO_SYNC_STARTUP_DELAY_MS)
+            maybeAutoSyncTimeToOnlineProbes(reason = "startup")
+        }
         viewModelScope.launch {
             combine(
                 homeUiState.map { state -> state.slaveProbes.any { it.isOnline && it.hasAlarm } },
@@ -452,9 +469,132 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun syncTimeToDevice() {
-        val hint = systemTimeDisplayText()
-        _settings.update { it.copy(statusHint = "同步到设备待协议联调（从机时间写入）") }
-        Log.i(ProbeConnectionManager.TAG, "同步时间到设备（待实现） at=$hint")
+        val result = pushTimeSyncToProbes(manual = true)
+        _settings.update { it.copy(statusHint = result.userHint) }
+    }
+
+    private fun maybeAutoSyncTimeToOnlineProbes(reason: String) {
+        if (!_timeDisplaySettings.value.autoSyncToProbe) return
+        val result = pushTimeSyncToProbes(manual = false)
+        if (result.syncedCount > 0) {
+            Log.i(
+                ProbeConnectionManager.TAG,
+                "自动时间同步($reason) 已向 ${result.syncedCount} 个探头写入 reg94",
+            )
+        }
+    }
+
+    private fun maybeAutoSyncTimeToProbe(probeId: String, reason: String) {
+        if (!_timeDisplaySettings.value.autoSyncToProbe) return
+        val probe = _savedProbes.value.find { it.id == probeId } ?: return
+        if (_liveTelemetry.value[probeId]?.isOnline != true) return
+        val result = pushTimeSyncToProbes(manual = false, probeIds = setOf(probeId))
+        if (result.syncedCount > 0) {
+            Log.i(
+                ProbeConnectionManager.TAG,
+                "自动时间同步($reason) 已向 ${probe.displayName} 写入 reg94",
+            )
+        }
+    }
+
+    private data class ProbeTimeSyncPushResult(
+        val syncedCount: Int,
+        val userHint: String?,
+    )
+
+    private fun pushTimeSyncToProbes(
+        manual: Boolean,
+        probeIds: Set<String>? = null,
+    ): ProbeTimeSyncPushResult {
+        val now = System.currentTimeMillis()
+        if (!isHostTimeValidForProbeSync(now)) {
+            val hint = hostTimeInvalidForProbeSyncHint()
+            if (manual) {
+                Log.w(ProbeConnectionManager.TAG, "手动时间同步跳过：$hint")
+                return ProbeTimeSyncPushResult(0, hint)
+            }
+            Log.w(ProbeConnectionManager.TAG, "自动时间同步跳过：$hint")
+            return ProbeTimeSyncPushResult(0, null)
+        }
+        val probes = _savedProbes.value
+        if (probes.isEmpty()) {
+            return ProbeTimeSyncPushResult(
+                0,
+                if (manual) "无已保存探头，无法同步时间" else null,
+            )
+        }
+        val live = _liveTelemetry.value
+        val online = probes.filter { live[it.id]?.isOnline == true }
+        val targets = if (probeIds == null) {
+            online
+        } else {
+            online.filter { it.id in probeIds }
+        }
+        if (targets.isEmpty()) {
+            return ProbeTimeSyncPushResult(
+                0,
+                if (manual) "无在线探头，无法同步时间" else null,
+            )
+        }
+        val syncedNames = mutableListOf<String>()
+        var skippedNoRoute = 0
+        for (probe in targets) {
+            if (!manual) {
+                val syncState = hostSettingsRepository.loadProbeTimeSyncState(probe.id)
+                if (!shouldAutoSyncProbeTime(
+                        lastAutoSyncMillis = syncState.lastAutoSyncMillis,
+                        lastOfflineMillis = syncState.lastOfflineMillis,
+                        nowMillis = now,
+                    )
+                ) {
+                    continue
+                }
+            }
+            if (linkRouter.routeFor(probe.id) == null) {
+                skippedNoRoute++
+                if (manual) {
+                    Log.i(
+                        ProbeConnectionManager.TAG,
+                        "跳过时间同步 ${probe.displayName}：尚无 0x23 路由",
+                    )
+                }
+                continue
+            }
+            connectionManager.sendFrames(probe.id, listOf(probe.buildTimeSyncWriteFrame()))
+            syncedNames += probe.displayName
+            if (!manual) {
+                val prev = hostSettingsRepository.loadProbeTimeSyncState(probe.id)
+                hostSettingsRepository.saveProbeTimeSyncState(
+                    probe.id,
+                    prev.copy(lastAutoSyncMillis = now),
+                )
+            }
+            Log.i(
+                ProbeConnectionManager.TAG,
+                "${if (manual) "手动" else "自动"}时间同步 ${probe.displayName} " +
+                    "reg94 addr=0x${probe.modbusDeviceAddr().toUByte().toString(16)}",
+            )
+        }
+        val sent = syncedNames.size
+        val hint = if (!manual) {
+            null
+        } else when {
+            sent == 0 && skippedNoRoute > 0 -> "时间同步失败：在线探头尚无通信路由"
+            sent == 0 -> "无符合条件的在线探头可同步时间"
+            skippedNoRoute > 0 -> "已向 $sent 个探头同步本机时间（$skippedNoRoute 个无路由已跳过）"
+            sent == 1 -> "已向 ${syncedNames.first()} 同步本机时间"
+            else -> "已向 $sent 个在线探头同步本机时间"
+        }
+        return ProbeTimeSyncPushResult(sent, hint)
+    }
+
+    private fun recordProbeOfflineForTimeSync(probeId: String) {
+        val now = System.currentTimeMillis()
+        val prev = hostSettingsRepository.loadProbeTimeSyncState(probeId)
+        hostSettingsRepository.saveProbeTimeSyncState(
+            probeId,
+            prev.copy(lastOfflineMillis = now),
+        )
     }
 
     fun aboutDeviceInfo(): AboutDeviceInfo {
@@ -544,9 +684,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _settings.update { s ->
             if (index !in s.manageDrafts.indices) return@update s
             val drafts = s.manageDrafts.toMutableList()
-            drafts[index] = drafts[index]
+            val merged = drafts[index]
                 .mergeConfigFromTelemetry(telemetry)
                 .copy(isTcpOnline = telemetry?.isOnline == true)
+            drafts[index] = merged
+            seedLastCommittedThresholds(probe.id, merged)
             s.copy(manageDrafts = drafts)
         }
         if (telemetry?.isOnline == true) {
@@ -591,14 +733,20 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             )
         }
         if (prev != null) {
+            if (prev.doseUpperUsv != draft.doseUpperUsv) {
+                scheduleUpperThresholdWriteDebounced(index)
+            }
+            if (prev.doseLowerUsv != draft.doseLowerUsv) {
+                scheduleLowerThresholdWriteDebounced(index)
+            }
             pushDraftWritesIfNeeded(prev, draft)
         }
     }
 
     /**
-     * 仅 checkbox 变化时写从机（阈值/音量改字只改草稿，不发命令）：
-     * - 上限旁「报警」→ reg 82 + reg 50
-     * - 下限旁「报警」→ reg 82 + reg 52
+     * 即时写从机：
+     * - 阈值输入停止 [THRESHOLD_DEBOUNCE_MS] 后 → reg 50 / reg 52
+     * - 上限/下限旁「报警」→ reg 82
      * - 从机屏幕 / 报警灯光 → reg 123 bit14 / bit13
      * - 音量滑条松手 → reg 122
      */
@@ -607,12 +755,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val probeId = draft.id
         val frames = mutableListOf<ByteArray>()
 
-        if (prev.radiationUpperAlarmOn != draft.radiationUpperAlarmOn) {
-            frames += draft.buildUpperAlarmCheckboxWriteFrames()
-            patchTelemetryAlarmEnable(probeId, draft)
-        }
-        if (prev.radiationLowerAlarmOn != draft.radiationLowerAlarmOn) {
-            frames += draft.buildLowerAlarmCheckboxWriteFrames()
+        if (prev.radiationUpperAlarmOn != draft.radiationUpperAlarmOn ||
+            prev.radiationLowerAlarmOn != draft.radiationLowerAlarmOn
+        ) {
+            frames += draft.buildAlarmEnableWriteFrame()
             patchTelemetryAlarmEnable(probeId, draft)
         }
         if (prev.slaveScreenOn != draft.slaveScreenOn ||
@@ -666,7 +812,72 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    private fun scheduleUpperThresholdWriteDebounced(index: Int) {
+        upperThresholdDebounceJobs[index]?.cancel()
+        upperThresholdDebounceJobs[index] = viewModelScope.launch {
+            delay(THRESHOLD_DEBOUNCE_MS)
+            commitProbeUpperThreshold(index)
+        }
+    }
+
+    private fun scheduleLowerThresholdWriteDebounced(index: Int) {
+        lowerThresholdDebounceJobs[index]?.cancel()
+        lowerThresholdDebounceJobs[index] = viewModelScope.launch {
+            delay(THRESHOLD_DEBOUNCE_MS)
+            commitProbeLowerThreshold(index)
+        }
+    }
+
+    private fun commitProbeUpperThreshold(index: Int) {
+        val draft = _settings.value.manageDrafts.getOrNull(index) ?: return
+        if (!draft.isTcpOnline) return
+        val x100 = usvTextToX100(draft.doseUpperUsv) ?: return
+        if (lastCommittedUpperX100[draft.id] == x100) return
+        val frame = draft.buildDoseUpperWriteFrame() ?: return
+        connectionManager.sendFrames(draft.id, listOf(frame))
+        lastCommittedUpperX100[draft.id] = x100
+        _liveTelemetry.update { map ->
+            val t = map[draft.id] ?: LiveProbeTelemetry()
+            map + (draft.id to t.copy(doseUpperUsv = draft.doseUpperUsv))
+        }
+        Log.d(
+            ProbeConnectionManager.TAG,
+            "上限阈值已写入 probe=${draft.id} reg50=${draft.doseUpperUsv} μSv/h",
+        )
+    }
+
+    private fun commitProbeLowerThreshold(index: Int) {
+        val draft = _settings.value.manageDrafts.getOrNull(index) ?: return
+        if (!draft.isTcpOnline) return
+        val x100 = usvTextToX100(draft.doseLowerUsv) ?: return
+        if (lastCommittedLowerX100[draft.id] == x100) return
+        val frame = draft.buildDoseLowerWriteFrame() ?: return
+        connectionManager.sendFrames(draft.id, listOf(frame))
+        lastCommittedLowerX100[draft.id] = x100
+        _liveTelemetry.update { map ->
+            val t = map[draft.id] ?: LiveProbeTelemetry()
+            map + (draft.id to t.copy(doseLowerUsv = draft.doseLowerUsv))
+        }
+        Log.d(
+            ProbeConnectionManager.TAG,
+            "下限阈值已写入 probe=${draft.id} reg52=${draft.doseLowerUsv} μSv/h",
+        )
+    }
+
+    private fun seedLastCommittedThresholds(probeId: String, draft: ProbeManageDraft) {
+        usvTextToX100(draft.doseUpperUsv)?.let { lastCommittedUpperX100[probeId] = it }
+        usvTextToX100(draft.doseLowerUsv)?.let { lastCommittedLowerX100[probeId] = it }
+    }
+
+    private fun cancelThresholdDebounceJobs() {
+        upperThresholdDebounceJobs.values.forEach { it.cancel() }
+        lowerThresholdDebounceJobs.values.forEach { it.cancel() }
+        upperThresholdDebounceJobs.clear()
+        lowerThresholdDebounceJobs.clear()
+    }
+
     fun closeSettings() {
+        cancelThresholdDebounceJobs()
         _showSettings.value = false
         _settings.update { it.copy(showAddProbeDialog = false, showSaveSuccessDialog = false) }
         val savedBrightness = hostSettingsRepository.loadDisplaySound().brightness
@@ -674,6 +885,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun showAddProbeDialog() {
+        connectionManager.restartDiscovery()
         _settings.update {
             it.copy(
                 showAddProbeDialog = true,
@@ -703,7 +915,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val list = drafts.map { it.savedProbe }
         persistProbeList(list)
         if (added.ip.isNotBlank()) {
-            connectionManager.connect(added)
+            connectionManager.connectAfterDiscovery(added, device)
         }
         val newIndex = drafts.lastIndex
         _settings.update {
@@ -846,11 +1058,28 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun onDiscoveryDatagram(text: String) {
-        val broadcast = parseFsyBroadcast(text) ?: return
+        val broadcast = parseFsyBroadcast(text) ?: run {
+            Log.w(ProbeConnectionManager.TAG, "组播解析失败 raw=${text.take(120)}")
+            return
+        }
         val device = DiscoveredDevice.fromBroadcast(broadcast)
+        Log.i(
+            ProbeConnectionManager.TAG,
+            "组播收到 #${multicastLogSeq.incrementAndGet()} ${device.model} ${device.ip} " +
+                "serial=${device.serial} id=${device.protoAddr}",
+        )
         discoveredMap[device.stableId] = device
-        applyDiscoveryNetworkUpdate(device)
-        publishDiscoveredDevicesIfVisible()
+        val matchedProbeId = _savedProbes.value
+            .firstOrNull { matchesSaved(it, device) && it.ip.isNotBlank() }
+            ?.id
+        if (matchedProbeId != null) {
+            linkRouter.recordMulticastKeepalive(matchedProbeId)
+        }
+        viewModelScope.launch(Dispatchers.Default) {
+            matchedProbeId?.let { markNetworkProbeUiOnline(it) }
+            applyDiscoveryNetworkUpdate(device)
+            publishDiscoveredDevicesIfVisible()
+        }
     }
 
     /** zjb 串口/CAN：非 0xEF 从机 0x23（序列号广播 + 实时上传） */
@@ -939,20 +1168,25 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         frame: com.raydose.netshield.net.ParsedFsyFrame,
         rxLink: ProbeCommandLink? = null,
     ) {
+        if (!frame.crcOk) return
+
         if (rxLink != null &&
             frame.func == 0x23 &&
             frame.uploadValues != null &&
-            frame.uploadValues.size >= 8
+            frame.uploadValues.size >= 8 &&
+            isPlausibleRealtimeDoseX100(frame.uploadValues[0])
         ) {
             linkRouter.recordRx23(probeId, rxLink)
         }
         _liveTelemetry.update { map ->
             val prev = map[probeId] ?: LiveProbeTelemetry()
             val next = prev.applyParsedFrame(frame)
-            frame.uploadValues?.takeIf { it.size >= 8 }?.let { values ->
-                val dose = values[0] / 100.0
-                doseHistoryRepository.recordSampleIfDue(probeId, dose)
-            }
+            frame.uploadValues
+                ?.takeIf { it.size >= 8 && isPlausibleRealtimeDoseX100(it[0]) }
+                ?.let { values ->
+                    val dose = values[0] / 100.0
+                    doseHistoryRepository.recordSampleIfDue(probeId, dose)
+                }
             map + (probeId to next)
         }
         if (_showSettings.value) {
@@ -961,7 +1195,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         if (frame.func == 0x13 && _showSettings.value) {
             applyConfigReadToSelectedProbeDraft(probeId)
         }
-        frame.uploadValues?.takeIf { it.size >= 8 }?.let {
+        frame.uploadValues
+            ?.takeIf { it.size >= 8 && isPlausibleRealtimeDoseX100(it[0]) }
+            ?.let {
             val probe = _savedProbes.value.find { it.id == probeId }
             val telemetry = _liveTelemetry.value[probeId]
             sensorOfflineLogAggregator.onTelemetrySample(
@@ -998,8 +1234,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             connectionManager.disconnect(probe.id)
         }
 
-        connectionManager.connect(updated)
-
         _settings.update { state ->
             val drafts = state.manageDrafts.map { draft ->
                 if (!matchesSaved(draft.savedProbe, device)) draft
@@ -1029,29 +1263,51 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     /**
-     * 串口/CAN 探头无 TCP 断线事件：超过 [PROBE_TELEMETRY_STALE_MS] 未收到实时 0x23 则置离线。
-     * 走 TCP 且仍连着的探头由 [ProbeConnectionManager] 内 watchdog 处理。
+     * 串口/CAN：5s 无实时 0x23 则 UI 离线。
+     * 网口：5s 无组播则 UI 离线（与 TCP 0x23 超时无关）。
      */
     private fun pruneStaleProbeTelemetry() {
         val now = System.currentTimeMillis()
         for (probe in _savedProbes.value) {
             val probeId = probe.id
             if (_liveTelemetry.value[probeId]?.isOnline != true) continue
-            val lastRx = linkRouter.lastRx23Millis(probeId) ?: continue
-            if (now - lastRx < PROBE_TELEMETRY_STALE_MS) continue
-            val route = linkRouter.routeFor(probeId)
-            if (route == ProbeCommandLink.NETWORK && connectionManager.isTcpOnline(probeId)) {
-                continue
+            if (probe.ip.isNotBlank()) {
+                val lastMcast = linkRouter.lastMulticastKeepaliveMillis(probeId) ?: continue
+                if (now - lastMcast < PROBE_STALE_MS) continue
+                markProbeOffline(probeId, logTag = "组播超时")
+            } else {
+                val lastRx = linkRouter.lastRx23Millis(probeId) ?: continue
+                if (now - lastRx < PROBE_STALE_MS) continue
+                markProbeOffline(probeId, logTag = "0x23超时")
             }
-            markProbeTelemetryStaleOffline(probeId)
         }
     }
 
-    private fun markProbeTelemetryStaleOffline(probeId: String) {
+    /** 网口探头收到组播：UI 在线，保留最后一帧读数（不因 0x23 短暂中断变 ---） */
+    private fun markNetworkProbeUiOnline(probeId: String) {
+        val wasOnline = _liveTelemetry.value[probeId]?.isOnline == true
+        _liveTelemetry.update { map ->
+            val prev = map[probeId] ?: LiveProbeTelemetry()
+            map + (probeId to prev.copy(isOnline = true))
+        }
+        if (!wasOnline) {
+            val name = _savedProbes.value.find { it.id == probeId }?.displayName ?: probeId
+            appendAlertLog(
+                message = "$name 已连接",
+                kind = AlertLogKind.Connected,
+            )
+            sensorOfflineLogAggregator.onProbeConnected(probeId)
+        }
+        if (_showSettings.value) {
+            patchProbeRealtimeSummaryOnDraft(probeId)
+        }
+    }
+
+    private fun markProbeOffline(probeId: String, logTag: String) {
         if (_liveTelemetry.value[probeId]?.isOnline != true) return
         _liveTelemetry.update { map ->
             val prev = map[probeId] ?: LiveProbeTelemetry()
-            map + (probeId to prev.copy(isOnline = false))
+            map + (probeId to prev.asOffline())
         }
         val probe = _savedProbes.value.find { it.id == probeId }
         val name = probe?.displayName ?: probeId
@@ -1060,10 +1316,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             kind = AlertLogKind.Warning,
         )
         sensorOfflineLogAggregator.onProbeDisconnected(probeId)
+        recordProbeOfflineForTimeSync(probeId)
         if (_showSettings.value) {
             patchProbeOnlineOnDraft(probeId, false)
+            patchProbeRealtimeSummaryOnDraft(probeId)
         }
-        Log.i(ProbeConnectionManager.TAG, "探头离线(0x23超时) id=$probeId name=$name")
+        Log.i(ProbeConnectionManager.TAG, "探头离线($logTag) id=$probeId name=$name")
     }
 
     private fun onTcpFrame(probeId: String, frame: com.raydose.netshield.net.ParsedFsyFrame) {
@@ -1071,16 +1329,46 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun onProbeOnlineChanged(probeId: String, online: Boolean) {
+        val probe = _savedProbes.value.find { it.id == probeId }
+        val isNetwork = probe?.ip?.isNotBlank() == true
+
+        if (isNetwork && !online) {
+            Log.i(ProbeConnectionManager.TAG, "TCP 断开 probe=$probeId（UI 仍由组播判定）")
+            if (_showSettings.value) {
+                patchProbeOnlineOnDraft(probeId, false)
+            }
+            return
+        }
+
+        if (isNetwork && online) {
+            _liveTelemetry.update { map ->
+                val prev = map[probeId] ?: LiveProbeTelemetry()
+                map + (probeId to prev.copy(isOnline = true))
+            }
+            if (_showSettings.value) {
+                patchProbeOnlineOnDraft(probeId, true)
+                val state = _settings.value
+                val index = state.selectedProbeIndex
+                if (index in state.manageDrafts.indices && state.manageDrafts[index].id == probeId) {
+                    syncProbeCardAt(index)
+                }
+            }
+            viewModelScope.launch {
+                delay(2_000L)
+                maybeAutoSyncTimeToProbe(probeId, reason = "online")
+            }
+            return
+        }
+
         _liveTelemetry.update { map ->
             val prev = map[probeId] ?: LiveProbeTelemetry()
             val updated = if (online) {
                 prev.copy(isOnline = true)
             } else {
-                prev.copy(isOnline = false)
+                prev.asOffline()
             }
             map + (probeId to updated)
         }
-        val probe = _savedProbes.value.find { it.id == probeId }
         val name = probe?.displayName ?: probeId
         appendAlertLog(
             message = if (online) "$name 已连接" else "$name 已断开",
@@ -1088,12 +1376,19 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         )
         if (online) {
             sensorOfflineLogAggregator.onProbeConnected(probeId)
+            viewModelScope.launch {
+                delay(2_000L)
+                maybeAutoSyncTimeToProbe(probeId, reason = "online")
+            }
         } else {
             sensorOfflineLogAggregator.onProbeDisconnected(probeId)
+            recordProbeOfflineForTimeSync(probeId)
         }
         if (_showSettings.value) {
             patchProbeOnlineOnDraft(probeId, online)
-            // 添加探头或重连后 TCP 才就绪：此时补读 0x40/0x52/0x7A/0x7B（添加时 sync 可能因未在线而跳过）
+            if (!online) {
+                patchProbeRealtimeSummaryOnDraft(probeId)
+            }
             if (online) {
                 val state = _settings.value
                 val index = state.selectedProbeIndex
@@ -1145,7 +1440,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _settings.update { s ->
             if (index !in s.manageDrafts.indices) return@update s
             val drafts = s.manageDrafts.toMutableList()
-            drafts[index] = drafts[index].mergeConfigFromTelemetry(telemetry)
+            val merged = drafts[index].mergeConfigFromTelemetry(telemetry)
+            drafts[index] = merged
+            seedLastCommittedThresholds(probeId, merged)
             s.copy(manageDrafts = drafts)
         }
     }
@@ -1229,6 +1526,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     override fun onCleared() {
         pauseAlarmExpiryJob?.cancel()
+        cancelThresholdDebounceJobs()
         hostEnvSerialRepository.stop()
         hostAlarmController.release()
         connectionManager.stopDiscovery()
@@ -1250,8 +1548,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     companion object {
         private const val DISCOVERY_TTL_MS = 30_000L
-        /** Neiji 约 1s 一帧实时 0x23；与转接板本机环境 STALE 对齐 */
-        private const val PROBE_TELEMETRY_STALE_MS = 5_000L
+        /** 网口组播 / 串口 0x23：超过此时间无数据则 UI 离线 */
+        private const val PROBE_STALE_MS = 5_000L
         private const val ALERT_LOG_RETENTION_MS = 24L * 3_600_000L
+        /** 阈值输入框停止编辑后延迟下发（不依赖失焦） */
+        private const val THRESHOLD_DEBOUNCE_MS = 800L
     }
 }

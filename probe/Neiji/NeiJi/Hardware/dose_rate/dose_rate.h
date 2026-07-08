@@ -4,8 +4,9 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#define GEIGER_DEFAULT_SENSITIVITY_CPM  600.0f
-#define GEIGER_DEFAULT_BACKGROUND_CPM   20U
+#define GEIGER_DEFAULT_SENSITIVITY_CPM      600.0f
+#define GEIGER_DEFAULT_BACKGROUND_CPM       20U
+#define GEIGER_DEFAULT_DEAD_TIME_US_X100    20000U
 
 typedef enum {
     DR_INPUT_MODE_REAL = 0,
@@ -50,6 +51,9 @@ float DoseRate_GetRateLimitUsvh(void);
 
 bool DoseRate_SetBackgroundCpm(uint32_t background_cpm);
 uint32_t DoseRate_GetBackgroundCpm(void);
+
+bool DoseRate_SetDeadTimeUsX100(uint32_t dead_time_us_x100);
+uint32_t DoseRate_GetDeadTimeUsX100(void);
 
 uint8_t DoseRate_GetInputMode(void);
 bool DoseRate_SetInputMode(uint8_t mode);

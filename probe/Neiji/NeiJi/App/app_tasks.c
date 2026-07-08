@@ -22,6 +22,8 @@
 #include "alarm_output.h"
 #include "uart_diag.h"
 #include "can_driver.h"
+#include "lora.h"
+#include "i2c.h"
 #include <stdio.h>
 #include <string.h>
 
@@ -91,6 +93,7 @@ void App_TasksInit(void)
     UartDiag_Write("[APP] tasks init\r\n");
 
     flash_fs_mutex_init();
+    I2C_BusMutex_Init();
 
     Uart1_Port_Init();
 
@@ -101,7 +104,7 @@ void App_TasksInit(void)
     /* 按键扫描先于 LVGL，供 lv_port_indev 读取 */
     Key_TaskInit();
 
-    /* Flash 配置必须在 UI 之前加载，否则 UI bind 读到全零 */
+    /* Flash 配置必须在 UI / LoRa 之前加载（reg123 bit9 控制 LoRa 使能） */
     DeviceConfig_TaskInit();
     (void)DeviceConfig_Init();
 
@@ -145,7 +148,13 @@ static void UartTask(void *argument)
 
         Fsy_Link_OnUartBytes(rb, Fsy_Link_WriteUart);
 
+#if CAN_DRIVER_ENABLE
         CanDriver_Poll();
+#endif
+
+        if (LORA_IsEnabled()) {
+            LORA_Poll();
+        }
 
         (void)osDelay(UART_RX_POLL_MS);
 
@@ -160,16 +169,39 @@ static void UploadTask(void *argument)
 {
 
     uint32_t last_sn_tick = 0U;
+    uint32_t last_maintain_tick = 0U;
+    uint16_t upload_fail_cnt = 0U;
+    uint32_t phase_ms = Fsy_Upload_PhaseOffsetMs();
 
     (void)argument;
 
-
+    if (phase_ms > 0U) {
+        (void)osDelay(phase_ms);
+    }
 
     for (;;) {
 
         uint32_t now = osKernelGetTickCount();
+        int upload_rc;
 
-        (void)Fsy_Upload_Send(UploadWriteAll);
+        if ((last_maintain_tick == 0U) ||
+            ((now - last_maintain_tick) >= 30000U)) {
+            last_maintain_tick = now;
+            Net_Tcp_PeriodicMaintain();
+        }
+
+        upload_rc = Fsy_Upload_Send(UploadWriteAll);
+        if (upload_rc < 0) {
+            if (upload_fail_cnt < 0xFFFFU) {
+                upload_fail_cnt++;
+            }
+            if (upload_fail_cnt >= 10U) {
+                upload_fail_cnt = 0U;
+                Net_Tcp_PeriodicMaintain();
+            }
+        } else {
+            upload_fail_cnt = 0U;
+        }
 
         if ((last_sn_tick == 0U) ||
             ((now - last_sn_tick) >= FSY_UPLOAD_SN_PERIOD_MS)) {

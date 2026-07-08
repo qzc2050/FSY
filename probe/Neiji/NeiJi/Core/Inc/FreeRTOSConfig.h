@@ -167,6 +167,7 @@ standard names. */
 /* USER CODE BEGIN Defines */
 #undef configTOTAL_HEAP_SIZE
 #define configTOTAL_HEAP_SIZE                    ((size_t)(256 * 1024))
+#define configCHECK_FOR_STACK_OVERFLOW           2
 /* USER CODE END Defines */
 
 #endif /* FREERTOS_CONFIG_H */

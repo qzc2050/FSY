@@ -95,6 +95,80 @@ HAL_StatusTypeDef USART1_Tx(const uint8_t *buf, uint16_t len, uint32_t timeout)
 
   return status;
 }
+
+static uint8_t usart2_rx_buf[USART2_RX_BUF_SIZE];
+static volatile uint16_t usart2_rx_head;
+static volatile uint16_t usart2_rx_tail;
+static osMutexId_t s_usart2_tx_mutex;
+
+void USART2_Rx_PushByte(uint8_t byte)
+{
+  uint16_t next = (usart2_rx_head + 1U) % USART2_RX_BUF_SIZE;
+  if (next != usart2_rx_tail)
+  {
+    usart2_rx_buf[usart2_rx_head] = byte;
+    usart2_rx_head = next;
+  }
+}
+
+uint16_t USART2_Rx_GetCount(void)
+{
+  uint16_t tail = usart2_rx_tail;
+  uint16_t head = usart2_rx_head;
+  if (head >= tail)
+    return (uint16_t)(head - tail);
+  return (uint16_t)(USART2_RX_BUF_SIZE - tail + head);
+}
+
+uint16_t USART2_Rx_Read(uint8_t *buf, uint16_t len)
+{
+  uint16_t n = 0;
+  while (n < len && usart2_rx_tail != usart2_rx_head)
+  {
+    buf[n++] = usart2_rx_buf[usart2_rx_tail];
+    usart2_rx_tail = (usart2_rx_tail + 1U) % USART2_RX_BUF_SIZE;
+  }
+  return n;
+}
+
+void USART2_Rx_Start(void)
+{
+  usart2_rx_head = 0;
+  usart2_rx_tail = 0;
+  __HAL_UART_ENABLE_IT(&huart2, UART_IT_RXNE);
+  HAL_NVIC_SetPriority(USART2_IRQn, 5, 0);
+  HAL_NVIC_EnableIRQ(USART2_IRQn);
+}
+
+void USART2_TxInit(void)
+{
+  static const osMutexAttr_t attr = { .name = "usart2Tx" };
+  s_usart2_tx_mutex = osMutexNew(&attr);
+}
+
+HAL_StatusTypeDef USART2_Tx(const uint8_t *buf, uint16_t len, uint32_t timeout)
+{
+  HAL_StatusTypeDef status;
+
+  if ((buf == NULL) || (len == 0U))
+  {
+    return HAL_ERROR;
+  }
+
+  if (s_usart2_tx_mutex != NULL)
+  {
+    (void)osMutexAcquire(s_usart2_tx_mutex, osWaitForever);
+  }
+
+  status = HAL_UART_Transmit(&huart2, (uint8_t *)buf, len, timeout);
+
+  if (s_usart2_tx_mutex != NULL)
+  {
+    (void)osMutexRelease(s_usart2_tx_mutex);
+  }
+
+  return status;
+}
 /* USER CODE END 0 */
 
 UART_HandleTypeDef huart1;
@@ -143,7 +217,7 @@ void MX_USART2_UART_Init(void)
 
   /* USER CODE END USART2_Init 1 */
   huart2.Instance = USART2;
-  huart2.Init.BaudRate = 115200;
+  huart2.Init.BaudRate = 9600;
   huart2.Init.WordLength = UART_WORDLENGTH_8B;
   huart2.Init.StopBits = UART_STOPBITS_1;
   huart2.Init.Parity = UART_PARITY_NONE;
@@ -155,7 +229,8 @@ void MX_USART2_UART_Init(void)
     Error_Handler();
   }
   /* USER CODE BEGIN USART2_Init 2 */
-
+  HAL_Delay(200U);
+  USART2_Rx_Start();
   /* USER CODE END USART2_Init 2 */
 
 }

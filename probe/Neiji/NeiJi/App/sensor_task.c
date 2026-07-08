@@ -6,7 +6,6 @@
 #include "pm25.h"
 #include "fsy_regmap.h"
 #include "cmsis_os.h"
-
 #define SENSOR_POLL_MS  1000U
 
 Environment_Data_t env_data = {0};
@@ -17,9 +16,8 @@ static osThreadId_t sensorTaskHandle;
 static const osThreadAttr_t sensorTaskAttributes = {
     .name = "sensorTask",
     .stack_size = 384 * 4,
-    .priority = (osPriority_t)osPriorityNormal,
+    .priority = (osPriority_t)osPriorityAboveNormal,
 };
-
 void Sensor_TaskInit(void)
 {
     sensorTaskHandle = osThreadNew(SensorTask, NULL, &sensorTaskAttributes);
@@ -35,8 +33,7 @@ static void SensorTask(void *argument)
 
     (void)argument;
 
-    osDelay(300);
-    Pcf85063_Init();
+    osDelay(300);    Pcf85063_Init();
     PM25_Rx_Start();
     ENS160_Init();
     AHT20_Init();

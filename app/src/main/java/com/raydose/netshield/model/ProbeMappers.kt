@@ -10,7 +10,7 @@ fun SavedProbe.toSlaveProbeUi(telemetry: LiveProbeTelemetry?): SlaveProbeUi {
         ip = ip,
         location = location,
         isOnline = live.isOnline,
-        doseRateText = live.doseRateText,
+        doseRateText = if (live.isOnline) live.doseRateText else "---",
         doseUnit = live.doseUnit,
         temperature = live.temperature,
         pressure = live.pressure,
@@ -23,6 +23,7 @@ fun SavedProbe.toSlaveProbeUi(telemetry: LiveProbeTelemetry?): SlaveProbeUi {
 
 fun LiveProbeTelemetry.applyRealtimeUpload(values: List<Long>): LiveProbeTelemetry {
     if (values.size < 8) return this
+    if (!isPlausibleRealtimeDoseX100(values[0])) return this
     val dose = values[0] / 100.0
     val temp = values[1] / 10.0
     val pressurePa = values[2]

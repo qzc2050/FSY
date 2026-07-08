@@ -1,8 +1,10 @@
 #include "device.h"
 #include "config.h"
 #include "w5500.h"
+#include "socket.h"
 #include "network_cmd.h"
 #include "w5500_dhcp.h"
+#include "net_tcp.h"
 #include "net_config.h"
 #include "spi.h"
 #include "device_config.h"
@@ -39,6 +41,84 @@ void W5500_Hw_Prepare(void)
 #endif
 }
 
+static void W5500_WaitChipReset(void)
+{
+    uint32_t t0 = HAL_GetTick();
+
+    while ((IINCHIP_READ(MR) & MR_RST) != 0U) {
+        if ((HAL_GetTick() - t0) > 500U) {
+            printf("[W5500] chip reset wait timeout\r\n");
+            break;
+        }
+        delay_ms(1);
+    }
+}
+
+static void W5500_CloseAllSockets(void)
+{
+    uint8_t i;
+
+    for (i = 0U; i < MAX_SOCK_NUM; i++) {
+        close(i);
+    }
+}
+
+#if !W5500_RST_PIN_CONNECTED
+/** 冷上电：等 PHY link 连续稳定后再做脉冲复位，避免与交换机同时爬升 */
+static void W5500_WaitPhyLinkStable(uint32_t timeout_ms)
+{
+    uint32_t t0 = HAL_GetTick();
+    uint32_t up_since = 0U;
+
+    while ((HAL_GetTick() - t0) < timeout_ms) {
+        if ((getPHYCFGR() & LINK) != 0U) {
+            if (up_since == 0U) {
+                up_since = HAL_GetTick();
+            } else if ((HAL_GetTick() - up_since) >= 300U) {
+                printf("[W5500] PHY link stable (%ums)\r\n",
+                       (unsigned)(HAL_GetTick() - up_since));
+                return;
+            }
+        } else {
+            up_since = 0U;
+        }
+        delay_ms(10);
+    }
+
+    printf("[W5500] PHY link wait timeout (%ums)\r\n", (unsigned)timeout_ms);
+}
+
+static void W5500_PhyPulseReset(void)
+{
+    uint8_t phy;
+    uint32_t t0;
+
+    /*
+     * MCU 软复位时 W5500 仍供电、PHY 链路不断，DHCP/组播易卡在旧链路状态。
+     * 脉冲复位 PHY 模拟断电上电时的 link down/up。
+     */
+    printf("[W5500] PHY pulse reset (RST pin NC)...\r\n");
+    IINCHIP_WRITE(PHYCFGR, 0x00U);
+    delay_ms(20);
+    IINCHIP_WRITE(PHYCFGR, (uint8_t)(RST | OPMD | OPMDC_100M_10M));
+
+    t0 = HAL_GetTick();
+    while ((HAL_GetTick() - t0) < 3000U) {
+        phy = getPHYCFGR();
+        if ((phy & LINK) != 0U) {
+            break;
+        }
+        delay_ms(10);
+    }
+
+    delay_ms(200);
+
+    phy = getPHYCFGR();
+    printf("[W5500] PHY after pulse: 0x%02X link=%s\r\n",
+           phy, (phy & LINK) ? "UP" : "DOWN");
+}
+#endif
+
 static void W5500_DoReset(void)
 {
 #if W5500_RST_PIN_CONNECTED
@@ -50,7 +130,8 @@ static void W5500_DoReset(void)
 #else
     printf("[W5500] soft reset (MR_RST, RST pin NC)...\r\n");
     iinchip_init();
-    delay_ms(50);
+    W5500_WaitChipReset();
+    delay_ms(10);
 #endif
 }
 
@@ -116,16 +197,34 @@ void set_w5500_network(void)
     setSHAR(ConfigMsg.mac);
     setSUBR(ConfigMsg.sub);
     setGAR(ConfigMsg.gw);
-    setSIPR(ConfigMsg.lip);
 
     sysinit(txsize, rxsize);
+    W5500_CloseAllSockets();
     setRTR(W5500_TCP_RTR_UNIT100US);
     setRCR(W5500_TCP_RCR);
 
+#if !W5500_RST_PIN_CONNECTED
+    W5500_WaitPhyLinkStable(5000U);
     if (ConfigMsg.dhcp) {
+        /* 软复位时 W5500 仍供电，需脉冲 PHY；静态/冷上电 W5500 同步复位，不再脉冲 */
+        W5500_PhyPulseReset();
+    }
+    W5500_PhyLink_ResetDebouncer();
+#endif
+
+    if (ConfigMsg.dhcp) {
+        {
+            uint8_t zero_ip[4] = {0, 0, 0, 0};
+            setSIPR(zero_ip);
+        }
         W5500_DHCP_Init();
     } else {
+        setSIPR(ConfigMsg.lip);
         UDP_Broadcast_Init();
+        if (W5500_Is_IP_Valid_Buf(ConfigMsg.lip)) {
+            W5500_SyncBoundIp(ConfigMsg.lip);
+            Net_Tcp_RebindOnIpChange();
+        }
     }
 }
 
