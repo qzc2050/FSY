@@ -83,6 +83,21 @@ REG_TIME = 94
 REG_TIME_COUNT = 4
 REG_SOFTWARE_VERSION = 98
 REG_SOFTWARE_VERSION_COUNT = 10
+
+# 实时五分钟快照 / 历史回传 / 历史查询
+REG_DATA_TIME_5MIN = 30          # 0x001E，实时窗时间
+REG_DOSE_5MIN = 34
+REG_5MIN_SNAPSHOT_COUNT = 6      # reg30~35
+REG_HIST_DATA_TIME = 36          # 0x0024，历史回传时间
+REG_HIST_DOSE = 40
+REG_HIST_SNAPSHOT_COUNT = 6      # reg36~41
+REG_HIST_TIME_START = 108        # 0x006C
+REG_HIST_TIME_END = 112
+REG_HIST_QUERY_COUNT = 8         # 108~115
+FIVE_MIN_UPLOAD_START_LIVE = 0x001E
+FIVE_MIN_UPLOAD_START_HIST = 0x0024
+FIVE_MIN_UPLOAD_BYTES = 12
+
 REG_STATIC_IP = 138
 REG_STATIC_IP_COUNT = 2
 REG_GEIGER_SENS = 154
@@ -364,6 +379,21 @@ def datetime_to_time_reg_values(dt) -> List[int]:
     return [raw[i] | (raw[i + 1] << 8) for i in range(0, 8, 2)]
 
 
+def parse_five_min_payload(payload: bytes) -> Optional[Tuple[str, float, int]]:
+    """解析 12B：data_time[8] + D5×100 → (时间串, μSv, raw)。"""
+    if len(payload) < 12:
+        return None
+    t = reg_payload_to_time(payload[:8])
+    raw = struct.unpack("<I", payload[8:12])[0]
+    return t, raw / 100.0, raw
+
+
+def build_hist_query_frame(addr: int, start_dt, end_dt) -> bytes:
+    """0x10 写 reg108~115：start[8]+end[8]，触发设备历史泵。"""
+    values = datetime_to_time_reg_values(start_dt) + datetime_to_time_reg_values(end_dt)
+    return build_write_multi(addr, REG_HIST_TIME_START, values)
+
+
 def build_read_single(addr: int, reg: int, qty: int = 1) -> bytes:
     frame = struct.pack("<BB", addr, FC_READ_SINGLE_REQ)
     frame += struct.pack("<HH", reg, qty)
@@ -488,7 +518,19 @@ def describe_frame(pf: ParsedFrame) -> str:
         lines.append(
             f"  起始寄存器 0x{pf.reg_addr:04X}, 数据 {pf.byte_count} 字节, hex={pf.payload.hex(' ')}"
         )
-        if pf.func == FC_ACTIVE_UPLOAD or pf.byte_count == RT_PAYLOAD_BYTES:
+        if (
+            pf.func == FC_ACTIVE_UPLOAD
+            and pf.byte_count == FIVE_MIN_UPLOAD_BYTES
+            and pf.reg_addr in (FIVE_MIN_UPLOAD_START_LIVE, FIVE_MIN_UPLOAD_START_HIST)
+        ):
+            parsed = parse_five_min_payload(pf.payload)
+            kind = "历史五分钟" if pf.reg_addr == FIVE_MIN_UPLOAD_START_HIST else "实时五分钟"
+            if parsed:
+                t, dose, raw = parsed
+                lines.append(f"  {kind}: {t}  D5={dose:.6f} μSv  (raw={raw})")
+            else:
+                lines.append(f"  {kind}: 载荷解析失败")
+        elif pf.func == FC_ACTIVE_UPLOAD or pf.byte_count == RT_PAYLOAD_BYTES:
             lines.extend(format_rt_registers(pf.reg_addr, pf.payload))
         else:
             lines.extend(format_read_holding_u16(pf.reg_addr, pf.payload))

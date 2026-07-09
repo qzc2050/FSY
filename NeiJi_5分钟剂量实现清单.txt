@@ -20,24 +20,38 @@ reg1 仍为 1s 瞬时剂量率（μSv/h×100），与 5min 账本分离
     - 文档现有 reg108~112 历史区间查询（下一步另定寄存器，重新设计）
     - 主机向设备「拉历史五分钟」的协议与 UI
 
-【Phase 2 — 下一步】
+【Phase 2 — Flash 288 环 + 历史补拉】
 
-  - 历史五分钟值：重新定寄存器（不复用现表 108~112 亦可）
-  - 设备 Flash 288 条环（12/h×24h）及历史上传状态机
-  - App 历史补拉 / 断网补数据
+  - 设备 Flash 288 条环（12/h×24h）写路径：hist_5min.c — 已做
+  - 历史补拉协议（已锁定并实现）：
+      查询：0x10 写 reg108/112（start+end）
+      回传：0x23 start=0x0024（reg36 hdata_time + reg40 hdose）
+      App：仅 0x001E 对时；0x0024 只入库；上线后按小时拆窗补拉 24h
+  - Flash 存 dose_x100（μSv×100），与协议一致
+
+【Flash 288 时间设计 — 已锁定】
+
+  1. 窗边界：对齐墙钟 :00/:05/:10…；上电丢弃首条不完整窗
+  2. 时间戳：存「窗结束时刻」（与 0x23 data_time 一致）
+  3. Flash 8B：uint32 unix_ts(LE) + uint32 dose_x100(LE)；与协议 μSv×100 一致
+  4. 时区：本地墙钟字段按无时区公式 → 伪 Unix（与 RAD-I 同类）；App 按本地理解
+  5. 对时(reg94)后：旧 Flash unix_ts 不改写
+  6. RTC 无效：本窗不写 Flash、不发 0x23；等有效后再对齐下一墙钟边界
+  7. 环满 288：覆盖最旧；「最近 24h」按 unix_ts 过滤，非槽位日历硬切
 
 ================================================================================
 
-【目标数据流 — Phase 1】
+【目标数据流 — Phase 1 + Flash 写】
 
   盖革 100ms 计数增量
        ↓ 积分（本底/死时间/灵敏度，与 Geiger_Dose_Calculate 一致）
   dose_30s_acc（μSv）
-       ↓ 每 30s 边界
+       ↓ 每 30s 墙钟边界（second==0/30）
   D30 → 累加到 dose_5min_acc；dose_30s_acc = 0
-       ↓ 每 5min 边界（建议对齐 RTC :00/:05/:10…）
+       ↓ 每 5min 墙钟边界（minute%5==0 && second==0）
   D5 = dose_5min_acc
-       ├→ reg30~34 镜像（实时快照）
+       ├→ Flash 一条（unix_ts + 整 μSv）
+       ├→ reg30~34 镜像（实时快照，D5×100）
        └→ 0x23 主动上传（start=0x001E，12 字节）
   dose_5min_acc = 0
 
@@ -53,7 +67,6 @@ reg1 仍为 1s 瞬时剂量率（μSv/h×100），与 5min 账本分离
 [x] 1.1 常量与状态结构（geiger.h）
       - DOSE_BLOCK_SEC / DOSE_REPORT_INTERVAL_SEC / DOSE_*_MS
       - dose_30s_acc / dose_5min_acc（已替换 dose_thirty_sec / dose_five_min）
-      - 定时器为 Periodic_Save 内 static（block_30s_tk / block_5min_tk）
 
 [x] 1.2 Geiger_Dose_Calculate（geiger.c）
       - 仅向 dose_30s_acc += single_dose_val
@@ -61,38 +74,35 @@ reg1 仍为 1s 瞬时剂量率（μSv/h×100），与 5min 账本分离
       - 修复原「每 10ms 用未清零 geiger_crt_cnt 重复累加」问题
 
 [x] 1.3 新增 Geiger_Dose_On30SecondTick(void)
-      - D30 → dose_5min_acc；清 dose_30s_acc；串口日志
+      - D30 → dose_5min_acc；清 dose_30s_acc
 
-[x] 1.4 新增 Geiger_Dose_On5MinuteTick(void)
-      - 读 RTC；打 D5 日志；RTC 无效则标记 skip
-      - Step1 不写 reg / 不发 0x23（留 Step2）
-      - Phase 1 不写 Flash
+[x] 1.4 Geiger_Dose_On5MinuteTick
+      - RTC 窗结束时刻 → Flash + Sync + 0x23；RTC 无效则 skip
 
-[x] 1.5 实现 Geiger_Dose_Periodic_Save
-      - 30s → On30SecondTick；5min → On5MinuteTick（先 30s 后 5min）
+[x] 1.5 Geiger_Dose_Periodic_Save
+      - 量产：RTC 墙钟对齐；测试快模式：相对 tick
 
-[ ] 1.6 5min 边界对齐（推荐，可后续）
-      - 首次启动：等到 minute % 5 == 0 且 second == 0 再开始第一个完整 5min 窗
-      - 30s 边界：second % 30 == 0（或与 5min 窗内 0/30s 对齐）
-      - 文档备注：首条 5min 可能不足 5 分钟（可选丢弃或标记）
+[x] 1.6 5min 边界对齐
+      - 首次：等到 minute%5==0 && second==0，丢弃不完整窗后开完整窗
+      - 30s：second==0 或 30（与墙钟对齐）
 
 [x] 1.7 单位约定
-      - 内部积分：float μSv；协议 ×100 留给 Step2
+      - 内部积分：float μSv；Flash 整 μSv；协议 ×100
 
 [x] 1.8 不要用 real_rate / EWMA 积分 5min（仅 reg1 显示用）
 
 ================================================================================
-二、NeiJi 固件 — 外部 Flash 历史（Phase 2，本阶段跳过）
+二、NeiJi 固件 — 外部 Flash 历史（Phase 2 写路径）
 ================================================================================
 
-  说明：Phase 1 仅实时 reg30 上传 + App 本地存盘；设备 Flash 与历史补拉下一步做，
-        且历史相关寄存器将重新定址（不复用现文档 reg108~112 亦可）。
-
-【Flash 容量规格（Phase 2 预留）— 一天 24h】
+【Flash 容量 — 一天 24h】
 
   12 条/h × 24h = 288 条；288×8B=2304B；DATA_5_MIN_MAX_RECORDS=288
 
-[ ] 2.1~2.4 全部挪到 Phase 2（hist_record、288 环、reg108 历史泵等）
+[x] 2.1 hist_5min.c / hist_5min.h：288 环 + meta；Init / Write / Read / DateTimeToUnix
+[x] 2.2 ext_flash_layout.h：DATA_5_MIN_MAX_RECORDS=288
+[x] 2.3 On5MinuteTick → Hist5Min_Write；app_tasks 调 Hist5Min_Init
+[x] 2.4 历史补拉：reg108/112 写触发 + 0x23 0x0024 泵（hist_5min_query.c）
 
 ================================================================================
 三、NeiJi 固件 — 协议 / regmap（probe/Neiji/NeiJi/Protocol/）
@@ -112,19 +122,19 @@ reg1 仍为 1s 瞬时剂量率（μSv/h×100），与 5min 账本分离
 [x] 3.4 5min 上传调度
       - On5MinuteTick：rtc_ok → Sync + Fsy_Link_WriteUpload
 
-[ ] 3.5 Phase 2：历史五分钟 + 新寄存器定义（待定）
+[x] 3.5 Phase 2：历史五分钟 reg108/112 + 0x23 0x0024
 
 ================================================================================
 四、NeiJi 固件 — 任务集成
 ================================================================================
 
-[ ] 4.1 geiger_task.c：Geiger_Doserate_Calculate 已调 Periodic_Save，确认周期足够
+[x] 4.1 geiger_task.c：Geiger_Doserate_Calculate 已调 Periodic_Save
 
-[ ] 4.2 app_tasks.c：Phase 1 无需 HistRecord_Init
+[x] 4.2 app_tasks.c：DeviceConfig_Init 后 Hist5Min_Init
 
-[ ] 4.3 RTC 依赖：5min 时间戳以 Pcf85063 为准；RTC 离线则本窗不上传 reg30/0x23
+[x] 4.3 RTC 依赖：5min 时间戳以 Pcf85063 为准；RTC 离线则本窗不写 Flash / 不上传
 
-[ ] 4.4 仿真/手动 CPS 模式：5min 积分仍走计数路径，行为与真实模式一致
+[x] 4.4 仿真/手动 CPS 模式：5min 积分仍走计数路径，行为与真实模式一致
 
 ================================================================================
 五、App（app/src/main/java/com/raydose/netshield/）
@@ -138,89 +148,60 @@ reg1 仍为 1s 瞬时剂量率（μSv/h×100），与 5min 账本分离
 [x] 5.6 PROBE_TIME_SYNC_ON_5MIN_SKEW_MS
 [x] 5.7 串口路径也处理 fiveMinUpload
 [ ] 5.8 UI 文案确认（联调时看）
-[ ] 5.9 Phase 2：历史补拉
+[x] 5.9 Phase 2：历史补拉（上线后 24h 按小时写 108/112；解析 0x0024 入库不对时）
 
 ================================================================================
-六、协议文档（辐射报警仪协议命令和寄存器表10.xlsx）
+六、协议文档
 ================================================================================
 
-[ ] 6.1 寄存器表 reg30~34
-      - reg30~33：本窗结束时刻 data_time（实时五分钟值，非历史索引）
-      - reg34~35：uint32，本窗累计剂量 D5 μSv×100
-
-[ ] 6.2 命令流程 0x23 五分钟
-      - start=0x001E，byteCount=0x0C
-      - 载荷：8B 时间 + D5(μSv×100)；每 5min 主动上传一帧
-
-[ ] 6.3 与 reg1 区分备注
-      - reg1：1s 瞬时剂量率 μSv/h
-      - reg34：刚结束的 5min 窗累计剂量 μSv
-
-[ ] 6.4 reg108~112：标注废弃或 Phase 2 重定（历史五分钟另议）
-
-[ ] 6.5 时间同步备注
-      - App 若与 reg30 时间差 >5min，写 reg94 对时
+[x] 6.0 文本备注已更新：辐射报警仪_reg30_reg34_五分钟剂量_协议备注.txt
+      （含 reg30~41、reg108~115、0x001E/0x0024、联调结论）
+[ ] 6.1~6.5 正式 xlsx《寄存器表10》仍待按该 txt 粘贴
+      - reg30~35 实时；reg36~41 历史镜像；reg108~115 查询
+      - 0x23 0x001E 可对时；0x23 0x0024 不对时；0x10 写 0x006C
 
 ================================================================================
 七、tools / 联调（probe/Neiji/NeiJi/tools/）
 ================================================================================
 
-[ ] 7.1 fsy_protocol.py
-      - 常量 REG_DATA_TIME_5MIN=30, REG_DOSE_5MIN=34
-      - 解析 0x23 0x001E 12B 为 (time, dose_usv)
-
-[ ] 7.2 fsy_serial_gui / 日志
-      - 收到 5min 0x23 时打印时间与 μSv（非 uSv/h）
+[x] 7.1 fsy_protocol.py：解析 0x001E / 0x0024；历史查询帧构造
+[x] 7.2 fsy_serial_gui：历史拉 1~24h；列表区分 live/hist；从机地址自同步
 
 ================================================================================
 八、测试用例
 ================================================================================
 
-[ ] 8.1 单元（固件）
-      - D30×10 累加 = D5（浮点误差 < 0.01 μSv）
-      - dose_30s_acc 每 30s 清零
-      - dose_5min_acc 每 5min 清零
-
-[ ] 8.2 恒定 CPS
-      - 已知 CPS + sensitivity，预期 D5 ≈ CPS×300/(sens×60) μSv（与公式推导一致）
-
-[ ] 8.3 协议
-      - Wireshark/串口：0x23 reg=0x001E，12 字节，CRC 正确
-      - 0x03 读 reg30~35 与最后一帧 0x23 一致
-
-[ ] 8.4 App 时间
-      - 设备时间比 App 快 6min → 收到 5min 后应触发 reg94
-      - 设备时间比 App 慢 6min → 同上
-      - 偏差 2min → 不触发（<5min 阈值）
-
-[ ] 8.5 App 日累计
-      - 收到 3 条 5min（各 0.10 μSv，设备日期同一天）→ 日累计 0.30 μSv
-      - 不再从 reg1 实时率插值
-
-[ ] 8.6 边界
-      - RTC 未设置：不上传 reg30/0x23，积分可继续
-
-[ ] 8.7 Phase 2：Flash 288 环、历史寄存器（另测）
+[ ] 8.1 单元（固件）— 可选
+[ ] 8.2 恒定 CPS 公式核对 — 可选
+[x] 8.3 协议：串口已见 0x001E / 0x0024 / 写 108 ACK（单条历史已通）
+[ ] 8.4 App 时间偏差异常对时 — 待测
+[ ] 8.5 App 日累计 Σ D5 — 待测
+[ ] 8.6 RTC 未设置边界 — 待测
+[ ] 8.7 多条历史（今天每 5min 积几条即可，不必等满天）
+[ ] 8.8 断电后再拉 / 对时后旧 ts 不变 — 今晚或明天
+[ ] 8.9 环满 288 覆盖 — 约需连续 24h，最后做
 
 ================================================================================
-九、建议实施顺序（Phase 1）
+九、建议实施顺序
 ================================================================================
 
   Step 1  geiger：30s/5min 定时 + dose_30s_acc / dose_5min_acc
   Step 2  fsy_upload + reg30~34：0x23(0x001E) 实时 5min 12 字节
   Step 3  App：fiveMinUpload → 设备时间入库 → 日累计；|Δt|>5min → reg94
   Step 4  联调 + 文档 reg30~34 备注
-  Step 5  Phase 2：Flash + 历史五分钟 + 新寄存器
+  Step 5  Phase 2a：Flash 288 环 + RTC 墙钟对齐写路径（本步）
+  Step 6  Phase 2b：历史补拉新寄存器 + App 补拉
 
 ================================================================================
 十、不在本需求内（避免 scope 膨胀）
 ================================================================================
 
-  - Phase 1 不做 Flash 落盘、reg108~112 历史查询（下一步重定寄存器）
   - 不改变 reg1 EWMA 算法
   - 不改变 zjb 转接板 5min（若无盖革）
   - 不修改 RAD-I 旧固件
   - reg34 不使用 uSv/mSv/Sv 高 2 位单位编码
+  - 对时后不对 Flash 做批量时间平移
+  - 不必为「多条历史」刻意等满 24h；满环覆盖测试除外
 
 ================================================================================
 文件路径索引
@@ -229,14 +210,13 @@ reg1 仍为 1s 瞬时剂量率（μSv/h×100），与 5min 账本分离
   probe/Neiji/NeiJi/Hardware/geiger/geiger.c
   probe/Neiji/NeiJi/Hardware/geiger/geiger.h
   probe/Neiji/NeiJi/Hardware/storage/ext_flash_layout.h
+  probe/Neiji/NeiJi/Hardware/storage/hist_5min.c / hist_5min.h
   probe/Neiji/NeiJi/Protocol/fsy_regmap.h / fsy_regmap.c
   probe/Neiji/NeiJi/Protocol/fsy_upload.c
-  probe/Neiji/NeiJi/App/geiger_task.c
+  probe/Neiji/NeiJi/App/geiger_task.c / app_tasks.c
   app/.../net/FsyTcpProtocol.kt
   app/.../data/ProbeDoseHistoryRepository.kt
   app/.../ui/MainViewModel.kt
-  参考：probe/RAD-I/HARDWARE/GEIGER/geiger.c（Geiger_Dose_Periodic_Save）
-  参考：probe/RAD-I/HARDWARE/DATA_MANAGER/hist_record_app.c
-  参考：probe/RAD-I/dev_protocol/net_raw/net_raw_app.c（5min 0x23 + 历史）
+  参考：probe/RAD-I/HARDWARE/DATA_MANAGER/hist_record_*.c
 
 ================================================================================

@@ -7,6 +7,7 @@
 #include "bmp280.h"
 #include "ens160.h"
 #include "pm25.h"
+#include "hist_5min_query.h"
 #include <stddef.h>
 #include <string.h>
 
@@ -16,6 +17,11 @@ static uint32_t s_geiger_sec_cps;
 static uint8_t s_time_write_buf[8];
 /* reg30~35：8B data_time + 4B dose_x100（小端） */
 static uint8_t s_5min_snapshot[12];
+/* reg36~41：历史回传镜像 */
+static uint8_t s_5min_hist_snapshot[12];
+/* reg108~115：历史查询起止时间 */
+static uint8_t s_hist_query[16];
+static uint8_t s_hist_query_wr_mask; /* bit0..7 对应 108..115 */
 
 static const char *cfg_software_version_text(void)
 {
@@ -73,6 +79,9 @@ void Fsy_Regmap_Init(void)
 
     memcpy(s_rt_regs, template, sizeof(template));
     memset(s_5min_snapshot, 0, sizeof(s_5min_snapshot));
+    memset(s_5min_hist_snapshot, 0, sizeof(s_5min_hist_snapshot));
+    memset(s_hist_query, 0, sizeof(s_hist_query));
+    s_hist_query_wr_mask = 0U;
 }
 
 void Fsy_Regmap_Sync5MinSnapshot(const uint8_t dt8[8], uint32_t dose_x100)
@@ -82,6 +91,21 @@ void Fsy_Regmap_Sync5MinSnapshot(const uint8_t dt8[8], uint32_t dose_x100)
     }
     memcpy(s_5min_snapshot, dt8, 8U);
     store_u32_le(&s_5min_snapshot[8], dose_x100);
+}
+
+void Fsy_Regmap_Sync5MinHistSnapshot(const uint8_t dt8[8], uint32_t dose_x100)
+{
+    if (dt8 == NULL) {
+        return;
+    }
+    memcpy(s_5min_hist_snapshot, dt8, 8U);
+    store_u32_le(&s_5min_hist_snapshot[8], dose_x100);
+}
+
+void Fsy_Regmap_ClearHistQueryRegs(void)
+{
+    memset(s_hist_query, 0, sizeof(s_hist_query));
+    s_hist_query_wr_mask = 0U;
 }
 
 static int read_5min_snapshot_reg(uint16_t reg, uint8_t *out, uint16_t out_cap)
@@ -99,6 +123,67 @@ static int read_5min_snapshot_reg(uint16_t reg, uint8_t *out, uint16_t out_cap)
     store_u16_le(out, (uint16_t)s_5min_snapshot[off] |
                       ((uint16_t)s_5min_snapshot[off + 1U] << 8));
     return 2;
+}
+
+static int read_5min_hist_snapshot_reg(uint16_t reg, uint8_t *out, uint16_t out_cap)
+{
+    uint16_t off;
+
+    if (out_cap < 2U) {
+        return -1;
+    }
+    if (!reg_in_range(reg, FSY_REG_HIST_DATA_TIME, FSY_REG_HIST_SNAPSHOT_REGS)) {
+        return -1;
+    }
+
+    off = (uint16_t)((reg - FSY_REG_HIST_DATA_TIME) * 2U);
+    store_u16_le(out, (uint16_t)s_5min_hist_snapshot[off] |
+                      ((uint16_t)s_5min_hist_snapshot[off + 1U] << 8));
+    return 2;
+}
+
+static int read_hist_query_reg(uint16_t reg, uint8_t *out, uint16_t out_cap)
+{
+    uint16_t off;
+
+    if (out_cap < 2U) {
+        return -1;
+    }
+    if (!reg_in_range(reg, FSY_REG_HIST_TIME_START, FSY_REG_HIST_QUERY_REGS)) {
+        return -1;
+    }
+
+    off = (uint16_t)((reg - FSY_REG_HIST_TIME_START) * 2U);
+    store_u16_le(out, (uint16_t)s_hist_query[off] |
+                      ((uint16_t)s_hist_query[off + 1U] << 8));
+    return 2;
+}
+
+static int write_hist_query_regs(uint16_t start_reg, const uint8_t *data, uint16_t byte_count)
+{
+    uint16_t i;
+    uint16_t reg_count = (uint16_t)(byte_count / 2U);
+
+    for (i = 0U; i < reg_count; i++) {
+        uint16_t reg = (uint16_t)(start_reg + i);
+        uint16_t off;
+        uint16_t bit;
+
+        if (!reg_in_range(reg, FSY_REG_HIST_TIME_START, FSY_REG_HIST_QUERY_REGS)) {
+            return -1;
+        }
+        off = (uint16_t)((reg - FSY_REG_HIST_TIME_START) * 2U);
+        s_hist_query[off] = data[(uint16_t)(i * 2U)];
+        s_hist_query[off + 1U] = data[(uint16_t)(i * 2U + 1U)];
+        bit = (uint16_t)(reg - FSY_REG_HIST_TIME_START);
+        s_hist_query_wr_mask |= (uint8_t)(1U << bit);
+    }
+
+    if (s_hist_query_wr_mask == 0xFFU) {
+        s_hist_query_wr_mask = 0U;
+        Hist5Min_Query_Start(&s_hist_query[0], &s_hist_query[8]);
+    }
+    return 0;
 }
 
 int Fsy_Regmap_ReadU32(uint16_t reg_addr, uint32_t *value)
@@ -336,6 +421,20 @@ int Fsy_Regmap_ReadBlock(uint16_t start_reg, uint16_t reg_count,
             }
         }
 
+        if (reg_in_range(reg, FSY_REG_HIST_DATA_TIME, FSY_REG_HIST_SNAPSHOT_REGS)) {
+            if (read_5min_hist_snapshot_reg(reg, &out[(uint16_t)(i * 2U)],
+                                            (uint16_t)(byte_count - (i * 2U))) == 2) {
+                continue;
+            }
+        }
+
+        if (reg_in_range(reg, FSY_REG_HIST_TIME_START, FSY_REG_HIST_QUERY_REGS)) {
+            if (read_hist_query_reg(reg, &out[(uint16_t)(i * 2U)],
+                                    (uint16_t)(byte_count - (i * 2U))) == 2) {
+                continue;
+            }
+        }
+
         if (reg_in_range(reg, FSY_REG_GEIGER_SEC_CPS, FSY_REG_GEIGER_SEC_CPS_REGS)) {
             store_u32_reg_at(&out[(uint16_t)(i * 2U)], s_geiger_sec_cps,
                              FSY_REG_GEIGER_SEC_CPS, reg);
@@ -420,6 +519,10 @@ static int reg_is_configurable(uint16_t reg)
         (reg < (uint16_t)(FSY_REG_TIME + FSY_REG_TIME_REGS))) {
         return 1;
     }
+    if ((reg >= FSY_REG_HIST_TIME_START) &&
+        (reg < (uint16_t)(FSY_REG_HIST_TIME_START + FSY_REG_HIST_QUERY_REGS))) {
+        return 1;
+    }
     return 0;
 }
 
@@ -442,6 +545,17 @@ int Fsy_Regmap_WriteBlock(uint16_t start_reg, const uint8_t *data,
             }
         }
         return write_time_regs(start_reg, data, byte_count);
+    }
+
+    /* 历史查询：允许一次写 108~115（8 reg）或部分写入累加 mask */
+    if (reg_in_range(start_reg, FSY_REG_HIST_TIME_START, FSY_REG_HIST_QUERY_REGS)) {
+        for (i = 0U; i < reg_count; i++) {
+            uint16_t reg = (uint16_t)(start_reg + i);
+            if (!reg_in_range(reg, FSY_REG_HIST_TIME_START, FSY_REG_HIST_QUERY_REGS)) {
+                return -1;
+            }
+        }
+        return write_hist_query_regs(start_reg, data, byte_count);
     }
 
     if (DeviceConfig_IsReady() == 0U) {

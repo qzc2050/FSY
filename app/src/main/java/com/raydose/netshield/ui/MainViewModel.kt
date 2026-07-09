@@ -47,6 +47,8 @@ import com.raydose.netshield.model.buildDoseLowerWriteFrame
 import com.raydose.netshield.model.buildDoseUpperWriteFrame
 import com.raydose.netshield.model.buildVolumeWriteFrame
 import com.raydose.netshield.model.buildTimeSyncWriteFrame
+import com.raydose.netshield.model.buildFiveMinHistoryRequestFrame
+import com.raydose.netshield.net.buildFiveMinHistoryHourChunks
 import com.raydose.netshield.model.PROBE_AUTO_SYNC_STARTUP_DELAY_MS
 import com.raydose.netshield.model.PROBE_TIME_SYNC_ON_5MIN_SKEW_MS
 import com.raydose.netshield.model.hostTimeInvalidForProbeSyncHint
@@ -1184,13 +1186,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
         frame.fiveMinUpload?.let { fiveMin ->
             val deviceMillis = fiveMin.toEpochMillis()
+            val kind = if (fiveMin.fromHistory) "hist" else "live"
             Log.i(
                 ProbeConnectionManager.TAG,
-                "5min RX probe=$probeId D5=${"%.6f".format(fiveMin.doseUsv)}uSv " +
+                "5min RX($kind) probe=$probeId D5=${"%.6f".format(fiveMin.doseUsv)}uSv " +
                     "raw=${fiveMin.doseRaw} t=${fiveMin.timeString} deviceMs=$deviceMillis",
             )
             doseHistoryRepository.recordSampleIfDue(probeId, fiveMin.doseUsv, deviceMillis)
-            maybeSyncProbeTimeOnFiveMinSkew(probeId, deviceMillis)
+            if (!fiveMin.fromHistory) {
+                maybeSyncProbeTimeOnFiveMinSkew(probeId, deviceMillis)
+            }
         }
 
         _liveTelemetry.update { map ->
@@ -1231,6 +1236,40 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             ProbeConnectionManager.TAG,
             "5min 时差同步 ${probe.displayName} skewMs=$skew > ${PROBE_TIME_SYNC_ON_5MIN_SKEW_MS}",
         )
+    }
+
+    /**
+     * 按小时拆窗写 reg108/112，请求设备 Flash 历史；回传为 0x23 start=0x0024（不对时）。
+     */
+    fun requestFiveMinHistoryPull(probeId: String, hours: Int = 24) {
+        if (!AUTO_FIVE_MIN_HISTORY_PULL) {
+            Log.i(ProbeConnectionManager.TAG, "历史补拉已暂时关闭，跳过 probe=$probeId")
+            return
+        }
+        val probe = _savedProbes.value.find { it.id == probeId } ?: return
+        if (linkRouter.routeFor(probeId) == null) {
+            Log.i(ProbeConnectionManager.TAG, "跳过历史补拉 ${probe.displayName}：无路由")
+            return
+        }
+        val chunks = buildFiveMinHistoryHourChunks(hours.coerceIn(1, 24))
+        viewModelScope.launch {
+            Log.i(
+                ProbeConnectionManager.TAG,
+                "历史补拉开始 ${probe.displayName} hours=$hours chunks=${chunks.size}",
+            )
+            chunks.forEachIndexed { index, (start, end) ->
+                connectionManager.sendFrames(
+                    probeId,
+                    listOf(probe.buildFiveMinHistoryRequestFrame(start, end)),
+                )
+                /* 给设备泵送该小时窗口留时间（最多约 12 条 × 50ms） */
+                delay(1_500L)
+                if (index < chunks.lastIndex) {
+                    delay(200L)
+                }
+            }
+            Log.i(ProbeConnectionManager.TAG, "历史补拉请求已发完 ${probe.displayName}")
+        }
     }
 
     /**
@@ -1287,8 +1326,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     /**
-     * 串口/CAN：5s 无实时 0x23 则 UI 离线。
-     * 网口：5s 无组播则 UI 离线（与 TCP 0x23 超时无关）。
+     * 串口/CAN：8s 无实时 0x23 则 UI 离线。
+     * 网口：8s 无组播则 UI 离线（与 TCP 0x23 超时无关）。
+     * 8s 用于扛住 W5500↔7688 约 2～4s 的 PHY 短抖，断电/断链感知比 10s 略快。
      */
     private fun pruneStaleProbeTelemetry() {
         val now = System.currentTimeMillis()
@@ -1380,6 +1420,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             viewModelScope.launch {
                 delay(2_000L)
                 maybeAutoSyncTimeToProbe(probeId, reason = "online")
+                delay(1_000L)
+                requestFiveMinHistoryPull(probeId, hours = 24)
             }
             return
         }
@@ -1403,6 +1445,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             viewModelScope.launch {
                 delay(2_000L)
                 maybeAutoSyncTimeToProbe(probeId, reason = "online")
+                delay(1_000L)
+                requestFiveMinHistoryPull(probeId, hours = 24)
             }
         } else {
             sensorOfflineLogAggregator.onProbeDisconnected(probeId)
@@ -1572,10 +1616,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     companion object {
         private const val DISCOVERY_TTL_MS = 30_000L
-        /** 网口组播 / 串口 0x23：超过此时间无数据则 UI 离线 */
-        private const val PROBE_STALE_MS = 5_000L
+        /** 网口组播 / 串口 0x23：超过此时间无数据则 UI 离线（PHY 短抖约 2～4s） */
+        private const val PROBE_STALE_MS = 8_000L
         private const val ALERT_LOG_RETENTION_MS = 24L * 3_600_000L
         /** 阈值输入框停止编辑后延迟下发（不依赖失焦） */
         private const val THRESHOLD_DEBOUNCE_MS = 800L
+        /** 上线后自动 24h 五分钟历史补拉；暂时关闭，需要时改 true */
+        private const val AUTO_FIVE_MIN_HISTORY_PULL = false
     }
 }

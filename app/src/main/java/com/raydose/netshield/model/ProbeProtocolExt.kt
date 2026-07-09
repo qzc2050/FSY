@@ -1,5 +1,7 @@
 package com.raydose.netshield.model
 
+import com.raydose.netshield.net.DeviceTimeInfo
+import com.raydose.netshield.net.buildWriteFiveMinHistoryRequestFrame
 import com.raydose.netshield.net.buildWriteMultiRegsFrame
 import com.raydose.netshield.net.buildWriteSingleRegFrame
 import com.raydose.netshield.net.buildWriteTimeFrame
@@ -170,6 +172,16 @@ fun SavedProbe.buildTimeSyncWriteFrame(): ByteArray {
         deviceAddr = modbusDeviceAddr(),
     )
 }
+
+/** 写 reg108~115：请求 [start,end] 五分钟历史（设备以 0x23 0x0024 回传） */
+fun SavedProbe.buildFiveMinHistoryRequestFrame(
+    start: DeviceTimeInfo,
+    end: DeviceTimeInfo,
+): ByteArray = buildWriteFiveMinHistoryRequestFrame(
+    start = start,
+    end = end,
+    deviceAddr = modbusDeviceAddr(),
+)
 
 /** 辐射报警下限 → reg 52 */
 fun ProbeManageDraft.buildDoseLowerWriteFrame(): ByteArray? =

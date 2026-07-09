@@ -11,6 +11,8 @@
 
 #include "device_config.h"
 #include "flash_fs_mutex.h"
+#include "hist_5min.h"
+#include "hist_5min_query.h"
 #include "sensor_task.h"
 #include "geiger_task.h"
 #include "key_task.h"
@@ -107,6 +109,7 @@ void App_TasksInit(void)
     /* Flash 配置必须在 UI / LoRa 之前加载（reg123 bit9 控制 LoRa 使能） */
     DeviceConfig_TaskInit();
     (void)DeviceConfig_Init();
+    (void)Hist5Min_Init();
 
     Ui_TaskInit();
     UartDiag_Write("[APP] after Ui_TaskInit\r\n");
@@ -202,6 +205,8 @@ static void UploadTask(void *argument)
         } else {
             upload_fail_cnt = 0U;
         }
+
+        Hist5Min_Query_Pump();
 
         if ((last_sn_tick == 0U) ||
             ((now - last_sn_tick) >= FSY_UPLOAD_SN_PERIOD_MS)) {

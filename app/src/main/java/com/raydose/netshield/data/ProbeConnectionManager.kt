@@ -607,7 +607,10 @@ class ProbeConnectionManager(
         if (isProbeOnline(probeId)) return true
 
         val values = parsed.uploadValues
-        if (values == null || values.size < 8 || !isPlausibleRealtimeDoseX100(values[0])) {
+        val isRealtime =
+            values != null && values.size >= 8 && isPlausibleRealtimeDoseX100(values[0])
+        val isFiveMin = parsed.fiveMinUpload != null
+        if (!isRealtime && !isFiveMin) {
             return false
         }
 
@@ -641,13 +644,13 @@ class ProbeConnectionManager(
     companion object {
         const val TAG = "NetShield"
         private const val DISCOVERY_RECONNECT_DEBOUNCE_MS = 4_000L
-        private const val FIRST_RX23_WAIT_MS = 5_000L
+        private const val FIRST_RX23_WAIT_MS = 8_000L
         /** 上次 TCP 连接开始后此时间内不因组播再次调度（单次 connect 含多路由 8s 超时） */
         private const val CONNECT_ATTEMPT_GUARD_MS = 15_000L
         private const val WATCHDOG_INTERVAL_MS = 3_000L
         private const val CONFIG_READ_GAP_MS = 100L
         private const val DISCOVERY_LOG_DEBOUNCE_MS = 60_000L
-        /** 5s 无 0x23 则断 TCP，等组播再连 */
-        private const val TELEMETRY_STALE_MS = 5_000L
+        /** 8s 无 0x23 则断 TCP，等组播再连（与 UI 组播超时一致，扛 PHY 短抖） */
+        private const val TELEMETRY_STALE_MS = 8_000L
     }
 }

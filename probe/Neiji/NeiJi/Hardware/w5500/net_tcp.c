@@ -95,6 +95,13 @@ static bool net_tcp_ensure_listen(void)
         return true;
     }
 
+    /* PHY 短抖恢复时连接可能仍在：保留 ESTABLISHED，勿强制拆成 listen */
+    if (sr == SOCK_ESTABLISHED) {
+        g_tcp_sock_ready = 1;
+        s_sock_prev_st = sr;
+        return true;
+    }
+
     if (net_tcp_listen(SETTING_SOCKET_NUM, SETTING_SOCKET_PORT, true)) {
         g_tcp_sock_ready = 1;
         s_sock_prev_st = getSn_SR(SETTING_SOCKET_NUM);
@@ -132,26 +139,50 @@ static void net_phy_link_maintain(void)
     bool rising = false;
     bool falling = false;
     uint8_t link_up = W5500_PhyLink_DebouncedPoll(&rising, &falling);
+    uint8_t phy_raw;
+    uint8_t grace;
+    uint8_t tcp_sr;
 
     if (!rising && !falling) {
         return;
     }
 
-    /* 冷上电宽限：仅忽略 link down（不关 TCP）；link up 仍要恢复 listen */
-    if (falling && W5500_Is_NetBootGrace() && net_local_ip_valid()) {
+    phy_raw = getPHYCFGR();
+    grace = W5500_Is_NetBootGrace() ? 1U : 0U;
+    tcp_sr = getSn_SR(SETTING_SOCKET_NUM);
+
+    /*
+     * 宽限期内仍打印 down/up，便于对照 7688 启动抖动；
+     * 仅跳过「关 TCP」动作，避免冷启动误杀连接。
+     */
+    if (falling) {
+        printf("PHY link down raw=0x%02X grace=%u tcp_sr=0x%02X\r\n",
+               (unsigned)phy_raw, (unsigned)grace, (unsigned)tcp_sr);
+        if (grace != 0U && net_local_ip_valid()) {
+            s_phy_link_up = link_up;
+            return;
+        }
+        s_phy_link_up = link_up;
+        close(SETTING_SOCKET_NUM);
+        g_tcp_sock_ready = 0;
         return;
     }
 
-    s_phy_link_up = link_up;
-    printf("PHY link %s\r\n", link_up ? "up" : "down");
-
     if (rising) {
+        printf("PHY link up raw=0x%02X grace=%u tcp_sr=0x%02X\r\n",
+               (unsigned)phy_raw, (unsigned)grace, (unsigned)tcp_sr);
+        s_phy_link_up = link_up;
         if (net_local_ip_valid()) {
-            (void)net_tcp_ensure_listen();
+            tcp_sr = getSn_SR(SETTING_SOCKET_NUM);
+            if (tcp_sr == SOCK_ESTABLISHED) {
+                /* 短抖：会话还在，继续发 0x23，避免 App 被迫重连 */
+                g_tcp_sock_ready = 1;
+                s_sock_prev_st = tcp_sr;
+                printf("[TCP] keep ESTABLISHED after PHY up\r\n");
+            } else {
+                (void)net_tcp_ensure_listen();
+            }
         }
-    } else if (falling) {
-        close(SETTING_SOCKET_NUM);
-        g_tcp_sock_ready = 0;
     }
 }
 
@@ -351,25 +382,31 @@ bool Net_Tcp_IsConnected(void)
 
 int Net_Tcp_Write(const uint8_t *data, uint16_t len)
 {
+    static uint32_t s_fail_log_tick = 0U;
     uint16_t sent;
     bool ok = false;
+    const char *why = NULL;
+    uint32_t now;
 
     if ((data == NULL) || (len == 0U)) {
         return -1;
     }
 
     if (W5500_Is_Network_Recovering()) {
-        return -1;
+        why = "recovering";
+        goto fail_log;
     }
 
     if (!Net_Tcp_IsConnected()) {
-        return -1;
+        why = "not_conn";
+        goto fail_log;
     }
 
     net_tx_mutex_init();
     if (s_net_tx_mutex != NULL) {
         if (xSemaphoreTake(s_net_tx_mutex, pdMS_TO_TICKS(500)) != pdTRUE) {
-            return -1;
+            why = "mutex";
+            goto fail_log;
         }
     }
 
@@ -377,6 +414,7 @@ int Net_Tcp_Write(const uint8_t *data, uint16_t len)
     if (sent == len) {
         ok = true;
     } else {
+        why = "send_err";
         net_tcp_socket_maintain(SETTING_SOCKET_NUM, SETTING_SOCKET_PORT);
     }
 
@@ -384,7 +422,24 @@ int Net_Tcp_Write(const uint8_t *data, uint16_t len)
         (void)xSemaphoreGive(s_net_tx_mutex);
     }
 
-    return ok ? (int)len : -1;
+    if (ok) {
+        return (int)len;
+    }
+
+fail_log:
+    now = HAL_GetTick();
+    if ((why != NULL) &&
+        ((s_fail_log_tick == 0U) || ((now - s_fail_log_tick) >= 1000U))) {
+        uint8_t phy_raw = getPHYCFGR();
+
+        s_fail_log_tick = now;
+        printf("[TCP] tx skip why=%s sr=0x%02X phy=0x%02X link=%u\r\n",
+               why,
+               (unsigned)getSn_SR(SETTING_SOCKET_NUM),
+               (unsigned)phy_raw,
+               (unsigned)((phy_raw & LINK) ? 1U : 0U));
+    }
+    return -1;
 }
 
 void Net_Tcp_PollRx(UartRingBuf *rx_ring)

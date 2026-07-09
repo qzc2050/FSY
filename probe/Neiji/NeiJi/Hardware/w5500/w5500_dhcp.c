@@ -529,6 +529,25 @@ void W5500_SyncBoundIp(const uint8_t ip[4])
     s_tcp_bound_ip[3] = ip[3];
 }
 
+void W5500_Net_PrintStatus(void)
+{
+    uint8_t ip[4];
+    uint8_t phy_raw = getPHYCFGR();
+    uint8_t tcp_sr = getSn_SR(SETTING_SOCKET_NUM);
+    uint8_t udp_sr = getSn_SR(UDP_BROADCAST_SOCKET);
+
+    W5500_Get_Active_IP(ip);
+    printf("[NET] phy=0x%02X link=%u ip=%u.%u.%u.%u tcp_sr=0x%02X udp_sr=0x%02X mcast=%u grace=%u dhcp=%u\r\n",
+           (unsigned)phy_raw,
+           (unsigned)((phy_raw & LINK) ? 1U : 0U),
+           (unsigned)ip[0], (unsigned)ip[1], (unsigned)ip[2], (unsigned)ip[3],
+           (unsigned)tcp_sr,
+           (unsigned)udp_sr,
+           (unsigned)g_broadcast_enabled,
+           (unsigned)(net_in_boot_grace() ? 1U : 0U),
+           (unsigned)ConfigMsg.dhcp);
+}
+
 /********************************************************************************************
 * 函数名：W5500_Get_IP
 * 描  述：获取当前 IP 地址
@@ -744,9 +763,13 @@ void UDP_Broadcast_Task(void)
 
             if(sent <= 0)
             {
+                uint8_t phy_raw = getPHYCFGR();
+
                 g_mcast_send_fail_streak++;
-                printf("[UDP] tx fail sr=0x%02X len=%u streak=%u\r\n",
+                printf("[UDP] tx fail sr=0x%02X phy=0x%02X link=%u len=%u streak=%u\r\n",
                        (unsigned)getSn_SR(UDP_BROADCAST_SOCKET),
+                       (unsigned)phy_raw,
+                       (unsigned)((phy_raw & LINK) ? 1U : 0U),
                        (unsigned)len,
                        (unsigned)g_mcast_send_fail_streak);
                 if (g_mcast_send_fail_streak >= UDP_MCAST_SEND_FAIL_MAX) {

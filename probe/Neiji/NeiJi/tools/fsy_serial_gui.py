@@ -10,7 +10,7 @@ import threading
 import time
 import tkinter as tk
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from tkinter import filedialog, messagebox, scrolledtext, ttk
 from typing import Callable, Optional
 
@@ -75,10 +75,16 @@ from fsy_protocol import (
     REG_SOFTWARE_VERSION_COUNT,
     REG_TIME,
     REG_TIME_COUNT,
+    REG_HIST_TIME_START,
+    REG_HIST_QUERY_COUNT,
+    FIVE_MIN_UPLOAD_START_LIVE,
+    FIVE_MIN_UPLOAD_START_HIST,
+    FIVE_MIN_UPLOAD_BYTES,
     RT_REGISTER_FMT,
     FrameScanner,
     ParsedFrame,
     ascii_to_reg_values,
+    build_hist_query_frame,
     build_read_holding,
     build_write_multi,
     build_write_single,
@@ -86,6 +92,7 @@ from fsy_protocol import (
     describe_frame,
     format_alarm_status_detail,
     iter_u32_payload,
+    parse_five_min_payload,
     reg_payload_to_ascii,
     reg_payload_to_utf8,
     utf8_to_reg_values,
@@ -482,8 +489,103 @@ class FactoryApp(tk.Tk):
         )
         self.alarm_detail_lbl.pack(fill=tk.X)
 
+        hist_frame = ttk.LabelFrame(parent, text="五分钟历史补拉（reg108/112 → 0x23 0x0024）", padding=10)
+        hist_frame.pack(fill=tk.BOTH, expand=True, pady=(10, 0))
+
+        ctrl = ttk.Frame(hist_frame)
+        ctrl.pack(fill=tk.X)
+        ttk.Label(ctrl, text="回溯小时:").pack(side=tk.LEFT)
+        self.hist_hours_var = tk.StringVar(value="1")
+        ttk.Spinbox(ctrl, from_=1, to=24, width=5, textvariable=self.hist_hours_var).pack(
+            side=tk.LEFT, padx=6
+        )
+        ttk.Button(ctrl, text="请求历史", command=self.request_five_min_history, width=12).pack(
+            side=tk.LEFT, padx=4
+        )
+        ttk.Button(ctrl, text="清空列表", command=self._clear_hist_table, width=10).pack(
+            side=tk.LEFT, padx=4
+        )
+        self.hist_status_var = tk.StringVar(value="等待请求；实时五分钟也会显示在下方")
+        ttk.Label(ctrl, textvariable=self.hist_status_var, foreground="#666").pack(
+            side=tk.LEFT, padx=12
+        )
+
+        cols = ("kind", "time", "dose", "raw")
+        self.hist_tree = ttk.Treeview(
+            hist_frame, columns=cols, show="headings", height=10
+        )
+        self.hist_tree.heading("kind", text="类型")
+        self.hist_tree.heading("time", text="窗结束时间")
+        self.hist_tree.heading("dose", text="D5 (μSv)")
+        self.hist_tree.heading("raw", text="raw×100")
+        self.hist_tree.column("kind", width=80, anchor=tk.CENTER)
+        self.hist_tree.column("time", width=180, anchor=tk.CENTER)
+        self.hist_tree.column("dose", width=120, anchor=tk.E)
+        self.hist_tree.column("raw", width=100, anchor=tk.E)
+        scroll = ttk.Scrollbar(hist_frame, orient=tk.VERTICAL, command=self.hist_tree.yview)
+        self.hist_tree.configure(yscrollcommand=scroll.set)
+        self.hist_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, pady=(8, 0))
+        scroll.pack(side=tk.RIGHT, fill=tk.Y, pady=(8, 0))
+
         ttk.Button(parent, text="手动 0x03 读实时区", command=self.read_registers).pack(
             anchor=tk.W, pady=(8, 0)
+        )
+
+    def _clear_hist_table(self) -> None:
+        for item in self.hist_tree.get_children():
+            self.hist_tree.delete(item)
+        self.hist_status_var.set("列表已清空")
+
+    def _append_five_min_row(self, kind: str, time_text: str, dose: float, raw: int) -> None:
+        self.hist_tree.insert(
+            "",
+            0,
+            values=(kind, time_text, f"{dose:.6f}", str(raw)),
+        )
+        # 最多保留 300 行
+        kids = self.hist_tree.get_children()
+        if len(kids) > 300:
+            for item in kids[300:]:
+                self.hist_tree.delete(item)
+
+    def request_five_min_history(self) -> None:
+        if not self._require_connected():
+            return
+        try:
+            hours = int(self.hist_hours_var.get().strip())
+        except ValueError:
+            messagebox.showerror("参数错误", "回溯小时须为 1~24 的整数")
+            return
+        hours = max(1, min(24, hours))
+        end = datetime.now()
+        start = end - timedelta(hours=hours)
+        req = build_hist_query_frame(self._slave_addr(), start, end)
+
+        def on_ok(_pf: ParsedFrame) -> None:
+            self.hist_status_var.set(
+                f"写成功 {start.strftime('%H:%M')}~{end.strftime('%H:%M')}；"
+                f"若无 0x0024 则 Flash 可能为空（需对时后完整 5min 窗）"
+            )
+            self._log(
+                f"TX 历史查询 {hours}h  "
+                f"{start.strftime('%Y-%m-%d %H:%M:%S')} ~ {end.strftime('%Y-%m-%d %H:%M:%S')}"
+            )
+            self._log(
+                "提示: 成功时应收到 0x23 start=0x0024 历史帧；无匹配则仅 ACK、无历史帧"
+            )
+
+        def on_fail(msg: str) -> None:
+            self.hist_status_var.set(f"请求失败: {msg}")
+
+        self._begin_request(
+            req,
+            expect_fc=FC_WRITE_MULTI_RESP,
+            on_ok=on_ok,
+            on_fail=on_fail,
+            timeout=2.0,
+            expect_reg=REG_HIST_TIME_START,
+            retries=1,
+            config_mode=False,  # 勿屏蔽后续 0x23 历史帧
         )
 
     def _cfg_write_btn(self, form: ttk.Frame, row: int, command: Callable[[], None], text: str = "写入") -> None:
@@ -2258,6 +2360,22 @@ class FactoryApp(tk.Tk):
         for pf in frames:
             self._handle_frame(pf)
 
+    def _maybe_sync_slave_from_rx(self, pf: ParsedFrame) -> None:
+        """从设备主动 0x23 同步顶部从机地址（避免默认 1 对不上 addr=2）。"""
+        if pf.func != FC_ACTIVE_UPLOAD:
+            return
+        if pf.addr < 1 or pf.addr > 247:
+            return
+        try:
+            cur = int(self.slave_addr_var.get().strip() or "1")
+        except ValueError:
+            cur = 1
+        if cur == pf.addr:
+            return
+        self.slave_addr_var.set(str(pf.addr))
+        self._log(f"已从 0x23 同步从机地址: {cur} → {pf.addr}")
+        self._update_cfg_target_hint()
+
     def _handle_frame(self, pf: ParsedFrame) -> None:
         if self._dispatch_pending(pf):
             self._log(f"RX  {pf.raw.hex(' ').upper()}")
@@ -2266,14 +2384,30 @@ class FactoryApp(tk.Tk):
         if self._cfg_busy and pf.func == FC_ACTIVE_UPLOAD:
             return
 
+        self._maybe_sync_slave_from_rx(pf)
+
         self.frame_count += 1
         ts = datetime.now().strftime("%H:%M:%S")
         self._log(f"[{ts}] RX  {pf.raw.hex(' ').upper()}")
 
         if pf.func in (FC_ACTIVE_UPLOAD, FC_READ_HOLDING_RESP) and pf.payload:
             if pf.func == FC_ACTIVE_UPLOAD:
-                for reg_addr, raw in iter_u32_payload(pf.reg_addr, pf.payload):
-                    self._update_reg_display(reg_addr, raw)
+                if (
+                    pf.byte_count == FIVE_MIN_UPLOAD_BYTES
+                    and pf.reg_addr in (FIVE_MIN_UPLOAD_START_LIVE, FIVE_MIN_UPLOAD_START_HIST)
+                ):
+                    parsed = parse_five_min_payload(pf.payload)
+                    kind = "历史" if pf.reg_addr == FIVE_MIN_UPLOAD_START_HIST else "实时"
+                    if parsed:
+                        t, dose, raw = parsed
+                        self._append_five_min_row(kind, t, dose, raw)
+                        self.hist_status_var.set(f"收到{kind}五分钟: {t}  D5={dose:.6f}μSv")
+                        self._log(f"5min({kind}) {t} D5={dose:.6f}μSv raw={raw}")
+                    else:
+                        self._log(describe_frame(pf))
+                else:
+                    for reg_addr, raw in iter_u32_payload(pf.reg_addr, pf.payload):
+                        self._update_reg_display(reg_addr, raw)
                 self.status_var.set(
                     f"已连接 — 收到 0x23  #{self.frame_count}  "
                     f"更新 {datetime.now().strftime('%H:%M:%S')}"

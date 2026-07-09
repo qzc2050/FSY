@@ -8,9 +8,15 @@
 #include "alarm_output.h"
 #include "device_config.h"
 #include "pcf85063.h"
+#include "hist_5min.h"
 
 #define Dev_Tk_Wait(ms, tk_var)  ((uint32_t)((HAL_GetTick() - (tk_var)) >= (ms)))
 #define Dev_Tk_Init(tk_ptr)      do { *(tk_ptr) = HAL_GetTick(); } while (0)
+
+/* RTC 墙钟对齐：等首个 :00/:05/… 边界后再开完整窗；首条不完整窗丢弃 */
+static uint8_t s_dose_window_armed;       /* 1=已对齐，开始累计完整窗 */
+static uint16_t s_dose_last_boundary_hm;  /* 上次触发的 hour*60+minute，防同分钟重复 */
+static uint8_t s_dose_boundary_inited;
 
 /* 模拟计数数据（用于模拟模式） */
 static const uint32_t simulated_counts[] = {
@@ -84,29 +90,32 @@ static void Geiger_Dose_On30SecondTick(void)
 
 /********************************************************************************************
 * 函数名：Geiger_Dose_On5MinuteTick
-* 描  述：5min 边界：得到 D5，写 reg30~35 并 0x23 上传
+* 描  述：5min 窗结束：写 Flash(整 μSv) + reg30~35 + 0x23；RTC 无效则跳过
+*         dt 为窗结束时刻（墙钟边界）
 ********************************************************************************************/
-static void Geiger_Dose_On5MinuteTick(void)
+static void Geiger_Dose_On5MinuteTick(const Pcf85063_DateTime_t *dt)
 {
-    float d5 = data_var.dose_5min_acc;
-    Pcf85063_DateTime_t dt;
+    float d5;
     uint8_t dt8[8];
     uint32_t dose_x100;
-    int rtc_ok;
+    uint32_t unix_ts;
 
+    /* 末块 D30 先并入，再取 D5（与旧 tick 路径「先 30s 后 5min」一致） */
+    data_var.dose_5min_acc += data_var.dose_30s_acc;
+    data_var.dose_30s_acc = 0.0f;
+    d5 = data_var.dose_5min_acc;
     data_var.dose_5min_acc = 0.0f;
 
-    rtc_ok = (Pcf85063_GetTime(&dt) == 0) && (dt.online != 0U);
-    if (!rtc_ok) {
+    if (dt == NULL || dt->online == 0U) {
         return;
     }
 
-    dt8[0] = (uint8_t)(dt.year % 100U);
-    dt8[1] = dt.month;
-    dt8[2] = dt.day;
-    dt8[3] = dt.hour;
-    dt8[4] = dt.minute;
-    dt8[5] = dt.second;
+    dt8[0] = (uint8_t)(dt->year % 100U);
+    dt8[1] = dt->month;
+    dt8[2] = dt->day;
+    dt8[3] = dt->hour;
+    dt8[4] = dt->minute;
+    dt8[5] = dt->second;
     dt8[6] = 0U;
     dt8[7] = 0U;
 
@@ -120,16 +129,25 @@ static void Geiger_Dose_On5MinuteTick(void)
     }
 #endif
 
+    unix_ts = Hist5Min_DateTimeToUnix(dt);
+    if (unix_ts != 0U) {
+        (void)Hist5Min_Write(unix_ts, dose_x100);
+    }
+
     Fsy_Regmap_Sync5MinSnapshot(dt8, dose_x100);
     (void)Fsy_Upload_Send5Min(dt8, dose_x100, Fsy_Link_WriteUpload);
 }
 
 /********************************************************************************************
 * 函数名：Geiger_Dose_Periodic_Save
-* 描  述：30s / 5min 定时边界；先处理 30s 再 5min，保证末块 D30 先并入
+* 描  述：RTC 墙钟对齐：minute%5==0 && second==0 为 5min 边界；
+*         上电后丢弃首条不完整窗，从下一边界起累计完整 5min。
+*         窗内 30s 块：second==0 或 30（与墙钟对齐）。
+*         测试快模式仍用相对 tick。
 ********************************************************************************************/
 static void Geiger_Dose_Periodic_Save(void)
 {
+#if DOSE_5MIN_TEST_FAST
     static uint32_t block_30s_tk = 0;
     static uint32_t block_5min_tk = 0;
 
@@ -144,8 +162,65 @@ static void Geiger_Dose_Periodic_Save(void)
 
     if (Dev_Tk_Wait(DOSE_REPORT_5MIN_MS, block_5min_tk)) {
         Dev_Tk_Init(&block_5min_tk);
-        Geiger_Dose_On5MinuteTick();
+        {
+            Pcf85063_DateTime_t dt;
+            if ((Pcf85063_GetTime(&dt) == 0) && (dt.online != 0U)) {
+                Geiger_Dose_On5MinuteTick(&dt);
+            } else {
+                data_var.dose_5min_acc = 0.0f;
+                data_var.dose_30s_acc = 0.0f;
+            }
+        }
     }
+#else
+    Pcf85063_DateTime_t dt;
+    uint8_t at_5min;
+    uint8_t at_30s;
+    static uint8_t last_30s_half = 0xFFU; /* 0=秒0侧, 1=秒30侧, 防重复 */
+
+    if (geiger_local_flash_busy()) {
+        return;
+    }
+
+    if ((Pcf85063_GetTime(&dt) != 0) || (dt.online == 0U)) {
+        return;
+    }
+
+    at_5min = ((dt.minute % 5U) == 0U) && (dt.second == 0U);
+    at_30s = (dt.second == 0U) || (dt.second == 30U);
+
+    if (at_5min) {
+        uint16_t hm = (uint16_t)((uint16_t)dt.hour * 60U + (uint16_t)dt.minute);
+
+        if (!s_dose_boundary_inited || s_dose_last_boundary_hm != hm) {
+            s_dose_boundary_inited = 1U;
+            s_dose_last_boundary_hm = hm;
+
+            if (!s_dose_window_armed) {
+                /* 丢弃首条不完整窗：清累计，从本边界起开完整窗 */
+                data_var.dose_5min_acc = 0.0f;
+                data_var.dose_30s_acc = 0.0f;
+                s_dose_window_armed = 1U;
+            } else {
+                Geiger_Dose_On5MinuteTick(&dt);
+            }
+            last_30s_half = 0U; /* 与 second==0 对齐，避免同秒再跑 30s */
+        }
+        return;
+    }
+
+    if (!s_dose_window_armed) {
+        return;
+    }
+
+    if (at_30s) {
+        uint8_t half = (dt.second >= 30U) ? 1U : 0U;
+        if (last_30s_half != half) {
+            last_30s_half = half;
+            Geiger_Dose_On30SecondTick();
+        }
+    }
+#endif
 }
 
 /********************************************************************************************

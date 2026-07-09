@@ -1,0 +1,225 @@
+================================================================================
+FSY-I / NeiJi 网络备注：TCP + UDP 组播（物理链路与逻辑端点）
+适用：NeiJi 内机 + ZJB 转接板 + RK3568 Android App
+状态：按当前固件/App 实现整理（2026-07-09）
+范围：仅讨论以太网 TCP/UDP；不含 USART/CAN/LoRa 旁路
+================================================================================
+
+【一、物理拓扑（已确认）】
+
+  NeiJi (STM32H7)
+      │ SPI
+    W5500（硬 TCP/IP + 内置 PHY）
+      │ 以太网
+    HLK-7688（内机侧）
+      │ LAN 网线 —— 桥接，同一二层/同网段
+    HLK-7688（ZJB 上）
+      │ 网线
+    RK3568（Android）
+      │
+    App（TCP Client / UDP 组播监听）
+
+  说明：
+  - 两台 HLK-7688 为桥接，不终结 TCP/UDP，不改写业务帧。
+  - ZJB 上的 7688 只是链路中的第二跳；业务协议端点仍是 W5500 ↔ App。
+  - App 跑在 RK3568 安卓程序上，经网线接到 ZJB 侧 7688。
+
+
+【二、逻辑端点（真正要盯的）】
+
+  ┌──────────────┐                      ┌──────────────┐
+  │  W5500       │   同网段 L2/L3       │  App         │
+  │  TCP Server  │◄──── TCP :5001 ─────►│  TCP Client  │
+  │  UDP 组播源  │──── 236.2.3.6:2468 ─►│  UDP 监听    │
+  └──────────────┘                      └──────────────┘
+           ▲                                    ▲
+           │         中间仅桥接转发              │
+           └──── 7688(内机) ──网线── 7688(ZJB) ─┘
+
+  协议形态：
+  - 不是 Modbus TCP。
+  - FSY / Modbus RTU 帧（含 CRC16）原样铺在 TCP 字节流上。
+  - 与串口看到的 0x23 / 0x03 / 0x10 帧格式相同。
+
+
+【三、UDP 组播发现】
+
+  目标：236.2.3.6:2468
+  方向：设备约每秒发一次（有有效 IP 且链路可用时）
+  固件：Hardware/w5500/w5500_dhcp.c → UDP_Broadcast_Task / Broadcast_Fill_Data
+  App：net/FsyMulticastDiscovery.kt 加入组播组并解析
+
+  载荷：逗号分隔 ASCII 一行
+    产品型号,序列号,ip,控制端口,数据流端口,协议地址,协议类型,预留
+
+  示例字段含义：
+    FSY-I,2026FSYI0102,192.168.16.51,5001,5001,2,<协议类型>,0
+    └─ 控制端口与数据流端口当前均为 5001（逻辑双端口，物理单 TCP）
+
+  App 约定（当前实现）：
+  - 网口探头：先收到组播，确认 SN/IP，再发起 TCP 连接。
+  - UI「在线」主要看组播是否持续（约 5s 无组播可判离线）；与 TCP 0x23 短暂中断解耦。
+  - TCP 断线后清锚点，等下一次组播再连。
+
+
+【四、TCP 业务通道】
+
+  角色：设备 = TCP Server；App = TCP Client
+  端口：5001
+  Socket：W5500 socket1（SETTING_SOCKET）；socket0 名义「数据上传」当前未单独使用
+  连接数：同时仅 1 个 ESTABLISHED（单客户端）
+
+  固件关键：
+    Hardware/w5500/net_tcp.c
+      Net_Tcp_Write / PollRx / PeriodicMaintain / RebindOnIpChange
+    Protocol/fsy_link.c
+      Fsy_Link_WriteUpload → 同时打 UART + TCP（有连接时）+ 可选 CAN/LoRa
+    App/net_task.c
+      轮询 DHCP / PHY / UDP / TCP RX
+    App/app_tasks.c
+      UploadTask 周期发 0x23；并兜底调用 TCP 维护
+
+  数据方向：
+    设备 → App：0x23 主动上传（实时区、序列号、五分钟实时/历史等）
+    App → 设备：0x03 / 0x06 / 0x10 读写寄存器；设备应答回同一 TCP 连接
+
+
+【五、IP / PHY / 生命周期（设备侧）】
+
+  IP：
+    - 默认 DHCP（USE_DHCP=1）；也可静态
+    - 配置来自 Flash DeviceConfig；运行时以 W5500 SIPR 为准
+  启动大致顺序：
+    Reset_W5500 → 加载网络配置 → DHCP 或静态 → UDP 组播 init → TCP listen(5001)
+  PHY：
+    - link down 防抖；冷上电有宽限期，避免误清已 BOUND 的 IP
+    - link down 后关 TCP；link up 且 IP 有效再恢复 listen
+  异常恢复：
+    - DHCP 看门狗：链路 UP 但长时间无有效 IP → 复位 W5500 重来
+    - TCP CLOSE_WAIT / 超时等由 PeriodicMaintain 拉回 listen
+
+
+【六、与中间设备的职责边界】
+
+  HLK-7688（内机 / ZJB）：
+    - L2 桥接，同网段转发
+    - 需保证：单播 TCP 通；UDP 组播 236.2.3.6 能从内机侧到 RK3568
+    - 不解析、不改写 FSY 帧
+
+  ZJB：
+    - 承载第二台 7688，网线接到 RK3568
+    - 本备注不讨论 ZJB 自身协议地址 239 的业务寄存器
+
+  RK3568 App：
+    - 监听组播发现设备
+    - 按发现 IP 连接 TCP:5001
+    - 解析 RTU 帧；网口路径注意绑到正确网卡（避免 Wi‑Fi 抢 activeNetwork 收不到组播）
+
+
+【七、联调时怎么判断卡在哪一层】
+
+  1) 组播收不到
+     - 查：W5500 是否有 IP、PHY link、7688 桥是否通、RK 是否加入 236.2.3.6
+     - 设备串口常有 [UDP]/[DHCP]/PHY 相关日志
+
+  2) 有组播、TCP 连不上
+     - 先对一下：组播 IP、reg192 当前 IP、Flash 静态 IP（reg138）三者是否一致
+     - 再查：5001 是否 listen、是否已被其他客户端占用
+     - RK 上 ping 组播里的 IP：若 Destination Host Unreachable → 多半连错地址或 L2 不通
+
+  3) TCP 已连、无 0x23 / 无应答
+     - 查：协议地址、帧 CRC、UploadTask 是否在跑；与「组播在线」分开看
+
+  4) 串口有 0x23、网口没有
+     - WriteUpload 会双发；多半是 TCP 未 ESTABLISHED 或中间桥单播异常
+     - 对照 [NET]：若 phy link=0 而串口仍有 0x23 → W5500↔7688 PHY 抖
+
+
+【八、踩坑：组播喊 .16.51，芯片实际还是 .82.51（2026-07-09）】
+
+  现象：
+    - App 能收到组播：FSY-I @ 192.168.16.51
+    - TCP 连 192.168.16.51:5001 → EHOSTUNREACH
+    - RK ping 192.168.16.51 → Destination Host Unreachable
+    - 设备串口仍有 0x23，且 [TCP] listen recovered port 5001
+    - 生产配置：DHCP 关；静态 IP=192.168.16.51；当前 IP(reg192)=192.168.82.51
+
+  根因：
+    1. .82.51 不是固件写死默认值（默认静态是 192.168.2.100）。
+       来自某次 DHCP 开启时，局域网 DHCP（路由器/7688 等）分给 W5500 的租约。
+    2. 写 reg138 静态 IP / reg170 关 DHCP → 只 cfg_commit() 落 Flash，
+       不立刻 setSIPR / 不立刻 set_w5500_network()；需复位后生效。
+    3. 未断电前：
+         reg192（读 SIPR）= 旧地址 192.168.82.51
+         组播（静态模式用 ConfigMsg.lip）= Flash 新地址 192.168.16.51
+       → App 按组播去连 .16.51，实际芯片还在 .82.51，同网段也 ping 不通。
+    4. 本板 W5500 RST 引脚未接：仅复位 MCU 时 W5500 可能仍带旧 SIPR；
+       断电重启才会干净重配。本次断电后 reg192 变为 192.168.16.51，TCP 恢复。
+
+  操作约定：
+    - 改静态 IP / 关 DHCP 后：必须断电或确认复位，再读 reg192，
+      以「当前 IP」与目标一致为准，不要只看静态 IP 框。
+    - 联调「有组播无 TCP」时：先对比 组播 IP vs reg192，再查桥/网线。
+    - 静态模式下组播目前跟 Flash；若 SIPR 未同步，会误导 App（后续可改成优先报 SIPR）。
+
+  相关代码：
+    device_config.c → write_static_ip_regs / write_dhcp_reg（只落 Flash）
+    device.c        → set_w5500_network（复位后 setSIPR(ConfigMsg.lip)）
+    w5500_dhcp.c    → W5500_Get_Active_IP / Broadcast_Fill_Data（静态用 lip）
+    fsy_regmap.c    → reg192 读 getSIPR()
+
+
+【九、PHY 短抖防抖（2026-07-09 联调结论）】
+
+  现象：
+    - 上电后组播/TCP 先通，约十几秒后 App 离线再重连
+    - 串口 0x23 不停；[NET] 可见 phy 0xBF→0xBA(link=0)→0xBF，物理断约 2～4s
+    - 根因：HLK-7688 启动慢，W5500↔7688 PHY 短抖；WLAN_RST 未接 MCU PC6
+
+  为何 App 感觉像断了 ~12s：
+    - 物理空窗仅 2～4s
+    - 旧策略 5s 无组播/0x23 即离线 + 清锚点等组播重连，把感知拉长
+    - 旧固件 PHY up 时对仍 ESTABLISHED 的连接强制 listen recovered，拆掉会话
+
+  当前策略（防抖扛住，拔线仍不太钝）：
+    - App：组播 UI 超时 / TCP 0x23 超时 / 首帧等待 = 8s（已定稿，联调可接受）
+    - 固件：PHY up 时若 tcp_sr 仍为 ESTABLISHED → 保留连接（打印 keep ESTABLISHED），
+      不强制 close→listen；宽限期内 link down 仍不关 TCP
+    - 断电/中间断链：约 8s 显示离线（经双 7688 时本机网线仍在，难靠硬失败加速）
+
+  UI 与 TCP 超时「数值相同、后果不同」：
+    - PROBE_STALE_MS=8s：无组播 → UI 离线
+    - TELEMETRY_STALE_MS=8s：无 0x23 → 断 TCP；网口探头「UI 仍由组播判定」
+    - 组播还在、仅 TCP 僵死：log 有重连，界面可不闪（保留上次读数）
+    - 组播也停满 8s：界面才明显离线
+
+  拓扑限制（为何难「秒级断电检测」）：
+    App(RK)──网线──7688(ZJB)──LAN──7688(内机)──W5500
+    App 本机 eth0 一直插着；NeiJi 断电时本地链路仍 UP，TCP 常成黑洞半开。
+    可靠手段仍是组播/0x23 超时（或将来主动读寄存器看应答）。
+
+  诊断日志（联调）：
+    [NET] 每 2s；PHY link down/up（含 grace）；[TCP] tx skip / keep ESTABLISHED；[UDP] tx fail 带 phy
+
+  验证（2026-07-09）：
+    - 断电再上电：由「断-连-断-连」变为「仅一次断-连」，防抖有效
+    - Detector1 上仍可能出现一次较长组播空窗（>8s）后恢复；属 7688 启动空窗，非 App 误判
+
+
+【十、关键源码索引】
+
+  设备：
+    probe/Neiji/NeiJi/Hardware/w5500/network_cmd.h     端口/Socket 号
+    probe/Neiji/NeiJi/Hardware/w5500/w5500_dhcp.h/.c   DHCP、组播发现
+    probe/Neiji/NeiJi/Hardware/w5500/net_tcp.c         TCP Server
+    probe/Neiji/NeiJi/Hardware/w5500/device.c          上电网络初始化
+    probe/Neiji/NeiJi/Protocol/fsy_link.c              上传多路出口
+    probe/Neiji/NeiJi/App/net_task.c                  网络任务
+
+  App：
+    .../net/FsyMulticastDiscovery.kt                  UDP 组播监听
+    .../net/FsyNetworkOptions.kt                      网卡绑定注意点
+    .../data/ProbeConnectionManager.kt                发现锚点 + TCP 维持
+    .../ui/MainViewModel.kt                           组播在线判定等
+
+================================================================================

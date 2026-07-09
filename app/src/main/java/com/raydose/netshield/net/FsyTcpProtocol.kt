@@ -14,6 +14,8 @@ data class FiveMinUpload(
     val minute: Int,
     val second: Int,
     val doseRaw: Long,
+    /** false=实时窗(0x001E，可对时)；true=历史补拉(0x0024，只入库) */
+    val fromHistory: Boolean = false,
 ) {
     val doseUsv: Double
         get() = doseRaw / DOSE_5MIN_PROTOCOL_SCALE
@@ -331,7 +333,7 @@ private fun parseUpload23(frame: ByteArray, addr: Int, crcOk: Boolean): ParsedFs
     return ParsedFsyFrame(addr, 0x23, crcOk, summary)
 }
 
-/** 五分钟累计：reg=0x001E；payload=8 字节时间 + u32 D5(μSv×100) */
+/** 五分钟累计：实时 reg=0x001E；历史 reg=0x0024；payload=8B 时间 + u32 D5(μSv×100) */
 private fun tryParseFiveMinUpload(
     frame: ByteArray,
     startReg: Int,
@@ -340,7 +342,11 @@ private fun tryParseFiveMinUpload(
     crcOk: Boolean,
 ): ParsedFsyFrame? {
     if (byteCount != 0x0C || frame.size < 19) return null
-    if (startReg != 0x001E) return null
+    val fromHistory = when (startReg) {
+        0x001E -> false
+        0x0024 -> true
+        else -> return null
+    }
     val year = frame[5].toUByte().toInt()
     val month = frame[6].toUByte().toInt()
     val day = frame[7].toUByte().toInt()
@@ -348,8 +354,9 @@ private fun tryParseFiveMinUpload(
     val minute = frame[9].toUByte().toInt()
     val second = frame[10].toUByte().toInt()
     val doseX100 = u32le(frame, 13)
-    val fiveMin = FiveMinUpload(year, month, day, hour, minute, second, doseX100)
-    val summary = "0x23 五分钟值: 时间=${fiveMin.timeString} D5=${"%.6f".format(fiveMin.doseUsv)} uSv raw=${fiveMin.doseRaw}"
+    val fiveMin = FiveMinUpload(year, month, day, hour, minute, second, doseX100, fromHistory)
+    val kind = if (fromHistory) "历史五分钟" else "五分钟值"
+    val summary = "0x23 $kind: 时间=${fiveMin.timeString} D5=${"%.6f".format(fiveMin.doseUsv)} uSv raw=${fiveMin.doseRaw}"
     return ParsedFsyFrame(addr, 0x23, crcOk, summary, null, fiveMin)
 }
 

@@ -915,6 +915,16 @@
               <FilePath>../Hardware/storage/flash_fs_mutex.c</FilePath>
             </File>
             <File>
+              <FileName>hist_5min.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../Hardware/storage/hist_5min.c</FilePath>
+            </File>
+            <File>
+              <FileName>hist_5min_query.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../Hardware/storage/hist_5min_query.c</FilePath>
+            </File>
+            <File>
               <FileName>ws2812b.c</FileName>
               <FileType>1</FileType>
               <FilePath>../Hardware/WS2812B/ws2812b.c</FilePath>

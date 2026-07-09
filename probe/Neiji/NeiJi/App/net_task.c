@@ -25,6 +25,7 @@ static const osThreadAttr_t netTaskAttributes = {
 };
 
 static uint32_t s_recover_log_tick = 0U;
+static uint32_t s_net_status_tick = 0U;
 static UartRingBuf s_tcp_rx;
 static uint8_t s_tcp_rx_storage[NET_TCP_RX_CAP];
 
@@ -120,6 +121,15 @@ static void NetTask(void *argument)
         UDP_Broadcast_Task();
         Net_Tcp_PollRx(&s_tcp_rx);
         Fsy_Link_ProcessRx(&s_tcp_rx, NetTcpWriteAdapter);
+
+        {
+            uint32_t now = HAL_GetTick();
+
+            if ((s_net_status_tick == 0U) || ((now - s_net_status_tick) >= 2000U)) {
+                s_net_status_tick = now;
+                W5500_Net_PrintStatus();
+            }
+        }
 
         (void)osDelay(2);
     }

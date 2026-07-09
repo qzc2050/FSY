@@ -44,4 +44,11 @@ int Fsy_Upload_Build5MinFrame(uint8_t *frame, uint16_t frame_cap,
 int Fsy_Upload_Send5Min(const uint8_t dt8[8], uint32_t dose_x100,
                         int (*write_fn)(const uint8_t *data, uint16_t len));
 
+/** 0x23 五分钟历史：start=0x0024（reg36），12B；App 只入库不对时 */
+int Fsy_Upload_Build5MinHistFrame(uint8_t *frame, uint16_t frame_cap,
+                                  const uint8_t dt8[8], uint32_t dose_x100);
+
+int Fsy_Upload_Send5MinHist(const uint8_t dt8[8], uint32_t dose_x100,
+                            int (*write_fn)(const uint8_t *data, uint16_t len));
+
 #endif

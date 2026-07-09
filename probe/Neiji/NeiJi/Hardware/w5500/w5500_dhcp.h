@@ -114,6 +114,11 @@ bool W5500_Is_NetBootGrace(void);
 bool W5500_Is_Network_Recovering(void);
 
 /**
+ * @brief  串口诊断：PHY/IP/TCP/组播当前状态（联调静默窗口用，注意限频调用）
+ */
+void W5500_Net_PrintStatus(void);
+
+/**
  * @brief  新一轮 netTask 循环开始前调用，使本轮内 DHCP/TCP 共用一次 PHY 采样
  */
 void W5500_PhyLink_DebouncedLoopBegin(void);

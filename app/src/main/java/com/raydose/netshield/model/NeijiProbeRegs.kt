@@ -15,6 +15,14 @@ object NeijiProbeRegs {
     const val TIME = 0x005E
     const val TIME_REG_COUNT = 4
 
+    /** 实时五分钟 0x23 start */
+    const val FIVE_MIN_REALTIME = 0x001E
+    /** 历史五分钟回传 0x23 start（reg36） */
+    const val FIVE_MIN_HISTORY = 0x0024
+    /** 历史查询起止：reg108，一次写 8 reg / 16B */
+    const val HIST_QUERY_START = 0x006C
+    const val HIST_QUERY_REG_COUNT = 8
+
     /** uint32 阈值 / 使能 / control2 占 2 个 holding reg（4 字节） */
     const val U32_REG_COUNT = 2
 }

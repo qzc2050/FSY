@@ -43,6 +43,20 @@
 #define FSY_REG_5MIN_SNAPSHOT_REGS \
     (FSY_REG_DATA_TIME_5MIN_REGS + FSY_REG_DOSE_5MIN_REGS)
 
+/* 历史 5min 回传镜像（只读，0x23 start=0x0024）：reg36~39 时间，reg40~41 D5×100 */
+#define FSY_REG_HIST_DATA_TIME   36U
+#define FSY_REG_HIST_DATA_TIME_REGS 4U
+#define FSY_REG_HIST_DOSE        40U
+#define FSY_REG_HIST_DOSE_REGS   2U
+#define FSY_REG_HIST_SNAPSHOT_REGS \
+    (FSY_REG_HIST_DATA_TIME_REGS + FSY_REG_HIST_DOSE_REGS)
+
+/* 历史查询窗（读写）：reg108~111 start，reg112~115 end；写满触发泵 */
+#define FSY_REG_HIST_TIME_START  108U
+#define FSY_REG_HIST_TIME_END    112U
+#define FSY_REG_HIST_TIME_REGS   4U
+#define FSY_REG_HIST_QUERY_REGS  8U  /* 108~115 */
+
 #define FSY_REG_DOSE_HI_TH       50U
 #define FSY_REG_DOSE_LO_TH       52U
 #define FSY_REG_DWORD_REGS       2U
@@ -148,6 +162,12 @@ void Fsy_Regmap_UpdateDoseRate(float rate_usv_h);
 
 /** 更新最近一次 5min 快照（reg30~35）；dt 为协议 8 字节时间，dose_x100=D5×100 */
 void Fsy_Regmap_Sync5MinSnapshot(const uint8_t dt8[8], uint32_t dose_x100);
+
+/** 更新历史回传镜像（reg36~41）；与 0x23 0x0024 一致 */
+void Fsy_Regmap_Sync5MinHistSnapshot(const uint8_t dt8[8], uint32_t dose_x100);
+
+/** 清零 reg108~115 查询窗 */
+void Fsy_Regmap_ClearHistQueryRegs(void);
 
 void Fsy_Regmap_SetGeigerSecCps(uint32_t cps);
 

@@ -11,7 +11,7 @@
  * - 5min 缓存扇区（与数据扇区同数量，第二轮追加写，满则迁移到最旧数据扇区）
  * - 尾部：配置区（DEVICE_CFG_*）
  *
- * 每条记录 EXT_FLASH_DATA_RECORD_BYTES 字节：uint32 unix_ts(LE) + uint32 dose_uSv(LE)
+ * 每条记录 EXT_FLASH_DATA_RECORD_BYTES 字节：uint32 unix_ts(LE) + uint32 dose_x100(LE)
  *
  * 扩展记录数：修改 DATA_5_MIN_MAX_RECORDS，数据/缓存扇区数会自动重算。
  */
@@ -23,7 +23,7 @@
 #endif
 
 #ifndef DATA_5_MIN_MAX_RECORDS
-#define DATA_5_MIN_MAX_RECORDS 300U
+#define DATA_5_MIN_MAX_RECORDS 288U  /* 12 条/h × 24h */
 #endif
 
 /** 向上对齐（#if 用，勿加强转） */
