@@ -5,6 +5,7 @@
 #include "device.h"
 #include "w5500.h"
 #include "w5500_dhcp.h"
+#include "net_config.h"
 #include "net_tcp.h"
 #include "fsy_link.h"
 #include "uart_ringbuf.h"
@@ -127,7 +128,9 @@ static void NetTask(void *argument)
 
             if ((s_net_status_tick == 0U) || ((now - s_net_status_tick) >= 2000U)) {
                 s_net_status_tick = now;
+#if NET_STATUS_LOG
                 W5500_Net_PrintStatus();
+#endif
             }
         }
 

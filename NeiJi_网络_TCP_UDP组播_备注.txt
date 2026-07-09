@@ -160,13 +160,29 @@ FSY-I / NeiJi 网络备注：TCP + UDP 组播（物理链路与逻辑端点）
     - 改静态 IP / 关 DHCP 后：必须断电或确认复位，再读 reg192，
       以「当前 IP」与目标一致为准，不要只看静态 IP 框。
     - 联调「有组播无 TCP」时：先对比 组播 IP vs reg192，再查桥/网线。
-    - 静态模式下组播目前跟 Flash；若 SIPR 未同步，会误导 App（后续可改成优先报 SIPR）。
+    - 静态模式：组播/reg192/[NET] 优先报 SIPR；若 SIPR≠lip 会自动 rewrite SIPR。
 
   相关代码：
     device_config.c → write_static_ip_regs / write_dhcp_reg（只落 Flash）
     device.c        → set_w5500_network（复位后 setSIPR(ConfigMsg.lip)）
-    w5500_dhcp.c    → W5500_Get_Active_IP / Broadcast_Fill_Data（静态用 lip）
-    fsy_regmap.c    → reg192 读 getSIPR()
+    w5500_dhcp.c    → W5500_Get_Active_IP / w5500_ensure_static_sipr / Broadcast_Fill_Data
+    fsy_regmap.c    → reg192 读 W5500_Get_Active_IP()
+
+
+【八-续、组播喊 .16.56，SIPR 却是 3.168.16.56（2026-07-09 18:15）】
+
+  现象：
+    - App 组播确认 2026FSYI0101@192.168.16.56，TCP:5001 → EHOSTUNREACH
+    - 串口 [NET] ip=192.168.16.56 tcp_sr=0x14 dhcp=0（LISTEN 正常）
+    - 工具读 reg192 = 03 A8 10 38 → 3.168.16.56；reg138 = 192.168.16.56
+
+  根因：
+    静态模式组播/[NET] 曾直接报 ConfigMsg.lip，而芯片 SIPR 偶发/残留为错误首字节；
+    App 按组播去 ARP .16.56，L2 无应答 → No route to host。
+
+  修复：
+    - reg192 / Get_Active_IP：静态下先 ensure SIPR==lip，再优先报 SIPR
+    - 发现 mismatch 打 [NET] static SIPR mismatch ... rewrite
 
 
 【九、PHY 短抖防抖（2026-07-09 联调结论）】

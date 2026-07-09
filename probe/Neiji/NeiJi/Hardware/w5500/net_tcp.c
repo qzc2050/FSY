@@ -1,6 +1,7 @@
 #include "net_tcp.h"
 
 #include "network_cmd.h"
+#include "net_config.h"
 #include "socket.h"
 #include "w5500.h"
 #include "w5500_dhcp.h"
@@ -150,14 +151,20 @@ static void net_phy_link_maintain(void)
     phy_raw = getPHYCFGR();
     grace = W5500_Is_NetBootGrace() ? 1U : 0U;
     tcp_sr = getSn_SR(SETTING_SOCKET_NUM);
+#if !NET_STATUS_LOG
+    (void)phy_raw;
+    (void)tcp_sr;
+#endif
 
     /*
-     * 宽限期内仍打印 down/up，便于对照 7688 启动抖动；
+     * 宽限期内仍可打印 down/up（NET_STATUS_LOG=1）；
      * 仅跳过「关 TCP」动作，避免冷启动误杀连接。
      */
     if (falling) {
+#if NET_STATUS_LOG
         printf("PHY link down raw=0x%02X grace=%u tcp_sr=0x%02X\r\n",
                (unsigned)phy_raw, (unsigned)grace, (unsigned)tcp_sr);
+#endif
         if (grace != 0U && net_local_ip_valid()) {
             s_phy_link_up = link_up;
             return;
@@ -169,8 +176,10 @@ static void net_phy_link_maintain(void)
     }
 
     if (rising) {
+#if NET_STATUS_LOG
         printf("PHY link up raw=0x%02X grace=%u tcp_sr=0x%02X\r\n",
                (unsigned)phy_raw, (unsigned)grace, (unsigned)tcp_sr);
+#endif
         s_phy_link_up = link_up;
         if (net_local_ip_valid()) {
             tcp_sr = getSn_SR(SETTING_SOCKET_NUM);
@@ -178,7 +187,9 @@ static void net_phy_link_maintain(void)
                 /* 短抖：会话还在，继续发 0x23，避免 App 被迫重连 */
                 g_tcp_sock_ready = 1;
                 s_sock_prev_st = tcp_sr;
+#if NET_STATUS_LOG
                 printf("[TCP] keep ESTABLISHED after PHY up\r\n");
+#endif
             } else {
                 (void)net_tcp_ensure_listen();
             }
@@ -382,30 +393,38 @@ bool Net_Tcp_IsConnected(void)
 
 int Net_Tcp_Write(const uint8_t *data, uint16_t len)
 {
+#if NET_STATUS_LOG
     static uint32_t s_fail_log_tick = 0U;
-    uint16_t sent;
-    bool ok = false;
     const char *why = NULL;
     uint32_t now;
+#endif
+    uint16_t sent;
+    bool ok = false;
 
     if ((data == NULL) || (len == 0U)) {
         return -1;
     }
 
     if (W5500_Is_Network_Recovering()) {
+#if NET_STATUS_LOG
         why = "recovering";
+#endif
         goto fail_log;
     }
 
     if (!Net_Tcp_IsConnected()) {
+#if NET_STATUS_LOG
         why = "not_conn";
+#endif
         goto fail_log;
     }
 
     net_tx_mutex_init();
     if (s_net_tx_mutex != NULL) {
         if (xSemaphoreTake(s_net_tx_mutex, pdMS_TO_TICKS(500)) != pdTRUE) {
+#if NET_STATUS_LOG
             why = "mutex";
+#endif
             goto fail_log;
         }
     }
@@ -414,7 +433,9 @@ int Net_Tcp_Write(const uint8_t *data, uint16_t len)
     if (sent == len) {
         ok = true;
     } else {
+#if NET_STATUS_LOG
         why = "send_err";
+#endif
         net_tcp_socket_maintain(SETTING_SOCKET_NUM, SETTING_SOCKET_PORT);
     }
 
@@ -427,6 +448,7 @@ int Net_Tcp_Write(const uint8_t *data, uint16_t len)
     }
 
 fail_log:
+#if NET_STATUS_LOG
     now = HAL_GetTick();
     if ((why != NULL) &&
         ((s_fail_log_tick == 0U) || ((now - s_fail_log_tick) >= 1000U))) {
@@ -439,6 +461,7 @@ fail_log:
                (unsigned)phy_raw,
                (unsigned)((phy_raw & LINK) ? 1U : 0U));
     }
+#endif
     return -1;
 }
 

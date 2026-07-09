@@ -676,7 +676,7 @@ class FactoryApp(tk.Tk):
         ttk.Entry(
             form, textvariable=self.current_ip_var, width=28, state="readonly"
         ).grid(row=row, column=1, sticky=tk.W, padx=8, pady=6)
-        ttk.Label(form, text="只读；设备实时在用 IP（W5500 SIPR）", foreground="#666").grid(
+        ttk.Label(form, text="只读；设备实时在用 IP（与组播/TCP 同源）", foreground="#666").grid(
             row=row, column=2, sticky=tk.W
         )
         row += 1

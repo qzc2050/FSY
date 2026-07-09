@@ -35,6 +35,7 @@ import com.raydose.netshield.ui.theme.NetShieldMessageBar
 import com.raydose.netshield.ui.theme.NetShieldTextPrimary
 import com.raydose.netshield.ui.theme.NetShieldTextSecondary
 import com.raydose.netshield.ui.theme.ScreenSpec
+import com.raydose.netshield.ui.theme.rememberTabletFormFactor
 
 /**
  * 下拉展开时下半屏「主页缩略」：
@@ -301,11 +302,12 @@ private fun ThumbnailEnvLine(
     text: String,
     modifier: Modifier = Modifier,
 ) {
+    val envSp = ScreenSpec.statusBarThumbnailEnvSp(rememberTabletFormFactor())
     Text(
         text = text,
         color = NetShieldTextPrimary,
-        fontSize = ScreenSpec.STATUS_BAR_THUMBNAIL_ENV_SP.sp,
-        lineHeight = (ScreenSpec.STATUS_BAR_THUMBNAIL_ENV_SP + 4).sp,
+        fontSize = envSp.sp,
+        lineHeight = (envSp + 4).sp,
         maxLines = 1,
         overflow = TextOverflow.Ellipsis,
         textAlign = TextAlign.Center,

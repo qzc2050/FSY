@@ -184,7 +184,8 @@ internal fun probeCardSlotSpec(
             doseUnitSp = doseUnitSp,
             doseUnitGapDp = doseUnitGapDp,
             doseOffsetDp = doseOffsetDp,
-            envSp = spFromHeight(h, ProbeCardMetrics.ENV_H, 14f, ScreenSpec.HOME_CARD_ENV_SP.toFloat()),
+            // 待机卡常为 2/3 屏宽（旁有留言），10 寸上仅按高度会偏大，裁掉「μg/m³」
+            envSp = singleRowEnvFontSp(w, h),
             offlineSp = offlineSp,
             cornerDp = cornerDp,
             contentPaddingH = contentPaddingH,
@@ -222,7 +223,7 @@ internal fun probeCardSlotSpec(
 
             doseOffsetDp = doseOffsetDp,
 
-            envSp = spFromHeight(h, ProbeCardMetrics.ENV_H, 18f, ScreenSpec.HOME_CARD_ENV_SP.toFloat()),
+            envSp = singleRowEnvFontSp(w, h),
 
             offlineSp = offlineSp,
 
@@ -390,6 +391,22 @@ private fun envFontSp(cardHeightDp: Float, envWeight: Float, envRows: Int): Int 
 
         .roundToInt()
 
+}
+
+
+
+/**
+ * 单行 5 项环境栏字号：同时受卡高、卡宽约束。
+ * 待机卡常为 2/3 屏宽，仅按高度会偏大裁掉单位；宽度项乘 [ENV_WIDTH_SOFT] 避免收得过小。
+ */
+private const val ENV_WIDTH_SOFT = 1.35f
+
+private fun singleRowEnvFontSp(cardWidthDp: Float, cardHeightDp: Float): Int {
+    val byHeight = cardHeightDp * ProbeCardMetrics.ENV_H
+    val byWidth = ScreenSpec.HOME_CARD_ENV_SP * (cardWidthDp / ProbeCardMetrics.REF_WIDTH_DP) * ENV_WIDTH_SOFT
+    return min(byHeight, byWidth)
+        .coerceIn(18f, ScreenSpec.HOME_CARD_ENV_SP.toFloat())
+        .roundToInt()
 }
 
 

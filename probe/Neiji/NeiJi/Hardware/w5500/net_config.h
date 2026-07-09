@@ -17,4 +17,9 @@
 #define DEVICE_PROTOCOL_TYPE_CODE       (2U)
 #define DEVICE_UDP_DISCOVER_RESERVED    (0U)
 
+/* 1=周期性 [NET]/PHY link 等调试打印；长时间挂机测试请保持 0 */
+#ifndef NET_STATUS_LOG
+#define NET_STATUS_LOG                  (0)
+#endif
+
 #endif

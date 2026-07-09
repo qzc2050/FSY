@@ -412,6 +412,55 @@ static bool w5500_sipr_read_stable(uint8_t ip[4])
     return false;
 }
 
+/**
+ * 静态模式：SIPR 与 Flash lip 不一致时强制 setSIPR。
+ * 常见于改静态 IP 后未断电、或 W5500 RST 未接导致芯片仍带旧地址；
+ * 组播若只报 lip，App 会连不通（EHOSTUNREACH）。
+ */
+static void w5500_ensure_static_sipr(void)
+{
+    uint8_t sipr[4];
+    static uint32_t s_last_sync_tick = 0U;
+    uint32_t now;
+
+    if (ConfigMsg.dhcp) {
+        return;
+    }
+    if (!W5500_Is_IP_Valid_Buf(ConfigMsg.lip)) {
+        return;
+    }
+
+    now = HAL_GetTick();
+    if ((s_last_sync_tick != 0U) && ((now - s_last_sync_tick) < 2000U)) {
+        return;
+    }
+
+    if (!w5500_sipr_read_stable(sipr)) {
+        setSIPR(ConfigMsg.lip);
+        s_last_sync_tick = now;
+#if NET_STATUS_LOG
+        printf("[NET] static SIPR unstable, rewrite %u.%u.%u.%u\r\n",
+               (unsigned)ConfigMsg.lip[0], (unsigned)ConfigMsg.lip[1],
+               (unsigned)ConfigMsg.lip[2], (unsigned)ConfigMsg.lip[3]);
+#endif
+        return;
+    }
+
+    if ((sipr[0] == ConfigMsg.lip[0]) && (sipr[1] == ConfigMsg.lip[1]) &&
+        (sipr[2] == ConfigMsg.lip[2]) && (sipr[3] == ConfigMsg.lip[3])) {
+        return;
+    }
+
+#if NET_STATUS_LOG
+    printf("[NET] static SIPR mismatch %u.%u.%u.%u -> lip %u.%u.%u.%u, rewrite\r\n",
+           (unsigned)sipr[0], (unsigned)sipr[1], (unsigned)sipr[2], (unsigned)sipr[3],
+           (unsigned)ConfigMsg.lip[0], (unsigned)ConfigMsg.lip[1],
+           (unsigned)ConfigMsg.lip[2], (unsigned)ConfigMsg.lip[3]);
+#endif
+    setSIPR(ConfigMsg.lip);
+    s_last_sync_tick = now;
+}
+
 static bool net_in_boot_grace(void)
 {
     return ((HAL_GetTick() - g_net_boot_tick) < NET_BOOT_GRACE_MS);
@@ -439,6 +488,12 @@ void W5500_Get_Active_IP(uint8_t ip[4])
         return;
     }
 
+    /* 静态：先纠正 SIPR，再优先报芯片真实地址，避免组播喊 lip、TCP 却连不上 */
+    w5500_ensure_static_sipr();
+    if (w5500_sipr_read_stable(ip) && W5500_Is_IP_Valid_Buf(ip)) {
+        return;
+    }
+
     if (W5500_Is_IP_Valid_Buf(ConfigMsg.lip)) {
         ip[0] = ConfigMsg.lip[0];
         ip[1] = ConfigMsg.lip[1];
@@ -447,12 +502,10 @@ void W5500_Get_Active_IP(uint8_t ip[4])
         return;
     }
 
-    if (!w5500_sipr_read_stable(ip)) {
-        ip[0] = 0U;
-        ip[1] = 0U;
-        ip[2] = 0U;
-        ip[3] = 0U;
-    }
+    ip[0] = 0U;
+    ip[1] = 0U;
+    ip[2] = 0U;
+    ip[3] = 0U;
 }
 
 /********************************************************************************************
@@ -531,6 +584,7 @@ void W5500_SyncBoundIp(const uint8_t ip[4])
 
 void W5500_Net_PrintStatus(void)
 {
+#if NET_STATUS_LOG
     uint8_t ip[4];
     uint8_t phy_raw = getPHYCFGR();
     uint8_t tcp_sr = getSn_SR(SETTING_SOCKET_NUM);
@@ -546,6 +600,7 @@ void W5500_Net_PrintStatus(void)
            (unsigned)g_broadcast_enabled,
            (unsigned)(net_in_boot_grace() ? 1U : 0U),
            (unsigned)ConfigMsg.dhcp);
+#endif
 }
 
 /********************************************************************************************
@@ -687,7 +742,7 @@ void UDP_Broadcast_Task(void)
         return;
 
     /*
-     * 静态 IP：以 ConfigMsg.lip 为准，不依赖 SIPR 偶发读失败。
+     * 静态 IP：纠正 SIPR 后取业务 IP（优先 SIPR，与组播/TCP 一致）。
      * DHCP：Get_Active_IP 内部需 SIPR 连续两次一致才认为有效。
      */
     W5500_Get_Active_IP(ip);

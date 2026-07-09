@@ -253,7 +253,14 @@ object ScreenSpec {
     const val STATUS_BAR_THUMBNAIL_DATE_SP = 24
     const val STATUS_BAR_THUMBNAIL_TIME_SP = 32
     const val STATUS_BAR_THUMBNAIL_ENV_SP = 28
+    const val STATUS_BAR_THUMBNAIL_ENV_SP_COMPACT = 24
     const val STATUS_BAR_THUMBNAIL_MESSAGE_SP = 14
+
+    /** 下拉缩略左侧本机环境字号：10 寸略小 */
+    fun statusBarThumbnailEnvSp(formFactor: TabletFormFactor): Int = when (formFactor) {
+        TabletFormFactor.Compact -> STATUS_BAR_THUMBNAIL_ENV_SP_COMPACT
+        TabletFormFactor.Expanded -> STATUS_BAR_THUMBNAIL_ENV_SP
+    }
 
     /** 与探头卡片 Full 布局底部环境栏 [envWeight] 一致，左列气压行与之对齐 */
     const val STATUS_BAR_THUMBNAIL_PROBE_ENV_WEIGHT = 0.26f

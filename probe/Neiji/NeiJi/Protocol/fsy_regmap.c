@@ -2,6 +2,7 @@
 #include "device_config.h"
 #include "net_config.h"
 #include "w5500.h"
+#include "w5500_dhcp.h"
 #include "pcf85063.h"
 #include "aht20.h"
 #include "bmp280.h"
@@ -267,7 +268,8 @@ static int read_current_ip_reg(uint16_t reg, uint8_t *out, uint16_t out_cap)
         return -1;
     }
 
-    getSIPR(ip);
+    /* 勿单次 getSIPR：SPI 偶发错位会把 192.x 读成 3.x；与组播/TCP 同源取业务 IP */
+    W5500_Get_Active_IP(ip);
     if (reg == FSY_REG_CURRENT_IP) {
         store_u16_le(out, (uint16_t)ip[0] | ((uint16_t)ip[1] << 8));
     } else {

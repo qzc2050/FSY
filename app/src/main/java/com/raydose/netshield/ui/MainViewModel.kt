@@ -15,6 +15,7 @@ import com.raydose.netshield.data.ProbeConfigRepository
 import com.raydose.netshield.data.ProbeConnectionManager
 import com.raydose.netshield.data.ProbeLinkRouter
 import com.raydose.netshield.data.ProbeDoseHistoryRepository
+import com.raydose.netshield.data.ProbeDoseAlarmLogAggregator
 import com.raydose.netshield.data.ProbeSensorOfflineLogAggregator
 import com.raydose.netshield.model.DisplaySoundSettings
 import com.raydose.netshield.model.PAUSE_ALARM_DURATION_MS
@@ -134,6 +135,24 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             appendAlertLog(
                 message = "$probeName ${labels}传感器离线",
                 kind = AlertLogKind.Warning,
+                timestampMillis = ts,
+            )
+        },
+    )
+
+    private val doseAlarmLogAggregator = ProbeDoseAlarmLogAggregator(
+        onAlarmStarted = { ts, probeName, labels ->
+            val ordered = listOf("上限", "下限").filter { it in labels }
+            appendAlertLog(
+                message = "$probeName 辐射${ordered.joinToString("、")}报警",
+                kind = AlertLogKind.Alarm,
+                timestampMillis = ts,
+            )
+        },
+        onAlarmCleared = { ts, probeName ->
+            appendAlertLog(
+                message = "$probeName 辐射报警解除",
+                kind = AlertLogKind.Info,
                 timestampMillis = ts,
             )
         },
@@ -1214,11 +1233,20 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             ?.let {
             val probe = _savedProbes.value.find { it.id == probeId }
             val telemetry = _liveTelemetry.value[probeId]
+            val probeName = probe?.displayName ?: probeId
+            val alarmBit = telemetry?.alarmBit
+            val now = System.currentTimeMillis()
             sensorOfflineLogAggregator.onTelemetrySample(
                 probeId = probeId,
-                probeName = probe?.displayName ?: probeId,
-                alarmBit = telemetry?.alarmBit,
-                nowMillis = System.currentTimeMillis(),
+                probeName = probeName,
+                alarmBit = alarmBit,
+                nowMillis = now,
+            )
+            doseAlarmLogAggregator.onTelemetrySample(
+                probeId = probeId,
+                probeName = probeName,
+                alarmBit = alarmBit,
+                nowMillis = now,
             )
         }
     }
@@ -1361,6 +1389,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 kind = AlertLogKind.Connected,
             )
             sensorOfflineLogAggregator.onProbeConnected(probeId)
+            doseAlarmLogAggregator.onProbeConnected(probeId)
         }
         if (_showSettings.value) {
             patchProbeRealtimeSummaryOnDraft(probeId)
@@ -1380,6 +1409,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             kind = AlertLogKind.Warning,
         )
         sensorOfflineLogAggregator.onProbeDisconnected(probeId)
+        doseAlarmLogAggregator.onProbeDisconnected(probeId)
         recordProbeOfflineForTimeSync(probeId)
         if (_showSettings.value) {
             patchProbeOnlineOnDraft(probeId, false)
@@ -1442,6 +1472,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         )
         if (online) {
             sensorOfflineLogAggregator.onProbeConnected(probeId)
+            doseAlarmLogAggregator.onProbeConnected(probeId)
             viewModelScope.launch {
                 delay(2_000L)
                 maybeAutoSyncTimeToProbe(probeId, reason = "online")
@@ -1450,6 +1481,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
         } else {
             sensorOfflineLogAggregator.onProbeDisconnected(probeId)
+            doseAlarmLogAggregator.onProbeDisconnected(probeId)
             recordProbeOfflineForTimeSync(probeId)
         }
         if (_showSettings.value) {

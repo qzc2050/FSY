@@ -124,7 +124,7 @@
 #define FSY_REG_GEIGER_SEC_CPS    190U
 #define FSY_REG_GEIGER_SEC_CPS_REGS 2U
 
-/* 当前在线 IP（只读，W5500 SIPR，2 reg IPv4，不落 Flash） */
+/* 当前在线 IP（只读，W5500_Get_Active_IP，2 reg IPv4，不落 Flash） */
 #define FSY_REG_CURRENT_IP        192U
 #define FSY_REG_CURRENT_IP_REGS   2U
 
