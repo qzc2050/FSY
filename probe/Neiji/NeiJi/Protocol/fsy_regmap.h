@@ -35,6 +35,14 @@
 
 /* A 类配置（协议标准） */
 
+/* 实时 5min 快照（只读）：reg30~33 时间 8B，reg34~35 D5 μSv×100 */
+#define FSY_REG_DATA_TIME_5MIN   30U
+#define FSY_REG_DATA_TIME_5MIN_REGS 4U
+#define FSY_REG_DOSE_5MIN        34U
+#define FSY_REG_DOSE_5MIN_REGS   2U
+#define FSY_REG_5MIN_SNAPSHOT_REGS \
+    (FSY_REG_DATA_TIME_5MIN_REGS + FSY_REG_DOSE_5MIN_REGS)
+
 #define FSY_REG_DOSE_HI_TH       50U
 #define FSY_REG_DOSE_LO_TH       52U
 #define FSY_REG_DWORD_REGS       2U
@@ -137,6 +145,9 @@ void Fsy_Regmap_UpdateEnv(const AHT20_Data_t *aht, const BMP280_Data_t *bmp,
 
 
 void Fsy_Regmap_UpdateDoseRate(float rate_usv_h);
+
+/** 更新最近一次 5min 快照（reg30~35）；dt 为协议 8 字节时间，dose_x100=D5×100 */
+void Fsy_Regmap_Sync5MinSnapshot(const uint8_t dt8[8], uint32_t dose_x100);
 
 void Fsy_Regmap_SetGeigerSecCps(uint32_t cps);
 

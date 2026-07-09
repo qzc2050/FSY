@@ -11,29 +11,32 @@ import java.util.Locale
 import java.util.concurrent.TimeUnit
 
 /**
- * 探头 5 分钟剂量历史本地存储。
- * 当前无真实历史时自动生成模拟采样并落盘，后续由 [recordSampleIfDue] 持续追加。
+ * 探头 5 分钟累计剂量历史本地存储。
+ * 样本单位为 μSv（一窗 D5），日累计 = Σ 当天 doseUsv。
  */
 class ProbeDoseHistoryRepository(context: Context) {
     private val prefs = context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
     private val dateFmt = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
 
-    fun recordSampleIfDue(probeId: String, doseRateUsvH: Double, nowMillis: Long = System.currentTimeMillis()) {
-        if (doseRateUsvH <= 0.0) return
+    fun recordSampleIfDue(probeId: String, doseUsv: Double, recordedAtMillis: Long = System.currentTimeMillis()) {
+        if (doseUsv <= 0.0) return
         val samples = loadSamples(probeId)
-        val lastAt = samples.maxOfOrNull { it.recordedAtMillis } ?: 0L
-        if (nowMillis - lastAt < SAMPLE_INTERVAL_MS) return
-        val updated = samples + ProbeDoseSample(probeId, doseRateUsvH, nowMillis)
+        val bucket = alignToFiveMinuteBucket(recordedAtMillis)
+        /* 同一 5min 桶已有样本则跳过；避免手机时间/设备时间混用导致误拒 */
+        if (samples.any { alignToFiveMinuteBucket(it.recordedAtMillis) == bucket }) return
+        val updated = samples + ProbeDoseSample(probeId, doseUsv, recordedAtMillis)
         saveSamples(probeId, updated)
     }
 
     fun dailySummaries(probeId: String, fallbackBaseRateUsvH: Double, dayCount: Int = 7): List<DailyDoseSummary> {
-        var samples = loadSamples(probeId)
-        if (samples.isEmpty()) {
-            samples = buildSimulatedSamples(probeId, fallbackBaseRateUsvH, dayCount)
-            saveSamples(probeId, samples)
+        val samples = loadSamples(probeId)
+        /* 无真实样本时仅内存模拟展示，不落盘，避免占满 5min 桶导致真帧被拒 */
+        val forAgg = if (samples.isEmpty()) {
+            buildSimulatedSamples(probeId, fallbackBaseRateUsvH, dayCount)
+        } else {
+            samples
         }
-        return aggregateDaily(samples, dayCount)
+        return aggregateDaily(forAgg, dayCount)
     }
 
     private fun loadSamples(probeId: String): List<ProbeDoseSample> {
@@ -46,7 +49,7 @@ class ProbeDoseHistoryRepository(context: Context) {
                 add(
                     ProbeDoseSample(
                         probeId = probeId,
-                        doseRateUsvH = o.optDouble("d", 0.0),
+                        doseUsv = o.optDouble("d", 0.0),
                         recordedAtMillis = o.optLong("t", 0L),
                     ),
                 )
@@ -62,7 +65,7 @@ class ProbeDoseHistoryRepository(context: Context) {
             arr.put(
                 JSONObject().apply {
                     put("t", sample.recordedAtMillis)
-                    put("d", sample.doseRateUsvH)
+                    put("d", sample.doseUsv)
                 },
             )
         }
@@ -79,7 +82,7 @@ class ProbeDoseHistoryRepository(context: Context) {
                 cal.add(Calendar.DAY_OF_MONTH, -i)
                 val dateText = dateFmt.format(cal.time)
                 val daySamples = grouped[dateText].orEmpty()
-                val accum = daySamples.sumOf { it.doseRateUsvH * (SAMPLE_INTERVAL_MINUTES / 60.0) }
+                val accum = daySamples.sumOf { it.doseUsv }
                 add(
                     DailyDoseSummary(
                         dateText = dateText,
@@ -95,6 +98,7 @@ class ProbeDoseHistoryRepository(context: Context) {
         baseRateUsvH: Double,
         dayCount: Int,
     ): List<ProbeDoseSample> {
+        /* 无真实 5min 帧时：用剂量率估算每窗累计 μSv ≈ rate × 5/60 */
         val rate = if (baseRateUsvH <= 0.0) 0.08 else baseRateUsvH
         val end = System.currentTimeMillis()
         val start = end - TimeUnit.DAYS.toMillis(dayCount.toLong())
@@ -103,8 +107,8 @@ class ProbeDoseHistoryRepository(context: Context) {
         var index = 0
         while (cursor <= end) {
             val drift = 0.95 - (index % 48) * 0.003
-            val value = (rate * drift).coerceAtLeast(0.02)
-            samples += ProbeDoseSample(probeId, value, cursor)
+            val doseUsv = (rate * (SAMPLE_INTERVAL_MINUTES / 60.0) * drift).coerceAtLeast(0.001)
+            samples += ProbeDoseSample(probeId, doseUsv, cursor)
             cursor += SAMPLE_INTERVAL_MS
             index++
         }
@@ -112,14 +116,24 @@ class ProbeDoseHistoryRepository(context: Context) {
     }
 
     private fun alignToFiveMinuteBucket(millis: Long): Long {
-        val bucket = TimeUnit.MINUTES.toMillis(SAMPLE_INTERVAL_MINUTES.toLong())
-        return millis - (millis % bucket)
+        return millis - (millis % SAMPLE_INTERVAL_MS)
     }
 
     companion object {
         private const val PREFS_NAME = "probe_dose_history"
-        private const val KEY_SAMPLES = "samples_v1"
+        /** v2：不再把模拟样本写入 prefs；旧 v1 若已污染可清应用数据或换 key */
+        private const val KEY_SAMPLES = "samples_v2"
+        /**
+         * 与固件 DOSE_5MIN_TEST_FAST 对齐：
+         * true → 5 秒一窗（联调）；false → 正式 5 分钟。量产务必改 false。
+         */
+        private const val DOSE_5MIN_TEST_FAST = false
         private const val SAMPLE_INTERVAL_MINUTES = 5
-        private val SAMPLE_INTERVAL_MS = TimeUnit.MINUTES.toMillis(SAMPLE_INTERVAL_MINUTES.toLong())
+        private val SAMPLE_INTERVAL_MS =
+            if (DOSE_5MIN_TEST_FAST) {
+                TimeUnit.SECONDS.toMillis(5)
+            } else {
+                TimeUnit.MINUTES.toMillis(SAMPLE_INTERVAL_MINUTES.toLong())
+            }
     }
 }

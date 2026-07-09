@@ -22,6 +22,23 @@
 #define RATE_LIMIT              10000.0f     // 剂量率上限 1.00 mSv/h = 1000 uSv/h
 #define DOSE_LIMIT              99999999.0f // 剂量值上限 99.99 Sv  = 99990000 uSv
 
+/* 5 分钟剂量账本：10×30s 块累加 → D5（μSv）；与 reg1 EWMA 剂量率分离
+ * DOSE_5MIN_TEST_FAST=1：测试加速（1s 块 / 5s 上报），量产务必改回 0 */
+#ifndef DOSE_5MIN_TEST_FAST
+#define DOSE_5MIN_TEST_FAST         0
+#endif
+#if DOSE_5MIN_TEST_FAST
+#define DOSE_BLOCK_SEC              1U
+#define DOSE_REPORT_INTERVAL_SEC    5U
+/* 5s 本底窗太小，×100 会整段变 0；测试用 ×10000（0.0001μSv） */
+#define DOSE_5MIN_PROTOCOL_SCALE    10000.0f
+#else
+#define DOSE_BLOCK_SEC              30U
+#define DOSE_REPORT_INTERVAL_SEC    300U
+#define DOSE_5MIN_PROTOCOL_SCALE    100.0f
+#endif
+#define DOSE_BLOCK_30S_MS           (DOSE_BLOCK_SEC * 1000U)
+#define DOSE_REPORT_5MIN_MS         (DOSE_REPORT_INTERVAL_SEC * 1000U)
 
 /*-----------数据采集相关-----------*/
 typedef struct 
@@ -90,8 +107,8 @@ typedef struct Data_Var
     // float day_top_rate;         // 当日最高剂量率                 单位：uSv/h、mSv/h、Sv/h
     
     // float main_dose;            // 开机后至关机累计的剂量值        单位：uSv、mSv、Sv（主界面的DOSE值）
-    float dose_five_min;             // 5分钟累计剂量值                  单位：uSv、mSv、Sv
-    float dose_thirty_sec;           // 30秒累计剂量值                   单位：uSv、mSv、Sv
+    float dose_5min_acc;             // 当前 5min 窗累计剂量（μSv），由 10×D30 相加
+    float dose_30s_acc;              // 当前 30s 窗累计剂量（μSv）
 
     // 数据变量（不保存）
     float real_rate;            // 实时剂量率                     单位：uSv/h、mSv/h、Sv/h

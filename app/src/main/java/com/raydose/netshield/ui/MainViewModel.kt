@@ -48,6 +48,7 @@ import com.raydose.netshield.model.buildDoseUpperWriteFrame
 import com.raydose.netshield.model.buildVolumeWriteFrame
 import com.raydose.netshield.model.buildTimeSyncWriteFrame
 import com.raydose.netshield.model.PROBE_AUTO_SYNC_STARTUP_DELAY_MS
+import com.raydose.netshield.model.PROBE_TIME_SYNC_ON_5MIN_SKEW_MS
 import com.raydose.netshield.model.hostTimeInvalidForProbeSyncHint
 import com.raydose.netshield.model.isHostTimeValidForProbeSync
 import com.raydose.netshield.model.shouldAutoSyncProbeTime
@@ -80,8 +81,6 @@ import java.util.Calendar
 import java.util.Date
 import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.atomic.AtomicLong
-
 data class ProbeSettingsUiState(
     val selectedTab: SettingsTab = SettingsTab.DisplaySound,
     val selectedProbeIndex: Int = 0,
@@ -117,8 +116,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val lastCommittedUpperX100 = ConcurrentHashMap<String, Long>()
     private val lastCommittedLowerX100 = ConcurrentHashMap<String, Long>()
     private val discoveredMap = ConcurrentHashMap<String, DiscoveredDevice>()
-    /** 组播日志序号，避免 Logcat chatty 折叠相同行 */
-    private val multicastLogSeq = AtomicLong(0L)
+    // private val multicastLogSeq = AtomicLong(0L) // 组播每秒日志已注释
     private var nextAlertLogId = 1L
 
     private val sensorOfflineLogAggregator = ProbeSensorOfflineLogAggregator(
@@ -1063,11 +1061,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
         val device = DiscoveredDevice.fromBroadcast(broadcast)
-        Log.i(
-            ProbeConnectionManager.TAG,
-            "组播收到 #${multicastLogSeq.incrementAndGet()} ${device.model} ${device.ip} " +
-                "serial=${device.serial} id=${device.protoAddr}",
-        )
+        // 每秒组播刷屏，调试时再打开
+        // Log.i(
+        //     ProbeConnectionManager.TAG,
+        //     "组播收到 #${multicastLogSeq.incrementAndGet()} ${device.model} ${device.ip} " +
+        //         "serial=${device.serial} id=${device.protoAddr}",
+        // )
         discoveredMap[device.stableId] = device
         val matchedProbeId = _savedProbes.value
             .firstOrNull { matchesSaved(it, device) && it.ip.isNotBlank() }
@@ -1093,7 +1092,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
         val isRealtimeUpload =
             frame.func == 0x23 && frame.uploadValues != null && frame.uploadValues.size >= 8
-        if (isRealtimeUpload) {
+        val isFiveMinUpload = frame.func == 0x23 && frame.fiveMinUpload != null
+        if (isRealtimeUpload || isFiveMinUpload) {
             upsertSerialDiscoveryFromRealtime(frame.addr)
             val probeId = findSavedProbeIdByModbusAddr(frame.addr) ?: return
             applyTelemetryFromFrame(probeId, frame, ProbeCommandLink.SERIAL)
@@ -1178,15 +1178,24 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         ) {
             linkRouter.recordRx23(probeId, rxLink)
         }
+        if (rxLink != null && frame.func == 0x23 && frame.fiveMinUpload != null) {
+            linkRouter.recordRx23(probeId, rxLink)
+        }
+
+        frame.fiveMinUpload?.let { fiveMin ->
+            val deviceMillis = fiveMin.toEpochMillis()
+            Log.i(
+                ProbeConnectionManager.TAG,
+                "5min RX probe=$probeId D5=${"%.6f".format(fiveMin.doseUsv)}uSv " +
+                    "raw=${fiveMin.doseRaw} t=${fiveMin.timeString} deviceMs=$deviceMillis",
+            )
+            doseHistoryRepository.recordSampleIfDue(probeId, fiveMin.doseUsv, deviceMillis)
+            maybeSyncProbeTimeOnFiveMinSkew(probeId, deviceMillis)
+        }
+
         _liveTelemetry.update { map ->
             val prev = map[probeId] ?: LiveProbeTelemetry()
             val next = prev.applyParsedFrame(frame)
-            frame.uploadValues
-                ?.takeIf { it.size >= 8 && isPlausibleRealtimeDoseX100(it[0]) }
-                ?.let { values ->
-                    val dose = values[0] / 100.0
-                    doseHistoryRepository.recordSampleIfDue(probeId, dose)
-                }
             map + (probeId to next)
         }
         if (_showSettings.value) {
@@ -1207,6 +1216,21 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 nowMillis = System.currentTimeMillis(),
             )
         }
+    }
+
+    /** 5min 帧设备时间与主机偏差过大时立即写 reg94（不受 6h 自动同步间隔限制）。 */
+    private fun maybeSyncProbeTimeOnFiveMinSkew(probeId: String, deviceMillis: Long) {
+        val now = System.currentTimeMillis()
+        if (!isHostTimeValidForProbeSync(now)) return
+        val skew = kotlin.math.abs(deviceMillis - now)
+        if (skew <= PROBE_TIME_SYNC_ON_5MIN_SKEW_MS) return
+        val probe = _savedProbes.value.find { it.id == probeId } ?: return
+        if (linkRouter.routeFor(probeId) == null) return
+        connectionManager.sendFrames(probeId, listOf(probe.buildTimeSyncWriteFrame()))
+        Log.i(
+            ProbeConnectionManager.TAG,
+            "5min 时差同步 ${probe.displayName} skewMs=$skew > ${PROBE_TIME_SYNC_ON_5MIN_SKEW_MS}",
+        )
     }
 
     /**

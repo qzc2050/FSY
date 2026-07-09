@@ -1,9 +1,9 @@
 package com.raydose.netshield.model
 
-/** 本地持久化的 5 分钟剂量采样点（后续由 0x23 实时数据写入）。 */
+/** 本地持久化的 5 分钟累计剂量采样点（μSv，非剂量率）。 */
 data class ProbeDoseSample(
     val probeId: String,
-    val doseRateUsvH: Double,
+    val doseUsv: Double,
     val recordedAtMillis: Long,
 )
 

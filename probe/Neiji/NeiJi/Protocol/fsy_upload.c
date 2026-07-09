@@ -138,3 +138,48 @@ int Fsy_Upload_SendSerial(int (*write_fn)(const uint8_t *data, uint16_t len))
 
     return write_fn(frame, (uint16_t)frame_len);
 }
+
+#define FSY_5MIN_UPLOAD_PAYLOAD_BYTES  12U
+#define FSY_5MIN_UPLOAD_FRAME_LEN      (5U + FSY_5MIN_UPLOAD_PAYLOAD_BYTES + 2U)
+
+int Fsy_Upload_Build5MinFrame(uint8_t *frame, uint16_t frame_cap,
+                              const uint8_t dt8[8], uint32_t dose_x100)
+{
+    if ((frame == NULL) || (dt8 == NULL)) {
+        return -1;
+    }
+    if (frame_cap < FSY_5MIN_UPLOAD_FRAME_LEN) {
+        return -1;
+    }
+
+    frame[0] = Fsy_Dispatch_GetDeviceAddr();
+    frame[1] = FSY_FC_ACTIVE_UPLOAD;
+    frame[2] = (uint8_t)FSY_5MIN_UPLOAD_PAYLOAD_BYTES;
+    store_u16_le(&frame[3], FSY_REG_DATA_TIME_5MIN);
+    memcpy(&frame[5], dt8, 8U);
+    frame[13] = (uint8_t)(dose_x100 & 0xFFU);
+    frame[14] = (uint8_t)((dose_x100 >> 8) & 0xFFU);
+    frame[15] = (uint8_t)((dose_x100 >> 16) & 0xFFU);
+    frame[16] = (uint8_t)((dose_x100 >> 24) & 0xFFU);
+
+    Fsy_AppendCrc(frame, (uint16_t)(5U + FSY_5MIN_UPLOAD_PAYLOAD_BYTES));
+    return (int)FSY_5MIN_UPLOAD_FRAME_LEN;
+}
+
+int Fsy_Upload_Send5Min(const uint8_t dt8[8], uint32_t dose_x100,
+                        int (*write_fn)(const uint8_t *data, uint16_t len))
+{
+    uint8_t frame[FSY_5MIN_UPLOAD_FRAME_LEN];
+    int frame_len;
+
+    if (write_fn == NULL) {
+        return -1;
+    }
+
+    frame_len = Fsy_Upload_Build5MinFrame(frame, sizeof(frame), dt8, dose_x100);
+    if (frame_len <= 0) {
+        return -1;
+    }
+
+    return write_fn(frame, (uint16_t)frame_len);
+}

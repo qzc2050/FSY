@@ -10,6 +10,9 @@ const val PROBE_TIME_SYNC_MIN_DAY = 8
 /** 第一版：同一探头两次自动同步最小间隔 */
 val PROBE_AUTO_SYNC_INTERVAL_MS = TimeUnit.HOURS.toMillis(6)
 
+/** 收到 5min 帧时，|设备时间−主机| 超过该阈值则立即写 reg94 */
+val PROBE_TIME_SYNC_ON_5MIN_SKEW_MS = TimeUnit.MINUTES.toMillis(5)
+
 /** 短暂断线重连后暂不再次自动同步 */
 val PROBE_AUTO_SYNC_RECONNECT_DEBOUNCE_MS = TimeUnit.MINUTES.toMillis(15)
 

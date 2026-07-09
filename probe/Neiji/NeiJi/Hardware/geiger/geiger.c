@@ -3,9 +3,11 @@
 #include "tim.h"
 #include "main.h"
 #include "fsy_regmap.h"
-#include "dose_rate.h"
+#include "fsy_upload.h"
+#include "fsy_link.h"
 #include "alarm_output.h"
 #include "device_config.h"
+#include "pcf85063.h"
 
 #define Dev_Tk_Wait(ms, tk_var)  ((uint32_t)((HAL_GetTick() - (tk_var)) >= (ms)))
 #define Dev_Tk_Init(tk_ptr)      do { *(tk_ptr) = HAL_GetTick(); } while (0)
@@ -68,8 +70,82 @@ static int geiger_local_flash_busy(void)
     return 0;
 }
 
+/********************************************************************************************
+* 函数名：Geiger_Dose_On30SecondTick
+* 描  述：30s 边界：D30 并入 5min 窗，清零 30s 累计
+********************************************************************************************/
+static void Geiger_Dose_On30SecondTick(void)
+{
+    float d30 = data_var.dose_30s_acc;
+
+    data_var.dose_5min_acc += d30;
+    data_var.dose_30s_acc = 0.0f;
+}
+
+/********************************************************************************************
+* 函数名：Geiger_Dose_On5MinuteTick
+* 描  述：5min 边界：得到 D5，写 reg30~35 并 0x23 上传
+********************************************************************************************/
+static void Geiger_Dose_On5MinuteTick(void)
+{
+    float d5 = data_var.dose_5min_acc;
+    Pcf85063_DateTime_t dt;
+    uint8_t dt8[8];
+    uint32_t dose_x100;
+    int rtc_ok;
+
+    data_var.dose_5min_acc = 0.0f;
+
+    rtc_ok = (Pcf85063_GetTime(&dt) == 0) && (dt.online != 0U);
+    if (!rtc_ok) {
+        return;
+    }
+
+    dt8[0] = (uint8_t)(dt.year % 100U);
+    dt8[1] = dt.month;
+    dt8[2] = dt.day;
+    dt8[3] = dt.hour;
+    dt8[4] = dt.minute;
+    dt8[5] = dt.second;
+    dt8[6] = 0U;
+    dt8[7] = 0U;
+
+    if (d5 < 0.0f) {
+        d5 = 0.0f;
+    }
+    dose_x100 = (uint32_t)(d5 * DOSE_5MIN_PROTOCOL_SCALE + 0.5f);
+#if DOSE_5MIN_TEST_FAST
+    if ((dose_x100 == 0U) && (d5 > 0.0f)) {
+        dose_x100 = 1U;
+    }
+#endif
+
+    Fsy_Regmap_Sync5MinSnapshot(dt8, dose_x100);
+    (void)Fsy_Upload_Send5Min(dt8, dose_x100, Fsy_Link_WriteUpload);
+}
+
+/********************************************************************************************
+* 函数名：Geiger_Dose_Periodic_Save
+* 描  述：30s / 5min 定时边界；先处理 30s 再 5min，保证末块 D30 先并入
+********************************************************************************************/
 static void Geiger_Dose_Periodic_Save(void)
 {
+    static uint32_t block_30s_tk = 0;
+    static uint32_t block_5min_tk = 0;
+
+    if (geiger_local_flash_busy()) {
+        return;
+    }
+
+    if (Dev_Tk_Wait(DOSE_BLOCK_30S_MS, block_30s_tk)) {
+        Dev_Tk_Init(&block_30s_tk);
+        Geiger_Dose_On30SecondTick();
+    }
+
+    if (Dev_Tk_Wait(DOSE_REPORT_5MIN_MS, block_5min_tk)) {
+        Dev_Tk_Init(&block_5min_tk);
+        Geiger_Dose_On5MinuteTick();
+    }
 }
 
 /********************************************************************************************
@@ -149,17 +225,21 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 
 /********************************************************************************************
 * 函数名：Geiger_Dose_Calculate
-* 描述  ：累计剂量值
-* 输入  : 无
+* 描述  ：按本秒原始 CPS 积分到当前 30s 窗（μSv）；不用 EWMA real_rate
+* 输入  ：cps_1s — 本秒盖革计数（与 DoseRate_UpdateFromCps 同源）
 ********************************************************************************************/
-void Geiger_Dose_Calculate(void)
+static void Geiger_Dose_Calculate(uint32_t cps_1s)
 {
     float single_dose_val;
-    
-    //此次剂量累计值
-    single_dose_val = ((float)data_var.geiger_crt_cnt / (sys_cfg.sensitivity * 60));
-    data_var.dose_five_min += single_dose_val;    // 5分钟累计剂量值累计
-    data_var.dose_thirty_sec += single_dose_val;  // 30秒累计剂量值累计
+    float sens = sys_cfg.sensitivity;
+
+    if (sens <= 0.0f) {
+        return;
+    }
+
+    /* μSv/s = (cps×60/sens)/3600 = cps/(sens×60) */
+    single_dose_val = ((float)cps_1s / (sens * 60.0f));
+    data_var.dose_30s_acc += single_dose_val;
 }
 
 /********************************************************************************************
@@ -183,14 +263,16 @@ void Geiger_Doserate_Calculate(void)
 
     if(Dev_Tk_Wait(100, sample_tk))
     {
+        uint32_t delta;
+
         Dev_Tk_Init(&sample_tk);
-        
-        data_var.geiger_crt_cnt += (65536 * data_var.over_num + TIM2->CNT - ago_cnt);
-        ago_cnt = TIM2->CNT;        // 记录这次读取完的计数器计数
-        data_var.over_num = 0;      // 清空计时器溢出次数
-        
-        // 累加到 once_cnt（真实模式下使用）
-        once_cnt += data_var.geiger_crt_cnt;
+
+        delta = (65536U * data_var.over_num + TIM2->CNT - ago_cnt);
+        ago_cnt = TIM2->CNT;
+        data_var.over_num = 0;
+
+        data_var.geiger_crt_cnt += delta;
+        once_cnt += delta;  /* 只加本 100ms 增量；勿 += geiger_crt_cnt（会三角放大） */
     }
 
     // data_var.geiger_crt_cnt = 2;
@@ -217,6 +299,9 @@ void Geiger_Doserate_Calculate(void)
         // 使用 EWMA 算法更新剂量率，输入为 CPS（每秒计数）
         data_var.real_rate = DoseRate_UpdateFromCps(once_cnt);
         Alarm_Output_NotifyCps(once_cnt);
+
+        /* 5min 账本：用本秒原始 CPS 积分（与 EWMA 显示分离） */
+        Geiger_Dose_Calculate(once_cnt);
         
         // 超过量程限制
         if(data_var.real_rate > DoseRate_GetRateLimitUsvh())
@@ -226,10 +311,7 @@ void Geiger_Doserate_Calculate(void)
         once_cnt = 0;
         data_var.geiger_crt_cnt = 0;
     }
-    
-    Geiger_Dose_Calculate();
 
-    // printf("Geiger cnt: %u", crt_cnt);
     Geiger_Dose_Periodic_Save();
 }
 

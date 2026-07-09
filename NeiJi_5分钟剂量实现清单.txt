@@ -1,0 +1,242 @@
+================================================================================
+NeiJi 5 分钟剂量实现清单
+语义：reg34 = 5 分钟累计剂量 D5（μSv×100），由 10 个 30 秒块 D30 相加
+reg1 仍为 1s 瞬时剂量率（μSv/h×100），与 5min 账本分离
+================================================================================
+
+【Phase 1 范围 — 当前要做】
+
+  reg30~34：设备每 5 分钟上传的「当前这一窗」实时五分钟值（非历史补拉）
+    - 0x23 start=0x001E，12B = data_time[8] + D5(μSv×100)
+    - 0x03 读 reg30~35 = 最近一次 5min 快照（与最后一帧 0x23 一致）
+    - App 收到后按设备时间入库，日累计 = Σ 当天 D5
+
+  时间同步（App → 设备 reg94）：
+    - 收到 5min 0x23（或读到 reg94）时，若 |设备时间 − App 时间| > 5 分钟
+      → 立即写 reg94 同步（不等 6h 周期）
+    - 样本时间戳一律用帧内 data_time，不用手机收到时刻
+
+  Phase 1 不做：
+    - 文档现有 reg108~112 历史区间查询（下一步另定寄存器，重新设计）
+    - 主机向设备「拉历史五分钟」的协议与 UI
+
+【Phase 2 — 下一步】
+
+  - 历史五分钟值：重新定寄存器（不复用现表 108~112 亦可）
+  - 设备 Flash 288 条环（12/h×24h）及历史上传状态机
+  - App 历史补拉 / 断网补数据
+
+================================================================================
+
+【目标数据流 — Phase 1】
+
+  盖革 100ms 计数增量
+       ↓ 积分（本底/死时间/灵敏度，与 Geiger_Dose_Calculate 一致）
+  dose_30s_acc（μSv）
+       ↓ 每 30s 边界
+  D30 → 累加到 dose_5min_acc；dose_30s_acc = 0
+       ↓ 每 5min 边界（建议对齐 RTC :00/:05/:10…）
+  D5 = dose_5min_acc
+       ├→ reg30~34 镜像（实时快照）
+       └→ 0x23 主动上传（start=0x001E，12 字节）
+  dose_5min_acc = 0
+
+  App：收到 0x23(0x001E)
+       → 用 data_time 作 recordedAt
+       → 若 |设备−App|>5min 则 reg94 对时
+       → 存 D5(μSv) → 日累计 = Σ 当天 D5
+
+================================================================================
+一、NeiJi 固件 — 盖革 / 定时（probe/Neiji/NeiJi/Hardware/geiger/）
+================================================================================
+
+[x] 1.1 常量与状态结构（geiger.h）
+      - DOSE_BLOCK_SEC / DOSE_REPORT_INTERVAL_SEC / DOSE_*_MS
+      - dose_30s_acc / dose_5min_acc（已替换 dose_thirty_sec / dose_five_min）
+      - 定时器为 Periodic_Save 内 static（block_30s_tk / block_5min_tk）
+
+[x] 1.2 Geiger_Dose_Calculate（geiger.c）
+      - 仅向 dose_30s_acc += single_dose_val
+      - 改为每秒调用一次，输入本秒 CPS（与 DoseRate_UpdateFromCps 同源）
+      - 修复原「每 10ms 用未清零 geiger_crt_cnt 重复累加」问题
+
+[x] 1.3 新增 Geiger_Dose_On30SecondTick(void)
+      - D30 → dose_5min_acc；清 dose_30s_acc；串口日志
+
+[x] 1.4 新增 Geiger_Dose_On5MinuteTick(void)
+      - 读 RTC；打 D5 日志；RTC 无效则标记 skip
+      - Step1 不写 reg / 不发 0x23（留 Step2）
+      - Phase 1 不写 Flash
+
+[x] 1.5 实现 Geiger_Dose_Periodic_Save
+      - 30s → On30SecondTick；5min → On5MinuteTick（先 30s 后 5min）
+
+[ ] 1.6 5min 边界对齐（推荐，可后续）
+      - 首次启动：等到 minute % 5 == 0 且 second == 0 再开始第一个完整 5min 窗
+      - 30s 边界：second % 30 == 0（或与 5min 窗内 0/30s 对齐）
+      - 文档备注：首条 5min 可能不足 5 分钟（可选丢弃或标记）
+
+[x] 1.7 单位约定
+      - 内部积分：float μSv；协议 ×100 留给 Step2
+
+[x] 1.8 不要用 real_rate / EWMA 积分 5min（仅 reg1 显示用）
+
+================================================================================
+二、NeiJi 固件 — 外部 Flash 历史（Phase 2，本阶段跳过）
+================================================================================
+
+  说明：Phase 1 仅实时 reg30 上传 + App 本地存盘；设备 Flash 与历史补拉下一步做，
+        且历史相关寄存器将重新定址（不复用现文档 reg108~112 亦可）。
+
+【Flash 容量规格（Phase 2 预留）— 一天 24h】
+
+  12 条/h × 24h = 288 条；288×8B=2304B；DATA_5_MIN_MAX_RECORDS=288
+
+[ ] 2.1~2.4 全部挪到 Phase 2（hist_record、288 环、reg108 历史泵等）
+
+================================================================================
+三、NeiJi 固件 — 协议 / regmap（probe/Neiji/NeiJi/Protocol/）
+================================================================================
+
+[x] 3.1 fsy_regmap.h 增加定义
+      #define FSY_REG_DATA_TIME_5MIN      30U
+      #define FSY_REG_DOSE_5MIN           34U
+      Sync5MinSnapshot + s_5min_snapshot
+
+[x] 3.2 0x03 读 holding
+      - reg30~35：最近一次实时 5min 快照（时间 + D5×100）
+
+[x] 3.3 0x23 主动上传
+      - Fsy_Upload_Build5MinFrame / Send5Min；start=0x001E，12B
+
+[x] 3.4 5min 上传调度
+      - On5MinuteTick：rtc_ok → Sync + Fsy_Link_WriteUpload
+
+[ ] 3.5 Phase 2：历史五分钟 + 新寄存器定义（待定）
+
+================================================================================
+四、NeiJi 固件 — 任务集成
+================================================================================
+
+[ ] 4.1 geiger_task.c：Geiger_Doserate_Calculate 已调 Periodic_Save，确认周期足够
+
+[ ] 4.2 app_tasks.c：Phase 1 无需 HistRecord_Init
+
+[ ] 4.3 RTC 依赖：5min 时间戳以 Pcf85063 为准；RTC 离线则本窗不上传 reg30/0x23
+
+[ ] 4.4 仿真/手动 CPS 模式：5min 积分仍走计数路径，行为与真实模式一致
+
+================================================================================
+五、App（app/src/main/java/com/raydose/netshield/）
+================================================================================
+
+[x] 5.1 FsyTcpProtocol.kt — FiveMinUpload → doseUsv / uSv
+[x] 5.2 tryParseFiveMinUpload 文案
+[x] 5.3 ProbeDoseSample.doseUsv
+[x] 5.4 日累计 Σ doseUsv
+[x] 5.5 MainViewModel：fiveMin 入库；停用 reg1 插历史；|Δt|>5min → reg94
+[x] 5.6 PROBE_TIME_SYNC_ON_5MIN_SKEW_MS
+[x] 5.7 串口路径也处理 fiveMinUpload
+[ ] 5.8 UI 文案确认（联调时看）
+[ ] 5.9 Phase 2：历史补拉
+
+================================================================================
+六、协议文档（辐射报警仪协议命令和寄存器表10.xlsx）
+================================================================================
+
+[ ] 6.1 寄存器表 reg30~34
+      - reg30~33：本窗结束时刻 data_time（实时五分钟值，非历史索引）
+      - reg34~35：uint32，本窗累计剂量 D5 μSv×100
+
+[ ] 6.2 命令流程 0x23 五分钟
+      - start=0x001E，byteCount=0x0C
+      - 载荷：8B 时间 + D5(μSv×100)；每 5min 主动上传一帧
+
+[ ] 6.3 与 reg1 区分备注
+      - reg1：1s 瞬时剂量率 μSv/h
+      - reg34：刚结束的 5min 窗累计剂量 μSv
+
+[ ] 6.4 reg108~112：标注废弃或 Phase 2 重定（历史五分钟另议）
+
+[ ] 6.5 时间同步备注
+      - App 若与 reg30 时间差 >5min，写 reg94 对时
+
+================================================================================
+七、tools / 联调（probe/Neiji/NeiJi/tools/）
+================================================================================
+
+[ ] 7.1 fsy_protocol.py
+      - 常量 REG_DATA_TIME_5MIN=30, REG_DOSE_5MIN=34
+      - 解析 0x23 0x001E 12B 为 (time, dose_usv)
+
+[ ] 7.2 fsy_serial_gui / 日志
+      - 收到 5min 0x23 时打印时间与 μSv（非 uSv/h）
+
+================================================================================
+八、测试用例
+================================================================================
+
+[ ] 8.1 单元（固件）
+      - D30×10 累加 = D5（浮点误差 < 0.01 μSv）
+      - dose_30s_acc 每 30s 清零
+      - dose_5min_acc 每 5min 清零
+
+[ ] 8.2 恒定 CPS
+      - 已知 CPS + sensitivity，预期 D5 ≈ CPS×300/(sens×60) μSv（与公式推导一致）
+
+[ ] 8.3 协议
+      - Wireshark/串口：0x23 reg=0x001E，12 字节，CRC 正确
+      - 0x03 读 reg30~35 与最后一帧 0x23 一致
+
+[ ] 8.4 App 时间
+      - 设备时间比 App 快 6min → 收到 5min 后应触发 reg94
+      - 设备时间比 App 慢 6min → 同上
+      - 偏差 2min → 不触发（<5min 阈值）
+
+[ ] 8.5 App 日累计
+      - 收到 3 条 5min（各 0.10 μSv，设备日期同一天）→ 日累计 0.30 μSv
+      - 不再从 reg1 实时率插值
+
+[ ] 8.6 边界
+      - RTC 未设置：不上传 reg30/0x23，积分可继续
+
+[ ] 8.7 Phase 2：Flash 288 环、历史寄存器（另测）
+
+================================================================================
+九、建议实施顺序（Phase 1）
+================================================================================
+
+  Step 1  geiger：30s/5min 定时 + dose_30s_acc / dose_5min_acc
+  Step 2  fsy_upload + reg30~34：0x23(0x001E) 实时 5min 12 字节
+  Step 3  App：fiveMinUpload → 设备时间入库 → 日累计；|Δt|>5min → reg94
+  Step 4  联调 + 文档 reg30~34 备注
+  Step 5  Phase 2：Flash + 历史五分钟 + 新寄存器
+
+================================================================================
+十、不在本需求内（避免 scope 膨胀）
+================================================================================
+
+  - Phase 1 不做 Flash 落盘、reg108~112 历史查询（下一步重定寄存器）
+  - 不改变 reg1 EWMA 算法
+  - 不改变 zjb 转接板 5min（若无盖革）
+  - 不修改 RAD-I 旧固件
+  - reg34 不使用 uSv/mSv/Sv 高 2 位单位编码
+
+================================================================================
+文件路径索引
+================================================================================
+
+  probe/Neiji/NeiJi/Hardware/geiger/geiger.c
+  probe/Neiji/NeiJi/Hardware/geiger/geiger.h
+  probe/Neiji/NeiJi/Hardware/storage/ext_flash_layout.h
+  probe/Neiji/NeiJi/Protocol/fsy_regmap.h / fsy_regmap.c
+  probe/Neiji/NeiJi/Protocol/fsy_upload.c
+  probe/Neiji/NeiJi/App/geiger_task.c
+  app/.../net/FsyTcpProtocol.kt
+  app/.../data/ProbeDoseHistoryRepository.kt
+  app/.../ui/MainViewModel.kt
+  参考：probe/RAD-I/HARDWARE/GEIGER/geiger.c（Geiger_Dose_Periodic_Save）
+  参考：probe/RAD-I/HARDWARE/DATA_MANAGER/hist_record_app.c
+  参考：probe/RAD-I/dev_protocol/net_raw/net_raw_app.c（5min 0x23 + 历史）
+
+================================================================================

@@ -14,6 +14,8 @@ static uint32_t s_rt_regs[FSY_RT_REG_COUNT];
 static uint32_t s_alarm_status;
 static uint32_t s_geiger_sec_cps;
 static uint8_t s_time_write_buf[8];
+/* reg30~35：8B data_time + 4B dose_x100（小端） */
+static uint8_t s_5min_snapshot[12];
 
 static const char *cfg_software_version_text(void)
 {
@@ -70,6 +72,33 @@ void Fsy_Regmap_Init(void)
     };
 
     memcpy(s_rt_regs, template, sizeof(template));
+    memset(s_5min_snapshot, 0, sizeof(s_5min_snapshot));
+}
+
+void Fsy_Regmap_Sync5MinSnapshot(const uint8_t dt8[8], uint32_t dose_x100)
+{
+    if (dt8 == NULL) {
+        return;
+    }
+    memcpy(s_5min_snapshot, dt8, 8U);
+    store_u32_le(&s_5min_snapshot[8], dose_x100);
+}
+
+static int read_5min_snapshot_reg(uint16_t reg, uint8_t *out, uint16_t out_cap)
+{
+    uint16_t off;
+
+    if (out_cap < 2U) {
+        return -1;
+    }
+    if (!reg_in_range(reg, FSY_REG_DATA_TIME_5MIN, FSY_REG_5MIN_SNAPSHOT_REGS)) {
+        return -1;
+    }
+
+    off = (uint16_t)((reg - FSY_REG_DATA_TIME_5MIN) * 2U);
+    store_u16_le(out, (uint16_t)s_5min_snapshot[off] |
+                      ((uint16_t)s_5min_snapshot[off + 1U] << 8));
+    return 2;
 }
 
 int Fsy_Regmap_ReadU32(uint16_t reg_addr, uint32_t *value)
@@ -298,6 +327,13 @@ int Fsy_Regmap_ReadBlock(uint16_t start_reg, uint16_t reg_count,
         if (Fsy_Regmap_ReadU32(reg, &val) == 0) {
             store_u16_le(&out[(uint16_t)(i * 2U)], (uint16_t)(val & 0xFFFFU));
             continue;
+        }
+
+        if (reg_in_range(reg, FSY_REG_DATA_TIME_5MIN, FSY_REG_5MIN_SNAPSHOT_REGS)) {
+            if (read_5min_snapshot_reg(reg, &out[(uint16_t)(i * 2U)],
+                                       (uint16_t)(byte_count - (i * 2U))) == 2) {
+                continue;
+            }
         }
 
         if (reg_in_range(reg, FSY_REG_GEIGER_SEC_CPS, FSY_REG_GEIGER_SEC_CPS_REGS)) {

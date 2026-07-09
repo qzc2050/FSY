@@ -4,6 +4,8 @@ import com.raydose.netshield.model.NeijiProbeRegs
 import java.util.Calendar
 import kotlin.math.min
 
+/** 0x23 start=0x001E：刚结束的 5min 窗累计剂量（非剂量率）。
+ * 正式：μSv×100；测试加速 DOSE_5MIN_TEST_FAST：μSv×10000。 */
 data class FiveMinUpload(
     val year: Int,
     val month: Int,
@@ -11,11 +13,32 @@ data class FiveMinUpload(
     val hour: Int,
     val minute: Int,
     val second: Int,
-    val doseRateX100: Long,
+    val doseRaw: Long,
 ) {
-    val doseRateUsvH: Double get() = doseRateX100 / 100.0
+    val doseUsv: Double
+        get() = doseRaw / DOSE_5MIN_PROTOCOL_SCALE
+
     val timeString: String get() = "20%02d-%02d-%02d %02d:%02d:%02d".format(year, month, day, hour, minute, second)
-    fun displayLine(): String = "$timeString  ${"%.2f".format(doseRateUsvH)} uSv/h"
+    fun displayLine(): String = "$timeString  ${"%.6f".format(doseUsv)} uSv"
+
+    /** 设备帧内时间 → epoch ms（本地时区，年=2000+yy） */
+    fun toEpochMillis(): Long {
+        val cal = Calendar.getInstance()
+        cal.set(Calendar.YEAR, 2000 + year)
+        cal.set(Calendar.MONTH, (month - 1).coerceIn(0, 11))
+        cal.set(Calendar.DAY_OF_MONTH, day.coerceIn(1, 31))
+        cal.set(Calendar.HOUR_OF_DAY, hour.coerceIn(0, 23))
+        cal.set(Calendar.MINUTE, minute.coerceIn(0, 59))
+        cal.set(Calendar.SECOND, second.coerceIn(0, 59))
+        cal.set(Calendar.MILLISECOND, 0)
+        return cal.timeInMillis
+    }
+
+    companion object {
+        /** 与固件 DOSE_5MIN_TEST_FAST / DOSE_5MIN_PROTOCOL_SCALE 对齐 */
+        const val DOSE_5MIN_TEST_FAST = false
+        val DOSE_5MIN_PROTOCOL_SCALE: Double = if (DOSE_5MIN_TEST_FAST) 10000.0 else 100.0
+    }
 }
 
 data class DeviceTimeInfo(
@@ -308,7 +331,7 @@ private fun parseUpload23(frame: ByteArray, addr: Int, crcOk: Boolean): ParsedFs
     return ParsedFsyFrame(addr, 0x23, crcOk, summary)
 }
 
-/** 五分钟值：主动上传与历史应答均为 reg=0x001E(表地址30)；payload=8 字节时间 + u32 辐射×100 */
+/** 五分钟累计：reg=0x001E；payload=8 字节时间 + u32 D5(μSv×100) */
 private fun tryParseFiveMinUpload(
     frame: ByteArray,
     startReg: Int,
@@ -326,7 +349,7 @@ private fun tryParseFiveMinUpload(
     val second = frame[10].toUByte().toInt()
     val doseX100 = u32le(frame, 13)
     val fiveMin = FiveMinUpload(year, month, day, hour, minute, second, doseX100)
-    val summary = "0x23 五分钟值: 时间=${fiveMin.timeString} 辐射量=${"%.2f".format(fiveMin.doseRateUsvH)} uSv/h"
+    val summary = "0x23 五分钟值: 时间=${fiveMin.timeString} D5=${"%.6f".format(fiveMin.doseUsv)} uSv raw=${fiveMin.doseRaw}"
     return ParsedFsyFrame(addr, 0x23, crcOk, summary, null, fiveMin)
 }
 

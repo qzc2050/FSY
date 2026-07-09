@@ -25,7 +25,7 @@ typedef struct {
 typedef struct {
     float current_avg_cps;
     float current_dose_rate;
-    int last_raw_cps;
+    float last_raw_cps;   /* 本底/死时间后有效 CPS（可含小数） */
     int boost_timer;
     int threshold_cps;
     int threshold_delta;

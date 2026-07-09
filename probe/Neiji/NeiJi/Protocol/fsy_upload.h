@@ -37,4 +37,11 @@ int Fsy_Upload_SendSerial(int (*write_fn)(const uint8_t *data, uint16_t len));
 /** 0x23 / SN 上报启动前延迟（ms），由 dev_addr 与 FSY_UPLOAD_PHASE_SLOTS 决定 */
 uint32_t Fsy_Upload_PhaseOffsetMs(void);
 
+/** 0x23 五分钟实时窗：start=0x001E，12B = data_time[8] + D5×100 */
+int Fsy_Upload_Build5MinFrame(uint8_t *frame, uint16_t frame_cap,
+                              const uint8_t dt8[8], uint32_t dose_x100);
+
+int Fsy_Upload_Send5Min(const uint8_t dt8[8], uint32_t dose_x100,
+                        int (*write_fn)(const uint8_t *data, uint16_t len));
+
 #endif

@@ -1,5 +1,5 @@
 #include "dose_rate.h"
-#include <stdlib.h>
+#include <stddef.h>
 
 static EwmaGlobalConfig s_ewma_config;
 static float s_sensitivity_cpm_per_usvh = GEIGER_DEFAULT_SENSITIVITY_CPM;
@@ -10,45 +10,43 @@ static float s_rate_limit_usvh = 10000.0f;
 static uint32_t s_background_cpm = GEIGER_DEFAULT_BACKGROUND_CPM;
 static uint32_t s_dead_time_us_x100 = GEIGER_DEFAULT_DEAD_TIME_US_X100;
 
-static uint32_t dose_rate_correct_dead_time(uint32_t raw_cps)
+static float dose_rate_correct_dead_time(float raw_cps)
 {
     float tau_s;
     float denom;
     float corrected;
 
-    if ((s_dead_time_us_x100 == 0U) || (raw_cps == 0U)) {
+    if ((s_dead_time_us_x100 == 0U) || (raw_cps <= 0.0f)) {
         return raw_cps;
     }
 
     tau_s = ((float)s_dead_time_us_x100 / 100.0f) / 1000000.0f;
-    denom = 1.0f - ((float)raw_cps * tau_s);
+    denom = 1.0f - (raw_cps * tau_s);
     if (denom <= 0.0f) {
         return raw_cps;
     }
 
-    corrected = (float)raw_cps / denom;
+    corrected = raw_cps / denom;
     if (corrected < 0.0f) {
-        return 0U;
+        return 0.0f;
     }
-    if (corrected > 4294967295.0f) {
-        return UINT32_MAX;
-    }
-    return (uint32_t)(corrected + 0.5f);
+    return corrected;
 }
 
-static uint32_t dose_rate_effective_cps(uint32_t raw_cps)
+/* 本底扣除后保留小数 CPS；勿截成 uint，否则本底附近会整段变 0 */
+static float dose_rate_effective_cps(uint32_t raw_cps)
 {
     float bg_cps;
     float eff;
 
-    raw_cps = dose_rate_correct_dead_time(raw_cps);
+    eff = dose_rate_correct_dead_time((float)raw_cps);
     bg_cps = (float)s_background_cpm / 60.0f;
-    eff = (float)raw_cps - bg_cps;
+    eff -= bg_cps;
 
     if (eff <= 0.0f) {
-        return 0U;
+        return 0.0f;
     }
-    return (uint32_t)eff;
+    return eff;
 }
 
 static void init_ewma_config(void)
@@ -72,19 +70,19 @@ static void ewma_init(GeigerEWMA *ctx)
 {
     ctx->current_avg_cps = 0.0f;
     ctx->current_dose_rate = 0.0f;
-    ctx->last_raw_cps = 0;
+    ctx->last_raw_cps = 0.0f;
     ctx->boost_timer = 0;
     ctx->is_initialized = false;
     ewma_apply_config(ctx);
 }
 
-static void ewma_update(GeigerEWMA *ctx, int new_cps)
+static void ewma_update(GeigerEWMA *ctx, float new_cps)
 {
-    int diff;
+    float diff;
     float alpha;
 
     if (!ctx->is_initialized) {
-        ctx->current_avg_cps = (float)new_cps;
+        ctx->current_avg_cps = new_cps;
         ctx->last_raw_cps = new_cps;
         ctx->is_initialized = true;
 
@@ -97,22 +95,23 @@ static void ewma_update(GeigerEWMA *ctx, int new_cps)
         return;
     }
 
-    diff = abs(new_cps - ctx->last_raw_cps);
-    if (diff > ctx->threshold_delta) {
+    diff = (new_cps > ctx->last_raw_cps) ?
+           (new_cps - ctx->last_raw_cps) : (ctx->last_raw_cps - new_cps);
+    if (diff > (float)ctx->threshold_delta) {
         ctx->boost_timer = s_ewma_config.boost_duration;
     }
 
     if (ctx->boost_timer > 0) {
         alpha = ctx->alpha_high;
         ctx->boost_timer--;
-    } else if (new_cps > ctx->threshold_cps) {
+    } else if (new_cps > (float)ctx->threshold_cps) {
         alpha = ctx->alpha_high;
     } else {
         alpha = ctx->alpha_low;
     }
 
     ctx->current_avg_cps =
-        alpha * (float)new_cps + (1.0f - alpha) * ctx->current_avg_cps;
+        alpha * new_cps + (1.0f - alpha) * ctx->current_avg_cps;
     ctx->last_raw_cps = new_cps;
 
     if (s_sensitivity_cpm_per_usvh > 0.0f) {
@@ -136,9 +135,9 @@ void DoseRate_ResetFilter(void)
 
 float DoseRate_UpdateFromCps(uint32_t cps)
 {
-    uint32_t eff = dose_rate_effective_cps(cps);
+    float eff = dose_rate_effective_cps(cps);
 
-    ewma_update(&s_sensor, (int)eff);
+    ewma_update(&s_sensor, eff);
     return s_sensor.current_dose_rate;
 }
 
@@ -149,10 +148,10 @@ float DoseRate_GetCurrent(void)
 
 uint32_t DoseRate_GetLastRawCps(void)
 {
-    if (s_sensor.last_raw_cps < 0) {
+    if (s_sensor.last_raw_cps <= 0.0f) {
         return 0U;
     }
-    return (uint32_t)s_sensor.last_raw_cps;
+    return (uint32_t)(s_sensor.last_raw_cps + 0.5f);
 }
 
 float DoseRate_GetAvgCps(void)
