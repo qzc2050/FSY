@@ -30,6 +30,13 @@ class HostEnvSerialRepository(
     private var pollThread: Thread? = null
     @Volatile
     private var running = false
+    @Volatile
+    private var adapterResponseListener: ((ParsedFsyFrame) -> Unit)? = null
+
+    /** OTA / 读版本等：订阅转接板地址 0xEF 的非环境上传应答帧。 */
+    fun setAdapterResponseListener(listener: ((ParsedFsyFrame) -> Unit)?) {
+        adapterResponseListener = listener
+    }
 
     fun start() {
         if (running) return
@@ -105,6 +112,7 @@ class HostEnvSerialRepository(
                 continue
             }
             if (parsed.addr == deviceAddr) {
+                adapterResponseListener?.invoke(parsed)
                 when (parsed.func) {
                     0x23 -> parsed.uploadValues?.let(::applyUploadValues)
                     0x13 -> parsed.uploadValues?.let(::applyUploadValues)

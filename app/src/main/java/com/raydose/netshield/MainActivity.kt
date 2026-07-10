@@ -83,6 +83,7 @@ class MainActivity : ComponentActivity() {
                 val settingsState by viewModel.settingsUiState.collectAsState()
                 val showSettings by viewModel.settingsVisible.collectAsState()
                 val systemTimeHint by viewModel.systemTimeHint.collectAsState()
+                val zjbHardwareVersion by viewModel.zjbHardwareVersion.collectAsState()
                 var showMusic by rememberSaveable { mutableStateOf(false) }
                 var showAlbum by rememberSaveable { mutableStateOf(false) }
                 var showFiles by rememberSaveable { mutableStateOf(false) }
@@ -243,6 +244,7 @@ class MainActivity : ComponentActivity() {
                         },
                     )
                 } else if (showSettings) {
+                    val aboutInfo = remember(zjbHardwareVersion) { viewModel.aboutDeviceInfo() }
                     SettingsScreen(
                         selectedTab = settingsState.selectedTab,
                         manageDrafts = settingsState.manageDrafts,
@@ -324,6 +326,9 @@ class MainActivity : ComponentActivity() {
                         usbGrantEpoch = usbGrantEpoch,
                         onRequestUsbAccess = { usbTreeLauncher.launch(null) },
                         onInstallApk = installSelectedApk,
+                        onUpgradeZjbFirmware = { bytes, onProgress ->
+                            viewModel.upgradeZjbFirmware(bytes, onProgress)
+                        },
                     )
                 } else if (showMusic) {
                     MusicScreen(
@@ -389,6 +394,7 @@ class MainActivity : ComponentActivity() {
                             detailProbeId = probeId
                             showProbeDetail = true
                         },
+                        onHomeProbeSelected = viewModel::selectHomeProbe,
                         onMessageBarClick = { },
                         onAddMessage = { text ->
                             val newMessage = AlbumMessage(

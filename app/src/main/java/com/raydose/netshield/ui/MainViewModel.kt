@@ -17,6 +17,8 @@ import com.raydose.netshield.data.ProbeLinkRouter
 import com.raydose.netshield.data.ProbeDoseHistoryRepository
 import com.raydose.netshield.data.ProbeDoseAlarmLogAggregator
 import com.raydose.netshield.data.ProbeSensorOfflineLogAggregator
+import com.raydose.netshield.data.ZjbOtaClient
+import com.raydose.netshield.data.ZjbOtaProgress
 import com.raydose.netshield.model.DisplaySoundSettings
 import com.raydose.netshield.model.PAUSE_ALARM_DURATION_MS
 import com.raydose.netshield.model.HostNetworkSettings
@@ -115,6 +117,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val hostEnvSerialRepository = HostEnvSerialRepository(
         onProbeFrame = ::onProbeSerialFrame,
     )
+    private val zjbOtaClient = ZjbOtaClient(hostEnvSerialRepository)
+    private val _zjbHardwareVersion = MutableStateFlow<String?>(null)
+    val zjbHardwareVersion: StateFlow<String?> = _zjbHardwareVersion.asStateFlow()
     private var windowBrightnessApplier: ((Float) -> Unit)? = null
     private var pauseAlarmExpiryJob: Job? = null
     private val upperThresholdDebounceJobs = ConcurrentHashMap<Int, Job>()
@@ -167,6 +172,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _nowMillis = MutableStateFlow(System.currentTimeMillis())
     private val _timeDisplaySettings = MutableStateFlow(hostSettingsRepository.loadTimeSettings())
     private val _uiFlags = MutableStateFlow(HomeUiFlags())
+    /** 首页上次停留的探头（离开设置/侧栏再回来时恢复，不持久化到磁盘） */
+    private val _homeSelectedProbeId = MutableStateFlow<String?>(null)
     private val _settings = MutableStateFlow(ProbeSettingsUiState())
     private val _hostNetwork = MutableStateFlow(hostSettingsRepository.loadHostNetwork())
     private val _hostConnectivity = MutableStateFlow(detectHostConnectivity(application))
@@ -211,7 +218,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         ) { flags, logs, hostNetwork, hostAdapter, connectivity ->
             HomePanelInputs(flags, logs, hostNetwork, hostAdapter, connectivity)
         },
-    ) { clockInputs, panel ->
+        _homeSelectedProbeId,
+    ) { clockInputs, panel, homeSelectedProbeId ->
         buildHomeState(
             clockInputs.saved,
             clockInputs.live,
@@ -222,6 +230,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             panel.hostNetwork,
             panel.hostAdapter,
             panel.connectivity,
+            homeSelectedProbeId,
         )
     }.stateIn(
         viewModelScope,
@@ -236,6 +245,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             _hostNetwork.value,
             hostEnvSerialRepository.snapshot.value,
             _hostConnectivity.value,
+            _homeSelectedProbeId.value,
         ),
     )
 
@@ -309,8 +319,23 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             SettingsTab.DisplaySound -> syncDisplaySoundLevelsFromSystem()
             SettingsTab.Probes -> syncProbeCardAt(_settings.value.selectedProbeIndex)
             SettingsTab.Network -> refreshNetworkSettingsPanel()
+            SettingsTab.About -> refreshZjbHardwareVersion()
             else -> Unit
         }
+    }
+
+    fun refreshZjbHardwareVersion() {
+        viewModelScope.launch(Dispatchers.IO) {
+            val version = runCatching { zjbOtaClient.readFirmwareVersion() }.getOrNull()
+            _zjbHardwareVersion.value = version?.trim()?.takeIf { it.isNotEmpty() }
+        }
+    }
+
+    suspend fun upgradeZjbFirmware(
+        fileBytes: ByteArray,
+        onProgress: (ZjbOtaProgress) -> Unit,
+    ): Result<Unit> = withContext(Dispatchers.IO) {
+        zjbOtaClient.upgrade(fileBytes, onProgress)
     }
 
     fun updateDisplaySound(settings: DisplaySoundSettings) {
@@ -741,7 +766,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             hostModel = model,
             serialNumber = serial,
             softwareVersion = version,
-            hardwareVersion = "v1.0.0",
+            hardwareVersion = _zjbHardwareVersion.value?.takeIf { it.isNotBlank() } ?: "—",
         )
     }
 
@@ -778,6 +803,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val clamped = index.coerceIn(0, _settings.value.manageDrafts.lastIndex.coerceAtLeast(0))
         _settings.update { it.copy(selectedProbeIndex = clamped) }
         syncProbeCardAt(clamped)
+    }
+
+    /** 首页 Pager 停留页对应的探头，离开再回来时恢复到该探头所在页 */
+    fun selectHomeProbe(probeId: String) {
+        if (probeId.isBlank() || probeId == "placeholder") return
+        if (_homeSelectedProbeId.value == probeId) return
+        _homeSelectedProbeId.value = probeId
     }
 
     /** 进入设置页或切换探头卡片时：从遥测合并一次并主动读 reg50/52/82/122/123；停留期间 0x23 不刷新阈值/使能表单 */
@@ -1667,6 +1699,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         hostNetwork: HostNetworkSettings,
         hostAdapter: HostAdapterSnapshot,
         connectivity: HostConnectivityStatus,
+        homeSelectedProbeId: String? = null,
     ): HomeUiState {
         val clock = HomeClockFormatter.format(java.util.Date(nowMillis), timeDisplay)
         val probes: List<SlaveProbeUi> = if (saved.isEmpty()) {
@@ -1683,6 +1716,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 probe.toSlaveProbeUi(live[probe.id])
             }
         }
+        val selectedProbeIndex = homeSelectedProbeId
+            ?.let { id -> probes.indexOfFirst { it.id == id } }
+            ?.takeIf { it >= 0 }
+            ?: 0
         return HomeUiState(
             dateText = clock.first,
             timeText = clock.second,
@@ -1693,6 +1730,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 defaultHostEnvPlaceholders()
             },
             slaveProbes = probes,
+            selectedProbeIndex = selectedProbeIndex,
             doorState = resolveDoorState(hostAdapter, live),
             alertLogs = filterAlertLogs24h(logs, nowMillis),
             messages = emptyList(),

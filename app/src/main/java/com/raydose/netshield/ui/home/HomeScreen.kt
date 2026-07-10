@@ -29,6 +29,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -67,7 +68,9 @@ import com.raydose.netshield.ui.components.rememberStatusBarPanelState
 import com.raydose.netshield.ui.theme.ScreenSpec
 import com.raydose.netshield.ui.theme.NetShieldTextPrimary
 import com.raydose.netshield.ui.theme.NetShieldTextSecondary
-import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.mapNotNull
+
 object HomePreviewData {
     fun sampleOffline(): HomeUiState = HomeUiState(
         dateText = "2026年05月29日  农历四月十三",
@@ -130,6 +133,7 @@ fun HomeScreen(
     onSideDrawerDestination: (SideDrawerDestination) -> Unit,
     onStatusBarDismiss: () -> Unit,
     onProbeDetailClick: (String) -> Unit,
+    onHomeProbeSelected: (String) -> Unit = {},
     onMessageBarClick: () -> Unit,
     onAddMessage: (String) -> Unit,
     modifier: Modifier = Modifier,
@@ -146,8 +150,26 @@ fun HomeScreen(
     val probesPerPage = pagerConfig.probesPerPage
     val probePageCount = pagerConfig.pageCount
     val autoScroll = pagerConfig.autoScroll
-    val displayListKey = probePagerKey
-    val pagerState = rememberPagerState(pageCount = { probePageCount.coerceAtLeast(1) })
+    val targetPage = remember(
+        state.selectedProbeIndex,
+        probesPerPage,
+        pagerConfig.alarmPriorityActive,
+        probePageCount,
+        displayProbes.map { it.id },
+    ) {
+        resolveHomeTargetPage(
+            selectedProbeIndex = state.selectedProbeIndex,
+            slaveProbes = state.slaveProbes,
+            displayProbes = displayProbes,
+            probesPerPage = probesPerPage,
+            pageCount = probePageCount,
+            alarmPriorityActive = pagerConfig.alarmPriorityActive,
+        )
+    }
+    val pagerState = rememberPagerState(
+        initialPage = targetPage,
+        pageCount = { probePageCount.coerceAtLeast(1) },
+    )
     val drawerPanelState = rememberSideDrawerPanelState()
     val statusBarPanelState = rememberStatusBarPanelState()
     val density = LocalDensity.current
@@ -166,23 +188,25 @@ fun HomeScreen(
         if (!state.statusBarExpanded) statusBarPanelState.reset()
     }
 
-    LaunchedEffect(displayListKey) {
-        if (pagerState.currentPage != 0) {
-            pagerState.scrollToPage(0)
+    LaunchedEffect(targetPage, probePageCount) {
+        if (displayProbes.isEmpty()) return@LaunchedEffect
+        if (pagerState.currentPage != targetPage) {
+            pagerState.scrollToPage(targetPage)
         }
     }
 
-    LaunchedEffect(state.selectedProbeIndex, probesPerPage, pagerConfig.alarmPriorityActive) {
-        if (displayProbes.isEmpty()) return@LaunchedEffect
-        val targetPage = if (pagerConfig.alarmPriorityActive) {
-            val probe = state.slaveProbes.getOrNull(state.selectedProbeIndex) ?: return@LaunchedEffect
-            displayProbes.indexOfFirst { it.id == probe.id }.takeIf { it >= 0 } ?: 0
-        } else {
-            (state.selectedProbeIndex / probesPerPage).coerceIn(0, probePageCount - 1)
-        }
-        if (pagerState.currentPage != targetPage) {
-            pagerState.animateScrollToPage(targetPage)
-        }
+    LaunchedEffect(pagerState, displayProbes, probesPerPage) {
+        snapshotFlow { pagerState.currentPage }
+            .distinctUntilChanged()
+            .mapNotNull { page ->
+                homeProbeGridSlots(
+                    probes = displayProbes,
+                    page = page,
+                    visiblePerPage = probesPerPage,
+                ).firstOrNull { it != null }?.id
+            }
+            .distinctUntilChanged()
+            .collect { probeId -> onHomeProbeSelected(probeId) }
     }
 
     ProbePagerAutoScroll(
@@ -498,4 +522,26 @@ private fun sampleAlertLogs(): List<SystemAlertLog> = listOf(
     SystemAlertLog(7, "2025-10-08 13:05:40", "Detector 2 已连接", AlertLogKind.Connected),
     SystemAlertLog(8, "2025-10-08 13:04:12", "本机网络已连接", AlertLogKind.Info),
 )
+
+private fun resolveHomeTargetPage(
+    selectedProbeIndex: Int,
+    slaveProbes: List<SlaveProbeUi>,
+    displayProbes: List<SlaveProbeUi>,
+    probesPerPage: Int,
+    pageCount: Int,
+    alarmPriorityActive: Boolean,
+): Int {
+    if (displayProbes.isEmpty() || pageCount <= 0) return 0
+    val raw = if (alarmPriorityActive) {
+        val probe = slaveProbes.getOrNull(selectedProbeIndex)
+        if (probe == null) {
+            0
+        } else {
+            displayProbes.indexOfFirst { it.id == probe.id }.takeIf { it >= 0 } ?: 0
+        }
+    } else {
+        selectedProbeIndex / probesPerPage.coerceAtLeast(1)
+    }
+    return raw.coerceIn(0, pageCount - 1)
+}
 

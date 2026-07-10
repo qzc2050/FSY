@@ -674,9 +674,42 @@ class FileManagerRepository(context: Context) {
         staged
     }
 
+    /** 读取所选 ZJB 固件 bin（本地或 U 盘）。调用方应已通过 [ZjbFirmwareRules] 校验。 */
+    fun readFirmwareBin(location: FileStorageLocation, path: String): Result<ByteArray> = runCatching {
+        require(path.isNotBlank()) { ZjbFirmwareRules.REJECT_MESSAGE }
+        when (location) {
+            FileStorageLocation.Local -> {
+                val source = requireLocalFile(path)
+                require(source.isFile) { ZjbFirmwareRules.REJECT_MESSAGE }
+                require(ZjbFirmwareRules.isValidSelection(source.name, source.length())) {
+                    ZjbFirmwareRules.REJECT_MESSAGE
+                }
+                source.readBytes()
+            }
+            FileStorageLocation.Usb -> {
+                val stagingDir = firmwareStagingDir()
+                stagingDir.listFiles()?.forEach(::deleteRecursively)
+                val file = if (isRootUsbPath(path)) {
+                    copyRootUsbEntryToLocal(path, stagingDir)
+                } else {
+                    copyUsbEntryToLocal(requireUsbDocument(path), stagingDir)
+                }
+                require(file.isFile && ZjbFirmwareRules.isValidSelection(file.name, file.length())) {
+                    ZjbFirmwareRules.REJECT_MESSAGE
+                }
+                file.readBytes()
+            }
+        }
+    }
+
     /** 外部私有目录优先，便于 FileProvider 被系统安装器读取。 */
     private fun apkStagingDir(): File {
         val base = appContext.getExternalFilesDir(null) ?: appContext.filesDir
         return File(base, "apk_update").apply { mkdirs() }
+    }
+
+    private fun firmwareStagingDir(): File {
+        val base = appContext.getExternalFilesDir(null) ?: appContext.filesDir
+        return File(base, "zjb_firmware").apply { mkdirs() }
     }
 }

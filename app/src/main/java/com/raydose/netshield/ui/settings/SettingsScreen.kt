@@ -87,6 +87,7 @@ fun SettingsScreen(
     usbGrantEpoch: Int,
     onRequestUsbAccess: () -> Unit,
     onInstallApk: (java.io.File) -> Result<Unit>,
+    onUpgradeZjbFirmware: suspend (ByteArray, (com.raydose.netshield.data.ZjbOtaProgress) -> Unit) -> Result<Unit>,
 ) {
     Box(modifier = Modifier.fillMaxSize()) {
         BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
@@ -187,6 +188,7 @@ fun SettingsScreen(
                                     usbGrantEpoch = usbGrantEpoch,
                                     onRequestUsbAccess = onRequestUsbAccess,
                                     onInstallApk = onInstallApk,
+                                    onUpgradeZjbFirmware = onUpgradeZjbFirmware,
                                     modifier = Modifier.weight(1f),
                                 )
                             }
