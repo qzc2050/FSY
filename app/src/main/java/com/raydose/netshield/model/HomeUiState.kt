@@ -50,4 +50,8 @@ data class HomeUiState(
     val messages: List<MessageItem> = emptyList(),
     val statusBarExpanded: Boolean = false,
     val sideDrawerOpen: Boolean = false,
+    /** 转接板 QCC3084 USB 蓝牙音频在线 */
+    val bluetoothOnline: Boolean = false,
+    /** 本机 eth* 有线网卡已有 IPv4 */
+    val ethernetOnline: Boolean = false,
 )

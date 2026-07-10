@@ -102,6 +102,8 @@ fun HomeThumbnailContent(
                     ConnectivityStatusIconsRow(
                         showPullIndicator = false,
                         iconSize = 20.dp,
+                        bluetoothOnline = state.bluetoothOnline,
+                        ethernetOnline = state.ethernetOnline,
                     )
                 }
             }

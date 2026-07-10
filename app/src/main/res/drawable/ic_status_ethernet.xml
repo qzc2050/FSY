@@ -1,10 +1,21 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- Windows 托盘风格有线网络：左网线插头 + 右显示器 -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="24dp"
     android:height="24dp"
     android:viewportWidth="24"
     android:viewportHeight="24">
+    <!-- 右侧显示器 -->
     <path
         android:fillColor="#FFFFFF"
-        android:pathData="M7.77,6.76L6.23,5.48 0.82,12l3.41,6.52L6.23,19.48l1.54,-1.28L8.5,19V6.08l-0.73,0.68zM7,22h10v-2H7v2zM7,18h10v-2H7v2zM7,14h10v-2H7v2zM7,10h10V6H7v4zM3,4h2v2H3V4z" />
+        android:fillType="evenOdd"
+        android:pathData="M10,4h11c0.55,0 1,0.45 1,1v9c0,0.55 -0.45,1 -1,1h-4.5v1.5h1.5V18h-5v-1.5h1.5V15H10c-0.55,0 -1,-0.45 -1,-1V5c0,-0.55 0.45,-1 1,-1zM11,6v7h9V6h-9z" />
+    <!-- 左侧网线插头 -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M2,7.5h3.5c0.83,0 1.5,0.67 1.5,1.5v2.5c0,0.83 -0.67,1.5 -1.5,1.5H4v1.2c0,0.44 -0.36,0.8 -0.8,0.8h-0.4c-0.44,0 -0.8,-0.36 -0.8,-0.8V13H2c-0.55,0 -1,-0.45 -1,-1V8.5c0,-0.55 0.45,-1 1,-1z" />
+    <!-- 连接线 -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M2.6,14.5h1.3V17c0,0.83 0.67,1.5 1.5,1.5H10v1.4H5.4c-1.6,0 -2.9,-1.3 -2.9,-2.9v-2.5z" />
 </vector>

@@ -64,6 +64,14 @@ fun SettingsScreen(
     onPreviewStandby: () -> Unit,
     onCommitHostNetwork: (HostNetworkSettings) -> Unit,
     onCommitSlaveNetwork: (Int, SlaveNetworkCard) -> Unit,
+    onFetchHostWifi: (
+        (success: Boolean, message: String, wifiName: String?, wifiPassword: String?) -> Unit
+    ) -> Unit = {},
+    onFetchSlaveWifi: (
+        deviceId: Int,
+        slaveIp: String,
+        onDone: (success: Boolean, message: String, wifiName: String?, wifiPassword: String?) -> Unit,
+    ) -> Unit = { _, _, onDone -> onDone(false, "未实现从机获取", null, null) },
     onTimeSettingsChange: (TimeSettings) -> Unit,
     onSyncTimeToDevice: () -> Unit,
     onAddClick: () -> Unit,
@@ -147,6 +155,8 @@ fun SettingsScreen(
                                     slaves = slaveNetworkCards,
                                     onSaveHost = onCommitHostNetwork,
                                     onSaveSlave = onCommitSlaveNetwork,
+                                    onFetchHostWifi = onFetchHostWifi,
+                                    onFetchSlaveWifi = onFetchSlaveWifi,
                                     modifier = Modifier.weight(1f),
                                 )
                                 SettingsTab.Time -> TimeSettingsPanel(

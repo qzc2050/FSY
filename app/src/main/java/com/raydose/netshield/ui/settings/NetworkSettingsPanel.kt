@@ -29,6 +29,14 @@ fun NetworkSettingsPanel(
     slaves: List<SlaveNetworkCard>,
     onSaveHost: (HostNetworkSettings) -> Unit,
     onSaveSlave: (Int, SlaveNetworkCard) -> Unit,
+    onFetchHostWifi: (
+        (success: Boolean, message: String, wifiName: String?, wifiPassword: String?) -> Unit
+    ) -> Unit = {},
+    onFetchSlaveWifi: (
+        deviceId: Int,
+        slaveIp: String,
+        onDone: (success: Boolean, message: String, wifiName: String?, wifiPassword: String?) -> Unit,
+    ) -> Unit = { _, _, onDone -> onDone(false, "未实现从机获取", null, null) },
     modifier: Modifier = Modifier,
 ) {
     var showEditDialog by remember { mutableStateOf(false) }
@@ -152,6 +160,8 @@ fun NetworkSettingsPanel(
             onDismiss = { showEditDialog = false },
             onSaveHost = onSaveHost,
             onSaveSlave = onSaveSlave,
+            onFetchHostWifi = onFetchHostWifi,
+            onFetchSlaveWifi = onFetchSlaveWifi,
         )
     }
 }

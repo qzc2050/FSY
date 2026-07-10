@@ -299,6 +299,10 @@ class MainActivity : ComponentActivity() {
                         },
                         onCommitHostNetwork = viewModel::commitHostNetwork,
                         onCommitSlaveNetwork = viewModel::commitSlaveNetwork,
+                        onFetchHostWifi = viewModel::fetchHostWifiFromGateway,
+                        onFetchSlaveWifi = { deviceId, slaveIp, onDone ->
+                            viewModel.fetchSlaveWifiFromGateway(deviceId, slaveIp, onDone)
+                        },
                         onTimeSettingsChange = viewModel::updateTimeSettings,
                         onSyncTimeToDevice = viewModel::syncTimeToDevice,
                         onAddClick = viewModel::showAddProbeDialog,

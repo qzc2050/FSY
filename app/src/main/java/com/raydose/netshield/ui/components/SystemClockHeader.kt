@@ -66,11 +66,18 @@ fun HostEnvTicker(
 }
 
 @Composable
-fun StatusIconsRow(modifier: Modifier = Modifier) {
+fun StatusIconsRow(
+    modifier: Modifier = Modifier,
+    bluetoothOnline: Boolean = false,
+    ethernetOnline: Boolean = false,
+) {
     Row(
         modifier = modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.End,
     ) {
-        ConnectivityStatusIconsRow()
+        ConnectivityStatusIconsRow(
+            bluetoothOnline = bluetoothOnline,
+            ethernetOnline = ethernetOnline,
+        )
     }
 }

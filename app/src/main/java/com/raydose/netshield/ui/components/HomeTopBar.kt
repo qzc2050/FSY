@@ -18,6 +18,8 @@ import com.raydose.netshield.ui.theme.ScreenSpec
 @Composable
 fun HomeTopBar(
     systemName: String,
+    bluetoothOnline: Boolean = false,
+    ethernetOnline: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
     Box(
@@ -34,6 +36,8 @@ fun HomeTopBar(
         )
         ConnectivityStatusIconsRow(
             modifier = Modifier.align(Alignment.CenterEnd),
+            bluetoothOnline = bluetoothOnline,
+            ethernetOnline = ethernetOnline,
             showPullIndicator = false,
         )
     }

@@ -27,6 +27,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import com.raydose.netshield.model.HostNetworkSettings
 import com.raydose.netshield.model.SlaveNetworkCard
+import com.raydose.netshield.ui.theme.NetShieldAccentBlue
 import com.raydose.netshield.ui.theme.NetShieldTextPrimary
 import com.raydose.netshield.ui.theme.NetShieldTextSecondary
 
@@ -49,6 +50,14 @@ fun NetworkEditDialog(
     onDismiss: () -> Unit,
     onSaveHost: (HostNetworkSettings) -> Unit,
     onSaveSlave: (Int, SlaveNetworkCard) -> Unit,
+    onFetchHostWifi: (
+        (success: Boolean, message: String, wifiName: String?, wifiPassword: String?) -> Unit
+    ) -> Unit = {},
+    onFetchSlaveWifi: (
+        deviceId: Int,
+        slaveIp: String,
+        onDone: (success: Boolean, message: String, wifiName: String?, wifiPassword: String?) -> Unit,
+    ) -> Unit = { _, _, onDone -> onDone(false, "未实现从机获取", null, null) },
 ) {
     val initialIndex = when (initialTarget) {
         NetworkEditTarget.Host -> 0
@@ -57,6 +66,8 @@ fun NetworkEditDialog(
     var selectedIndex by remember { mutableIntStateOf(initialIndex.coerceIn(0, slaves.size)) }
     var draftHost by remember { mutableStateOf(host) }
     var draftSlaves by remember { mutableStateOf(slaves) }
+    var fetchingWifi by remember { mutableStateOf(false) }
+    var fetchHint by remember { mutableStateOf<String?>(null) }
 
     val targetLabels = buildList {
         add("主机")
@@ -123,6 +134,10 @@ fun NetworkEditDialog(
                         value = draftHost.hostDisplayName,
                         onValueChange = { draftHost = draftHost.copy(hostDisplayName = it) },
                     )
+                    NetworkDialogReadOnlyRow(
+                        label = "IP 地址",
+                        value = draftHost.ipAddress.ifBlank { "—" },
+                    )
                     NetworkDialogTextRow(
                         label = "WiFi 名称",
                         value = draftHost.wifiName,
@@ -134,6 +149,42 @@ fun NetworkEditDialog(
                         onValueChange = { draftHost = draftHost.copy(wifiPassword = it) },
                         isPassword = true,
                     )
+                    NetworkDialogLabeledRow(label = "从网关获取") {
+                        SettingsInlineActionButton(
+                            text = if (fetchingWifi) "获取中…" else "获取",
+                            onClick = {
+                                if (fetchingWifi) return@SettingsInlineActionButton
+                                fetchingWifi = true
+                                fetchHint = null
+                                onFetchHostWifi { success, message, wifiName, wifiPassword ->
+                                    fetchingWifi = false
+                                    fetchHint = message
+                                    if (success && !wifiName.isNullOrBlank()) {
+                                        draftHost = draftHost.copy(
+                                            wifiName = wifiName,
+                                            wifiPassword = wifiPassword.orEmpty(),
+                                        )
+                                    }
+                                }
+                            },
+                            filled = true,
+                            modifier = Modifier.padding(end = 8.dp),
+                        )
+                        Text(
+                            text = "按主机 IP 访问同网段 .1",
+                            color = NetShieldTextSecondary,
+                            fontSize = 15.sp,
+                            modifier = Modifier.weight(1f),
+                        )
+                    }
+                    if (fetchHint != null) {
+                        Text(
+                            text = fetchHint.orEmpty(),
+                            color = NetShieldAccentBlue,
+                            fontSize = 15.sp,
+                            modifier = Modifier.padding(start = NetworkLabelWidth),
+                        )
+                    }
                     NetworkDialogTextRow(
                         label = "蓝牙名称",
                         value = draftHost.bluetoothName,
@@ -143,6 +194,7 @@ fun NetworkEditDialog(
                     val slaveIndex = selectedIndex - 1
                     val slave = draftSlaves.getOrNull(slaveIndex)
                     if (slave != null) {
+                        val slaveDeviceId = slave.protoAddr.trim().toIntOrNull()
                         NetworkDialogReadOnlyRow(label = "设备 ID", value = slave.protoAddr)
                         NetworkDialogReadOnlyRow(label = "IP 地址", value = slave.ip)
                         NetworkDialogTextRow(
@@ -164,6 +216,54 @@ fun NetworkEditDialog(
                             },
                             isPassword = true,
                         )
+                        NetworkDialogLabeledRow(label = "从网关获取") {
+                            SettingsInlineActionButton(
+                                text = if (fetchingWifi) "获取中…" else "获取",
+                                onClick = {
+                                    if (fetchingWifi) return@SettingsInlineActionButton
+                                    if (slaveDeviceId == null || slaveDeviceId !in 1..253) {
+                                        fetchHint = "从机设备 ID 无效：${slave.protoAddr}"
+                                        return@SettingsInlineActionButton
+                                    }
+                                    fetchingWifi = true
+                                    fetchHint = null
+                                    onFetchSlaveWifi(slaveDeviceId, slave.ip) {
+                                            success, message, wifiName, wifiPassword ->
+                                        fetchingWifi = false
+                                        fetchHint = message
+                                        if (success && !wifiName.isNullOrBlank()) {
+                                            draftSlaves = draftSlaves.toMutableList().also { list ->
+                                                val current = list.getOrNull(slaveIndex) ?: return@also
+                                                list[slaveIndex] = current.copy(
+                                                    wifiName = wifiName,
+                                                    wifiPassword = wifiPassword.orEmpty(),
+                                                )
+                                            }
+                                        }
+                                    }
+                                },
+                                filled = true,
+                                modifier = Modifier.padding(end = 8.dp),
+                            )
+                            Text(
+                                text = if (slaveDeviceId != null && slaveDeviceId in 1..253) {
+                                    "设备ID$slaveDeviceId → 同网段 .${slaveDeviceId + 1}"
+                                } else {
+                                    "需有效设备 ID（1～253）"
+                                },
+                                color = NetShieldTextSecondary,
+                                fontSize = 15.sp,
+                                modifier = Modifier.weight(1f),
+                            )
+                        }
+                        if (fetchHint != null) {
+                            Text(
+                                text = fetchHint.orEmpty(),
+                                color = NetShieldAccentBlue,
+                                fontSize = 15.sp,
+                                modifier = Modifier.padding(start = NetworkLabelWidth),
+                            )
+                        }
                     }
                 }
             }

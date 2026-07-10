@@ -24,6 +24,9 @@ import com.raydose.netshield.model.isHostAlarmSuppressed
 import com.raydose.netshield.model.withExpiredPauseCleared
 import com.raydose.netshield.model.SlaveNetworkCard
 import com.raydose.netshield.model.TimeSettings
+import com.raydose.netshield.net.Hlk7688WifiClient
+import com.raydose.netshield.net.HostConnectivityStatus
+import com.raydose.netshield.net.detectHostConnectivity
 import com.raydose.netshield.net.listFsyNetworkOptions
 import com.raydose.netshield.ui.settings.AboutDeviceInfo
 import com.raydose.netshield.ui.theme.ScreenSpec
@@ -79,6 +82,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Date
@@ -165,6 +169,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _uiFlags = MutableStateFlow(HomeUiFlags())
     private val _settings = MutableStateFlow(ProbeSettingsUiState())
     private val _hostNetwork = MutableStateFlow(hostSettingsRepository.loadHostNetwork())
+    private val _hostConnectivity = MutableStateFlow(detectHostConnectivity(application))
     private val _alertLogs = MutableStateFlow<List<SystemAlertLog>>(emptyList())
     private val _displaySoundSettings = MutableStateFlow(hostSettingsRepository.loadDisplaySound())
 
@@ -197,20 +202,26 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         ) { saved, live, nowMillis, timeDisplay ->
             HomeClockInputs(saved, live, nowMillis, timeDisplay)
         },
-        _uiFlags,
-        _alertLogs,
-        _hostNetwork,
-        hostEnvSerialRepository.snapshot,
-    ) { clockInputs, flags, logs, hostNetwork, hostAdapter ->
+        combine(
+            _uiFlags,
+            _alertLogs,
+            _hostNetwork,
+            hostEnvSerialRepository.snapshot,
+            _hostConnectivity,
+        ) { flags, logs, hostNetwork, hostAdapter, connectivity ->
+            HomePanelInputs(flags, logs, hostNetwork, hostAdapter, connectivity)
+        },
+    ) { clockInputs, panel ->
         buildHomeState(
             clockInputs.saved,
             clockInputs.live,
             clockInputs.nowMillis,
             clockInputs.timeDisplay,
-            flags,
-            logs,
-            hostNetwork,
-            hostAdapter,
+            panel.flags,
+            panel.logs,
+            panel.hostNetwork,
+            panel.hostAdapter,
+            panel.connectivity,
         )
     }.stateIn(
         viewModelScope,
@@ -224,6 +235,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             _alertLogs.value,
             _hostNetwork.value,
             hostEnvSerialRepository.snapshot.value,
+            _hostConnectivity.value,
         ),
     )
 
@@ -247,6 +259,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 _nowMillis.value = System.currentTimeMillis()
                 pruneStaleDiscovery()
                 pruneStaleProbeTelemetry()
+                _hostConnectivity.value = detectHostConnectivity(getApplication())
                 delay(1000L)
             }
         }
@@ -449,6 +462,79 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val cards = state.slaveNetworkCards.toMutableList()
             cards[index] = card
             state.copy(slaveNetworkCards = cards, statusHint = null)
+        }
+    }
+
+    /**
+     * 从主机侧 HLK-7688（同网段 `.1`）拉取 WiFi 名称/密码。
+     * 仅回调结果，不改持久化；由编辑框回填后用户点「保存」。
+     */
+    fun fetchHostWifiFromGateway(
+        onDone: (success: Boolean, message: String, wifiName: String?, wifiPassword: String?) -> Unit,
+    ) {
+        viewModelScope.launch {
+            _settings.update { it.copy(statusHint = "正在从主机网关获取 WiFi…") }
+            val hostIp = mergeLiveHostIp(_hostNetwork.value).ipAddress
+            if (hostIp.isBlank()) {
+                val msg = "主机 IP 未知，无法推导网关"
+                _settings.update { it.copy(statusHint = msg) }
+                onDone(false, msg, null, null)
+                return@launch
+            }
+            val result = withContext(Dispatchers.IO) {
+                Hlk7688WifiClient.fetchHostWifi(hostIp)
+            }
+            deliverWifiFetchResult(result, role = "主机", onDone)
+        }
+    }
+
+    /**
+     * 从从机侧 HLK-7688 拉取 WiFi：设备 ID = n → 同网段 `.(n+1)`。
+     * 网段优先用主机 IP，其次用该从机探头 IP。
+     */
+    fun fetchSlaveWifiFromGateway(
+        deviceId: Int,
+        slaveIp: String = "",
+        onDone: (success: Boolean, message: String, wifiName: String?, wifiPassword: String?) -> Unit,
+    ) {
+        viewModelScope.launch {
+            _settings.update { it.copy(statusHint = "正在从从机网关获取 WiFi…") }
+            val subnetIp = mergeLiveHostIp(_hostNetwork.value).ipAddress
+                .takeIf { it.isNotBlank() }
+                ?: slaveIp.trim().takeIf { it.isNotBlank() }
+            if (subnetIp.isNullOrBlank()) {
+                val msg = "主机/从机 IP 未知，无法推导从机网关"
+                _settings.update { it.copy(statusHint = msg) }
+                onDone(false, msg, null, null)
+                return@launch
+            }
+            val result = withContext(Dispatchers.IO) {
+                Hlk7688WifiClient.fetchSlaveWifi(subnetIp, deviceId)
+            }
+            deliverWifiFetchResult(result, role = "从机ID=$deviceId", onDone)
+        }
+    }
+
+    private fun deliverWifiFetchResult(
+        result: Hlk7688WifiClient.FetchResult,
+        role: String,
+        onDone: (success: Boolean, message: String, wifiName: String?, wifiPassword: String?) -> Unit,
+    ) {
+        when (result) {
+            is Hlk7688WifiClient.FetchResult.Ok -> {
+                val cred = result.credentials
+                val msg = "已从 ${cred.gatewayIp} 获取 WiFi，请确认后保存"
+                _settings.update { it.copy(statusHint = msg) }
+                Log.i(
+                    ProbeConnectionManager.TAG,
+                    "$role WiFi 已从 ${cred.gatewayIp} 获取 ssid=${cred.ssid}",
+                )
+                onDone(true, msg, cred.ssid, cred.password)
+            }
+            is Hlk7688WifiClient.FetchResult.Err -> {
+                _settings.update { it.copy(statusHint = result.message) }
+                onDone(false, result.message, null, null)
+            }
         }
     }
 
@@ -1580,6 +1666,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         logs: List<SystemAlertLog>,
         hostNetwork: HostNetworkSettings,
         hostAdapter: HostAdapterSnapshot,
+        connectivity: HostConnectivityStatus,
     ): HomeUiState {
         val clock = HomeClockFormatter.format(java.util.Date(nowMillis), timeDisplay)
         val probes: List<SlaveProbeUi> = if (saved.isEmpty()) {
@@ -1611,6 +1698,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             messages = emptyList(),
             statusBarExpanded = flags.statusBarExpanded,
             sideDrawerOpen = flags.sideDrawerOpen,
+            bluetoothOnline = connectivity.bluetoothOnline,
+            ethernetOnline = connectivity.ethernetOnline,
         )
     }
 
@@ -1644,6 +1733,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val live: Map<String, LiveProbeTelemetry>,
         val nowMillis: Long,
         val timeDisplay: TimeSettings,
+    )
+
+    private data class HomePanelInputs(
+        val flags: HomeUiFlags,
+        val logs: List<SystemAlertLog>,
+        val hostNetwork: HostNetworkSettings,
+        val hostAdapter: HostAdapterSnapshot,
+        val connectivity: HostConnectivityStatus,
     )
 
     companion object {

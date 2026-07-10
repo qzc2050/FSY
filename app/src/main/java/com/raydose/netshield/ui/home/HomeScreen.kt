@@ -234,6 +234,8 @@ fun HomeScreen(
             Column(modifier = Modifier.fillMaxSize()) {
                 HomeTopBar(
                     systemName = state.systemName,
+                    bluetoothOnline = state.bluetoothOnline,
+                    ethernetOnline = state.ethernetOnline,
                 )
 
                 if (!state.statusBarExpanded) {

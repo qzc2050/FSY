@@ -2,6 +2,7 @@ package com.raydose.netshield.data
 
 import android.content.ContentUris
 import android.content.Context
+import android.media.MediaMetadataRetriever
 import android.os.Environment
 import android.provider.MediaStore
 import android.util.Log
@@ -13,27 +14,47 @@ class MusicRepository(context: Context) {
     private val appContext = context.applicationContext
 
     fun loadTracks(): List<MusicTrack> {
-        val tracks = linkedMapOf<String, MusicTrack>()
-        val seenPaths = linkedSetOf<String>()
-
-        loadMediaStoreTracks().forEach { track ->
-            tracks[track.id] = track
-            track.absolutePath()?.let { seenPaths += it }
+        // 最终按「歌名」合并：同一首歌常被 MediaStore + Music 目录各扫一次
+        val byTitle = linkedMapOf<String, MusicTrack>()
+        (loadMediaStoreTracks() + loadStorageMusicTracks()).forEach { track ->
+            val key = dedupeTitleKey(track)
+            byTitle[key] = preferTrack(byTitle[key], track)
         }
-        loadStorageMusicTracks().forEach { track ->
-            val path = track.absolutePath()
-            if (path != null && path in seenPaths) return@forEach
-            if (path != null) seenPaths += path
-            tracks.putIfAbsent(path ?: track.uri.toString(), track)
-        }
-        return tracks.values.sortedWith(
+        return byTitle.values.sortedWith(
             compareBy<MusicTrack> { it.sourceLabel }
                 .thenBy { it.title.lowercase(Locale.getDefault()) },
         )
     }
 
+    private fun dedupeTitleKey(track: MusicTrack): String {
+        val name = track.filePath?.let { File(it).nameWithoutExtension } ?: track.title
+        return name.trim().lowercase(Locale.getDefault())
+    }
+
+    /** 优先保留 MediaStore（有时长/艺术家）；目录扫描重复项丢弃 */
+    private fun preferTrack(a: MusicTrack?, b: MusicTrack): MusicTrack {
+        if (a == null) return b.ensureDuration()
+        val aMedia = a.id.startsWith("media:")
+        val bMedia = b.id.startsWith("media:")
+        val duration = maxOf(a.durationMillis, b.durationMillis)
+        val path = a.filePath ?: b.filePath
+        return when {
+            bMedia && !aMedia -> b.ensureDuration().copy(
+                durationMillis = maxOf(b.durationMillis, duration),
+                filePath = b.filePath ?: path,
+            )
+            aMedia && !bMedia -> a.copy(
+                durationMillis = duration,
+                filePath = a.filePath ?: path,
+            )
+            duration > a.durationMillis -> a.copy(durationMillis = duration, filePath = path)
+            else -> a.copy(filePath = path)
+        }
+    }
+
     private fun loadMediaStoreTracks(): List<MusicTrack> {
         val uri = MediaStore.Audio.Media.EXTERNAL_CONTENT_URI
+        // 部分工控 ROM（如本机 RK3568）无 DISPLAY_NAME 列，勿强依赖
         val projection = arrayOf(
             MediaStore.Audio.Media._ID,
             MediaStore.Audio.Media.TITLE,
@@ -50,7 +71,7 @@ class MusicRepository(context: Context) {
                 val titleColumn = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.TITLE)
                 val artistColumn = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.ARTIST)
                 val durationColumn = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.DURATION)
-                val relativePathColumn = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.RELATIVE_PATH)
+                val relativePathColumn = cursor.getColumnIndex(MediaStore.Audio.Media.RELATIVE_PATH)
                 val dataColumn = cursor.getColumnIndex(MediaStore.Audio.Media.DATA)
                 buildList {
                     while (cursor.moveToNext()) {
@@ -58,8 +79,13 @@ class MusicRepository(context: Context) {
                         val contentUri = ContentUris.withAppendedId(uri, mediaId)
                         val title = cursor.getString(titleColumn).orEmpty().ifBlank { "未知歌曲" }
                         val artist = cursor.getString(artistColumn).orEmpty().ifBlank { "未知艺术家" }
-                        val relativePath = cursor.getString(relativePathColumn).orEmpty()
+                        val relativePath = if (relativePathColumn >= 0) {
+                            cursor.getString(relativePathColumn).orEmpty()
+                        } else {
+                            ""
+                        }
                         val dataPath = if (dataColumn >= 0) cursor.getString(dataColumn) else null
+                        val filePath = resolveMediaFilePath(dataPath, relativePath, title)
                         add(
                             MusicTrack(
                                 id = "media:$mediaId",
@@ -72,7 +98,7 @@ class MusicRepository(context: Context) {
                                 } else {
                                     "媒体库"
                                 },
-                                filePath = normalizeAbsolutePath(dataPath),
+                                filePath = filePath,
                             ),
                         )
                     }
@@ -94,7 +120,7 @@ class MusicRepository(context: Context) {
                     }
                     .flatMap(::scanMusicDirectory)
             }
-            .distinctBy { track -> track.absolutePath() ?: track.uri.toString() }
+            .distinctBy { track -> track.filePath ?: track.uri.toString() }
     }
 
     private fun storageRoots(): List<File> {
@@ -126,7 +152,7 @@ class MusicRepository(context: Context) {
                         title = file.nameWithoutExtension.ifBlank { file.name },
                         artist = "本地文件",
                         uri = android.net.Uri.fromFile(file),
-                        sourceLabel = directory.absolutePath,
+                        sourceLabel = "Music",
                         filePath = normalizeAbsolutePath(file.absolutePath),
                     )
                 }
@@ -144,7 +170,48 @@ class MusicRepository(context: Context) {
         return candidate
     }
 
-    private fun MusicTrack.absolutePath(): String? = filePath ?: uri.path?.let(::normalizeAbsolutePath)
+    /** MediaStore DATA 可能为空：用 relative_path + 文件名拼绝对路径，便于与目录扫描去重。 */
+    private fun resolveMediaFilePath(
+        dataPath: String?,
+        relativePath: String?,
+        titleOrName: String?,
+    ): String? {
+        normalizeAbsolutePath(dataPath)?.let { return it }
+        if (relativePath.isNullOrBlank() || titleOrName.isNullOrBlank()) return null
+        val base = Environment.getExternalStorageDirectory()
+        val dir = File(base, relativePath.trimEnd('/') + "/")
+        // title 通常无扩展名；在 Music 目录下按「同名.*」匹配真实文件
+        val exact = File(dir, titleOrName)
+        if (exact.isFile) return normalizeAbsolutePath(exact.absolutePath)
+        val matched = dir.listFiles()
+            ?.firstOrNull { file ->
+                file.isFile &&
+                    file.extension.lowercase(Locale.US) in AudioExtensions &&
+                    file.nameWithoutExtension.equals(titleOrName, ignoreCase = true)
+            }
+        return matched?.let { normalizeAbsolutePath(it.absolutePath) }
+    }
+
+    private fun MusicTrack.ensureDuration(): MusicTrack {
+        if (durationMillis > 0L) return this
+        val path = filePath ?: return this
+        val ms = readDurationMillis(path) ?: return this
+        return copy(durationMillis = ms)
+    }
+
+    private fun readDurationMillis(path: String): Long? {
+        val retriever = MediaMetadataRetriever()
+        return runCatching {
+            retriever.setDataSource(path)
+            retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)
+                ?.toLongOrNull()
+                ?.takeIf { it > 0L }
+        }.onFailure {
+            Log.w(TAG, "读取时长失败 path=$path", it)
+        }.getOrNull().also {
+            runCatching { retriever.release() }
+        }
+    }
 
     private fun normalizeAbsolutePath(path: String?): String? {
         if (path.isNullOrBlank()) return null

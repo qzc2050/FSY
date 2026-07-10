@@ -125,6 +125,8 @@ fun StandbyScreen(
                 ) {
                     HomeTopBar(
                         systemName = state.systemName,
+                        bluetoothOnline = state.bluetoothOnline,
+                        ethernetOnline = state.ethernetOnline,
                     )
                     Column(
                         modifier = Modifier

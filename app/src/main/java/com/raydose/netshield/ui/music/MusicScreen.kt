@@ -134,6 +134,7 @@ fun MusicScreen(
                         onPrevious = viewModel::playPrevious,
                         onToggle = viewModel::togglePlayPause,
                         onNext = viewModel::playNext,
+                        onMinimize = onBack,
                         onClose = {
                             viewModel.stopPlayback()
                             onBack()
@@ -190,6 +191,7 @@ private fun MusicContent(
     onPrevious: () -> Unit,
     onToggle: () -> Unit,
     onNext: () -> Unit,
+    onMinimize: () -> Unit,
     onClose: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -197,7 +199,7 @@ private fun MusicContent(
         val windowBarHeight = maxHeight * 0.15f
         Column(modifier = Modifier.fillMaxSize()) {
             MusicWindowBar(
-                onMinimize = onClose,
+                onMinimize = onMinimize,
                 onClose = onClose,
                 modifier = Modifier
                     .fillMaxWidth()

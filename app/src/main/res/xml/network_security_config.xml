@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 允许访问局域网 HLK-7688 管理页（HTTP Basic，无 TLS） -->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true" />
+</network-security-config>
