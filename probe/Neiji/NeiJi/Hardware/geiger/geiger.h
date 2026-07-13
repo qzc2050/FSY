@@ -11,6 +11,11 @@
 #define GEIGER_HV_ENABLE  1
 #endif
 
+/* 上电冷启动：HV 爬升期前 N ms 丢弃盖革计数，剂量率强制 0（仍正常 0x23 上报） */
+#ifndef GEIGER_BOOT_BLANK_MS
+#define GEIGER_BOOT_BLANK_MS  2000U
+#endif
+
 #define GEIGER_PIN_Pin GPIO_PIN_0
 #define GEIGER_PIN_GPIO_Port GPIOA
 

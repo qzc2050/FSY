@@ -9,16 +9,18 @@
 extern "C" {
 #endif
 
-/* E32-433T20S 出厂默认（AT+DEFAULT / C1）：C0 00 00 1A 17 44 */
+/* E32 与 ZJB 对齐：C0 00 00 3D 17 44（115200 + 19.2k + 433MHz） */
 #define LORA_DEFAULT_ADDR_H     (0x00U)
 #define LORA_DEFAULT_ADDR_L     (0x00U)
-#define LORA_DEFAULT_SPED       (0x1AU)
+#define LORA_DEFAULT_SPED       (0x3DU)
 #define LORA_DEFAULT_CHAN       (0x17U)
 #define LORA_DEFAULT_OPTION     (0x44U)   /* V8.0 出厂默认 OPTION */
+#define LORA_USART_BAUD_CFG     (9600U)   /* 配置模式固定 9600 */
+#define LORA_USART_BAUD_RUN     (115200U)
 
-/* 1=上电进入透传前发 AT+DEFAULT 恢复模块出厂参数（联调用，稳定后改 0） */
+/* 0=上电写目标参数；1=发 AT+DEFAULT 恢复出厂 2.4k（勿与 ZJB 联调同开） */
 #ifndef LORA_BOOT_AT_DEFAULT
-#define LORA_BOOT_AT_DEFAULT    (1)
+#define LORA_BOOT_AT_DEFAULT    (0)
 #endif
 
 #define LORA_CHAN_MIN           (0x00U)

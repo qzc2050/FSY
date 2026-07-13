@@ -45,7 +45,7 @@ data class HomeUiState(
     val selectedProbeIndex: Int = 0,
     val doorState: DoorState = DoorState.Unknown,
     val latestAlert: String = "",
-    /** 下拉状态栏第三列：24h 系统日志（协议事件写入） */
+    /** 下拉状态栏第三列：系统日志（最多 100 条，本地持久化） */
     val alertLogs: List<SystemAlertLog> = emptyList(),
     val messages: List<MessageItem> = emptyList(),
     val statusBarExpanded: Boolean = false,

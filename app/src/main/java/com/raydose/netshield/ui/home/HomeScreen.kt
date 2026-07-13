@@ -136,6 +136,7 @@ fun HomeScreen(
     onHomeProbeSelected: (String) -> Unit = {},
     onMessageBarClick: () -> Unit,
     onAddMessage: (String) -> Unit,
+    onClearAlertLogs: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val probePagerKey = probeDisplayListKey(state.slaveProbes)
@@ -431,6 +432,7 @@ fun HomeScreen(
                     if (open && !state.statusBarExpanded) onStatusBarToggle()
                     if (!open && state.statusBarExpanded) onStatusBarDismiss()
                 },
+                onClearAlertLogs = onClearAlertLogs,
                 thumbnailContent = {
                     HomeThumbnailContent(
                         state = state,

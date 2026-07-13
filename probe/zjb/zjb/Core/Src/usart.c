@@ -169,6 +169,23 @@ HAL_StatusTypeDef USART2_Tx(const uint8_t *buf, uint16_t len, uint32_t timeout)
 
   return status;
 }
+
+void USART2_ReinitBaud(uint32_t baud)
+{
+  __HAL_UART_DISABLE_IT(&huart2, UART_IT_RXNE);
+  HAL_NVIC_DisableIRQ(USART2_IRQn);
+
+  if (HAL_UART_DeInit(&huart2) != HAL_OK)
+  {
+    Error_Handler();
+  }
+
+  huart2.Init.BaudRate = baud;
+  if (HAL_UART_Init(&huart2) != HAL_OK)
+  {
+    Error_Handler();
+  }
+}
 /* USER CODE END 0 */
 
 UART_HandleTypeDef huart1;

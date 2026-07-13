@@ -16,12 +16,12 @@ enum class AlertLogKind {
     Rename,
 }
 
-/** 下拉状态栏：24h 系统警示/事件日志（[id] 供 LazyColumn 稳定 key，对接库表主键） */
+/** 下拉状态栏：系统警示/事件日志（最多 100 条持久化；[id] 供 LazyColumn 稳定 key） */
 data class SystemAlertLog(
     val id: Long,
     val timeText: String,
     val message: String,
     val kind: AlertLogKind = AlertLogKind.Info,
-    /** 用于 24h 窗口过滤；旧数据可为 0 */
+    /** 事件发生时间；用于排序与持久化 */
     val timestampMillis: Long = 0L,
 )

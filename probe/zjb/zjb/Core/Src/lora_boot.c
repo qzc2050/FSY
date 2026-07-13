@@ -10,6 +10,36 @@
 #define LORA_CHAN_MHZ(ch) (410U + (uint32_t)(ch))
 /* 1=上电打印 LoRa 参数到 USART1 */
 #define LORA_BOOT_LOG       0
+#ifndef LORA_AUX_TIMEOUT_MS
+#define LORA_AUX_TIMEOUT_MS 500U
+#endif
+
+uint8_t Lora_WaitAuxReady(uint32_t timeout_ms)
+{
+  uint32_t start = HAL_GetTick();
+
+  while (HAL_GPIO_ReadPin(LORA_AUX_GPIO_Port, LORA_AUX_Pin) == GPIO_PIN_RESET)
+  {
+    if ((HAL_GetTick() - start) >= timeout_ms)
+    {
+      return 0U;
+    }
+    HAL_Delay(1U);
+  }
+  /* 手册建议 AUX 拉高后再略等再发 */
+  HAL_Delay(2U);
+  return 1U;
+}
+
+HAL_StatusTypeDef Lora_Usart2Tx(const uint8_t *buf, uint16_t len, uint32_t timeout)
+{
+  HAL_StatusTypeDef status;
+
+  (void)Lora_WaitAuxReady(LORA_AUX_TIMEOUT_MS);
+  status = USART2_Tx(buf, len, timeout);
+  (void)Lora_WaitAuxReady(LORA_AUX_TIMEOUT_MS);
+  return status;
+}
 
 static void lora_cfg_irq_disable(void)
 {
@@ -87,28 +117,24 @@ static uint8_t lora_parse_cfg_rsp(const uint8_t *rx, uint16_t rx_len,
   return 1U;
 }
 
-uint8_t Lora_BootPrintConfig(void)
+static uint8_t lora_cfg_matches_target(uint8_t addr_h, uint8_t addr_l,
+                                       uint8_t sped, uint8_t chan, uint8_t option)
+{
+  return (addr_h == LORA_TARGET_ADDR_H) &&
+         (addr_l == LORA_TARGET_ADDR_L) &&
+         (sped == LORA_TARGET_SPED) &&
+         (chan == LORA_TARGET_CHAN) &&
+         (option == LORA_TARGET_OPTION);
+}
+
+static uint8_t lora_cfg_read(uint8_t *addr_h, uint8_t *addr_l,
+                             uint8_t *sped, uint8_t *chan, uint8_t *option)
 {
   static const uint8_t read_cmd[] = {0xC1, 0xC1, 0xC1};
-  static const char *air_rate_str[] = {
-      "300bps", "1.2kbps", "2.4kbps", "4.8kbps", "9.6kbps", "19.2kbps"
-  };
-  static const char *tx_power_str[] = {
-      "20dBm", "17dBm", "14dBm", "10dBm"
-  };
-
   uint8_t rx[8];
   uint16_t rx_len = 0U;
   uint8_t attempt;
   uint8_t ok = 0U;
-  uint8_t addr_h = 0U;
-  uint8_t addr_l = 0U;
-  uint8_t sped = 0U;
-  uint8_t chan = 0U;
-  uint8_t option = 0U;
-
-  lora_cfg_irq_disable();
-  lora_hw_drain();
 
   for (attempt = 0U; (attempt < 3U) && (ok == 0U); attempt++)
   {
@@ -122,18 +148,80 @@ uint8_t Lora_BootPrintConfig(void)
     }
 
     rx_len = lora_poll_rx(rx, sizeof(rx), 300U);
-    ok = lora_parse_cfg_rsp(rx, rx_len, &addr_h, &addr_l, &sped, &chan, &option);
+    ok = lora_parse_cfg_rsp(rx, rx_len, addr_h, addr_l, sped, chan, option);
+  }
+
+  return ok;
+}
+
+static uint8_t lora_cfg_write_target(void)
+{
+  static const uint8_t write_cmd[] = {
+      0xC0,
+      LORA_TARGET_ADDR_H,
+      LORA_TARGET_ADDR_L,
+      LORA_TARGET_SPED,
+      LORA_TARGET_CHAN,
+      LORA_TARGET_OPTION
+  };
+
+  lora_set_config_mode(1U);
+  HAL_Delay(100U);
+  lora_hw_drain();
+
+  if (HAL_UART_Transmit(&huart2, (uint8_t *)write_cmd, sizeof(write_cmd), 200U) != HAL_OK)
+  {
+    return 0U;
+  }
+
+  (void)Lora_WaitAuxReady(LORA_AUX_TIMEOUT_MS);
+  return 1U;
+}
+
+uint8_t Lora_BootApplyConfig(void)
+{
+  static const char *air_rate_str[] = {
+      "300bps", "1.2kbps", "2.4kbps", "4.8kbps", "9.6kbps", "19.2kbps"
+  };
+  static const char *tx_power_str[] = {
+      "20dBm", "17dBm", "14dBm", "10dBm"
+  };
+
+  uint8_t addr_h = 0U;
+  uint8_t addr_l = 0U;
+  uint8_t sped = 0U;
+  uint8_t chan = 0U;
+  uint8_t option = 0U;
+  uint8_t ok = 0U;
+
+  lora_cfg_irq_disable();
+  lora_hw_drain();
+
+  if (lora_cfg_read(&addr_h, &addr_l, &sped, &chan, &option) == 0U)
+  {
+    (void)lora_cfg_write_target();
+    ok = lora_cfg_read(&addr_h, &addr_l, &sped, &chan, &option);
+  }
+  else if (lora_cfg_matches_target(addr_h, addr_l, sped, chan, option) == 0U)
+  {
+    (void)lora_cfg_write_target();
+    ok = lora_cfg_read(&addr_h, &addr_l, &sped, &chan, &option);
+  }
+  else
+  {
+    ok = 1U;
   }
 
   lora_set_config_mode(0U);
   HAL_Delay(50U);
+  USART2_ReinitBaud(LORA_USART_BAUD_RUN);
   Config_ApplyIoOutputs();
   USART2_Rx_Start();
 
   if (ok == 0U)
   {
 #if LORA_BOOT_LOG
-    printf("[LORA] ready 9600 mode0 (config read fail)\r\n");
+    printf("[LORA] ready 115200 mode0 (config fail)\r\n");
 #endif
     return 0U;
   }
@@ -144,7 +232,7 @@ uint8_t Lora_BootPrintConfig(void)
     uint8_t pwr_idx = option & 0x03U;
 
 #if LORA_BOOT_LOG
-    printf("[LORA] ready 9600 mode0 addr=%u chan=%u(%luMHz) "
+    printf("[LORA] ready 115200 mode0 addr=%u chan=%u(%luMHz) "
            "sped=0x%02X opt=0x%02X air=%s pwr=%s\r\n",
            (unsigned)addr,
            (unsigned)chan,

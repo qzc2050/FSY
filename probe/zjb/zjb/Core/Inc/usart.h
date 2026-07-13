@@ -60,6 +60,7 @@ uint16_t USART2_Rx_Read(uint8_t *buf, uint16_t len);
 void USART2_Rx_PushByte(uint8_t byte);
 void USART2_TxInit(void);
 HAL_StatusTypeDef USART2_Tx(const uint8_t *buf, uint16_t len, uint32_t timeout);
+void USART2_ReinitBaud(uint32_t baud);
 /* USER CODE END Prototypes */
 
 #ifdef __cplusplus

@@ -53,6 +53,7 @@ fun StatusBarPanelBody(
     bluetoothName: String,
     connectedDevices: List<ConnectedDeviceUi>,
     alertLogs: List<SystemAlertLog>,
+    onClearAlertLogs: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val formFactor = rememberTabletFormFactor()
@@ -96,6 +97,7 @@ fun StatusBarPanelBody(
             messageFontSize = logMessageSp,
             placeholderFontSize = placeholderSp,
             logIconSize = logIconSize,
+            onClearClick = onClearAlertLogs,
             modifier = Modifier
                 .fillMaxWidth()
                 .weight(0.58f),
@@ -266,7 +268,7 @@ private fun ConnectedDeviceCard(
     }
 }
 
-/** 第三行：系统日志，纵向滚动 */
+/** 第三行：系统日志，纵向滚动；右下角清空 */
 @Composable
 private fun AlertLogsSection(
     logs: List<SystemAlertLog>,
@@ -274,18 +276,22 @@ private fun AlertLogsSection(
     messageFontSize: TextUnit,
     placeholderFontSize: TextUnit,
     logIconSize: Dp,
+    onClearClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    Column(modifier = modifier) {
+    Box(modifier = modifier) {
         if (logs.isEmpty()) {
             Text(
                 text = "暂无日志",
                 color = NetShieldTextSecondary,
                 fontSize = placeholderFontSize,
+                modifier = Modifier.align(Alignment.TopStart),
             )
         } else {
             LazyColumn(
-                modifier = Modifier.fillMaxSize(),
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(bottom = 28.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 items(logs, key = { it.id }) { log ->
@@ -298,6 +304,15 @@ private fun AlertLogsSection(
                 }
             }
         }
+        Text(
+            text = "清空",
+            color = if (logs.isEmpty()) NetShieldTextSecondary.copy(alpha = 0.45f) else NetShieldTextPrimary,
+            fontSize = 15.sp,
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .clickable(enabled = logs.isNotEmpty(), onClick = onClearClick)
+                .padding(horizontal = 4.dp, vertical = 2.dp),
+        )
     }
 }
 

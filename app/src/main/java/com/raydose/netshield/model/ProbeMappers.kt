@@ -101,7 +101,10 @@ fun LiveProbeTelemetry.applyParsedFrame(frame: ParsedFsyFrame): LiveProbeTelemet
         frame.alarmEnableValue == null && frame.controlBit1Volume == null &&
         frame.controlBit2Value == null && frame.statusBitValue == null
     ) {
-        next = next.copy(isOnline = true)
+        // 写应答 0x16/0x20 等不表示实时在线，避免离线后又被“拉活”
+        if (frame.func != 0x16 && frame.func != 0x20) {
+            next = next.copy(isOnline = true)
+        }
     }
     return next
 }

@@ -77,6 +77,9 @@ void Error_Handler(void);
 #define PM25_USART3_TX_GPIO_Port GPIOB
 #define PM25_USART3_RX_Pin GPIO_PIN_11
 #define PM25_USART3_RX_GPIO_Port GPIOB
+/** E32 AUX：飞线至 PB12，空闲=高，忙/收发中=低 */
+#define LORA_AUX_Pin GPIO_PIN_12
+#define LORA_AUX_GPIO_Port GPIOB
 #define USB_SEL_Pin GPIO_PIN_15
 #define USB_SEL_GPIO_Port GPIOB
 #define BT_PIO2_Pin GPIO_PIN_3

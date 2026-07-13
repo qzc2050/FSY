@@ -18,6 +18,21 @@ static uint8_t s_dose_window_armed;       /* 1=已对齐，开始累计完整窗
 static uint16_t s_dose_last_boundary_hm;  /* 上次触发的 hour*60+minute，防同分钟重复 */
 static uint8_t s_dose_boundary_inited;
 
+/* 上电 blank：从 Geiger_Init/HV 使能起计时，前 GEIGER_BOOT_BLANK_MS 不上报真实剂量率 */
+static uint32_t s_geiger_boot_tick;
+static uint8_t s_geiger_boot_blank_done;
+
+static uint8_t geiger_boot_blank_active(void)
+{
+    if (s_geiger_boot_blank_done) {
+        return 0U;
+    }
+    if ((HAL_GetTick() - s_geiger_boot_tick) < GEIGER_BOOT_BLANK_MS) {
+        return 1U;
+    }
+    return 0U;
+}
+
 /* 模拟计数数据（用于模拟模式） */
 static const uint32_t simulated_counts[] = {
     0,0,0,1,1,0,0,0,1,0,0,0,0,1,0,0,0,1,0,0,0,1,0,2,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,0,0,0,0,0,0,1,1,0,0,0,1,0,0,0,0,1,0,0,0,1,0,0,0,1,0,2,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,0,0,0,
@@ -285,6 +300,10 @@ void Geiger_Init(void)
 #if GEIGER_HV_ENABLE
     HAL_GPIO_WritePin(HV_EN_GPIO_Port, HV_EN_Pin, GPIO_PIN_SET);
 #endif
+
+    s_geiger_boot_tick = HAL_GetTick();
+    s_geiger_boot_blank_done = 0U;
+    data_var.real_rate = 0.0f;
 }
 
 /********************************************************************************************
@@ -350,7 +369,29 @@ void Geiger_Doserate_Calculate(void)
         once_cnt += delta;  /* 只加本 100ms 增量；勿 += geiger_crt_cnt（会三角放大） */
     }
 
-    // data_var.geiger_crt_cnt = 2;
+    /* 上电 blank：排空 HV 爬升脉冲，剂量率保持 0，不进 EWMA/5min 积分 */
+    if (geiger_boot_blank_active()) {
+        if (Dev_Tk_Wait(1000, cal_tk)) {
+            Dev_Tk_Init(&cal_tk);
+            once_cnt = 0;
+            data_var.geiger_crt_cnt = 0;
+        }
+        data_var.real_rate = 0.0f;
+        Geiger_Dose_Periodic_Save();
+        return;
+    }
+
+    if (!s_geiger_boot_blank_done) {
+        s_geiger_boot_blank_done = 1U;
+        DoseRate_ResetFilter();
+        once_cnt = 0;
+        data_var.geiger_crt_cnt = 0;
+        ago_cnt = TIM2->CNT;
+        data_var.over_num = 0;
+        data_var.real_rate = 0.0f;
+        Dev_Tk_Init(&sample_tk);
+        Dev_Tk_Init(&cal_tk);
+    }
 
     // 使用新的 EWMA 算法计算剂量率（每秒更新一次）
     if(Dev_Tk_Wait(1000, cal_tk))

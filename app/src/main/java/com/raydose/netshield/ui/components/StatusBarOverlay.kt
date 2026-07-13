@@ -172,6 +172,7 @@ fun StatusBarWithGesture(
     connectedDevices: List<ConnectedDeviceUi>,
     alertLogs: List<SystemAlertLog>,
     onOpenChanged: (Boolean) -> Unit,
+    onClearAlertLogs: () -> Unit = {},
     thumbnailContent: @Composable () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -282,6 +283,7 @@ fun StatusBarWithGesture(
                 bluetoothName = bluetoothName,
                 connectedDevices = connectedDevices,
                 alertLogs = alertLogs,
+                onClearAlertLogs = onClearAlertLogs,
                 onDismiss = {
                     panelState.isOpen = false
                     panelState.reset()
@@ -306,6 +308,7 @@ private fun StatusBarPanelContent(
     bluetoothName: String,
     connectedDevices: List<ConnectedDeviceUi>,
     alertLogs: List<SystemAlertLog>,
+    onClearAlertLogs: () -> Unit,
     onDismiss: () -> Unit,
 ) {
     val scope = rememberCoroutineScope()
@@ -372,6 +375,7 @@ private fun StatusBarPanelContent(
             bluetoothName = bluetoothName,
             connectedDevices = connectedDevices,
             alertLogs = alertLogs,
+            onClearAlertLogs = onClearAlertLogs,
             modifier = Modifier.fillMaxSize(),
         )
         Text(

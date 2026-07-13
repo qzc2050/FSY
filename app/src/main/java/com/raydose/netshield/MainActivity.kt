@@ -404,6 +404,7 @@ class MainActivity : ComponentActivity() {
                             )
                             saveAlbumMessages(listOf(newMessage) + albumMessages)
                         },
+                        onClearAlertLogs = viewModel::clearAlertLogs,
                     )
                 }
                 }

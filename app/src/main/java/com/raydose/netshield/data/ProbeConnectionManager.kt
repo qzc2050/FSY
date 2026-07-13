@@ -14,18 +14,41 @@ import com.raydose.netshield.net.FsyProtocolFrameCollector
 import com.raydose.netshield.net.FsyMulticastDiscovery
 import com.raydose.netshield.model.modbusDeviceAddr
 import com.raydose.netshield.net.FsyTcpClient
+import com.raydose.netshield.net.ParsedFsyFrame
 import com.raydose.netshield.net.buildReadRegsFrame
+import com.raydose.netshield.net.matchesManageConfigRead
+import com.raydose.netshield.net.matchesWriteAck
+import com.raydose.netshield.net.parseWriteAckExpectation
 import com.raydose.netshield.net.findRoutesToHost
 import com.raydose.netshield.net.listFsyNetworkOptions
 import com.raydose.netshield.net.pickFsyNetworkForMulticast
 import com.raydose.netshield.net.parseFsyBroadcast
 import com.raydose.netshield.net.parseFsyTcpFrame
 import com.raydose.netshield.net.pickBestRoute
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.withTimeoutOrNull
 import java.util.concurrent.Executors
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
 import kotlin.concurrent.thread
+
+data class ManageConfigFetchResult(
+    val probeId: String,
+    val okRegs: List<Int>,
+    val missingRegs: List<Int>,
+) {
+    val complete: Boolean get() = missingRegs.isEmpty()
+}
+
+data class ManageWriteResult(
+    val probeId: String,
+    val okCount: Int,
+    val failCount: Int,
+) {
+    val complete: Boolean get() = failCount == 0
+}
 
 /**
  * 组播发现 + 对已保存探头维持 TCP，解析 0x23 实时数据。
@@ -82,6 +105,13 @@ class ProbeConnectionManager(
     private var watchdogRunning = false
 
     private var watchdogThread: Thread? = null
+
+    private data class ConfigReadEvent(val probeId: String, val frame: ParsedFsyFrame)
+
+    private val configReadChannel = Channel<ConfigReadEvent>(Channel.UNLIMITED)
+
+    @Volatile
+    private var configReadSessionProbeId: String? = null
 
     /** 组播收包线程只做解析/回调；TCP 调度放到独立线程，避免阻塞 UDP receive */
     private val discoveryFollowUp = Executors.newSingleThreadExecutor { runnable ->
@@ -173,86 +203,274 @@ class ProbeConnectionManager(
 
     /**
      * 进入探头管理时按需读取（Neiji reg 50/52/82/122/123）。
-     * 应答经 [onTcpFrame] 或串口 [onProbeFrame] 回调，由 ViewModel 合并到草稿。
-     * 读请求走该探头最后一条实时 0x23 的来源通道。
+     * 按寄存器发 0x03 → 等 0x13 应答 → 超时重试（最多 3 次）。
      */
+    suspend fun fetchManageConfigWithRetry(probe: SavedProbe): ManageConfigFetchResult {
+        val route = resolveConfigReadRoute(probe)
+        if (route == null) {
+            Log.i(TAG, "跳过读配置 ${probe.displayName}：尚无 0x23 路由")
+            return ManageConfigFetchResult(probe.id, emptyList(), manageConfigRegList())
+        }
+        if (!isProbeReadyForConfigRead(probe, route)) {
+            Log.i(TAG, "跳过读配置 ${probe.displayName}：探头离线")
+            return ManageConfigFetchResult(probe.id, emptyList(), manageConfigRegList())
+        }
+
+        val deviceAddr = probe.modbusDeviceAddr().toUByte().toInt()
+        val specs = manageConfigReadSpecs(probe)
+        val okRegs = mutableListOf<Int>()
+        val missingRegs = mutableListOf<Int>()
+
+        configReadSessionProbeId = probe.id
+        drainConfigReadChannel()
+        try {
+            for ((index, spec) in specs.withIndex()) {
+                if (!isProbeReadyForConfigRead(probe, route)) break
+
+                var acked = false
+                for (attempt in 1..CONFIG_READ_MAX_ATTEMPTS) {
+                    if (!isProbeReadyForConfigRead(probe, route)) break
+                    if (!sendConfigReadFrame(probe, route, spec.frame)) break
+
+                    val ack = withTimeoutOrNull(CONFIG_READ_PER_REG_TIMEOUT_MS) {
+                        while (true) {
+                            val event = configReadChannel.receive()
+                            if (event.probeId != probe.id) continue
+                            if (event.frame.matchesManageConfigRead(spec.reg, deviceAddr)) {
+                                return@withTimeoutOrNull event.frame
+                            }
+                        }
+                        @Suppress("UNREACHABLE_CODE")
+                        null
+                    }
+
+                    if (ack != null) {
+                        okRegs.add(spec.reg)
+                        acked = true
+                        break
+                    }
+                    if (attempt < CONFIG_READ_MAX_ATTEMPTS) {
+                        delay(CONFIG_READ_RETRY_GAP_MS)
+                    }
+                }
+
+                if (!acked) {
+                    missingRegs.add(spec.reg)
+                    Log.w(
+                        TAG,
+                        "读配置超时 probe=${probe.displayName} reg=0x${spec.reg.toString(16).uppercase()} " +
+                            "attempts=$CONFIG_READ_MAX_ATTEMPTS",
+                    )
+                } else if (index + 1 < specs.size) {
+                    delay(CONFIG_READ_INTER_REG_GAP_MS)
+                }
+            }
+        } finally {
+            configReadSessionProbeId = null
+            drainConfigReadChannel()
+        }
+
+        val routeLabel = if (route == ProbeCommandLink.SERIAL) "串口" else "TCP"
+        if (missingRegs.isEmpty()) {
+            Log.i(TAG, "读配置完成($routeLabel) ${probe.displayName} reg50/52/82/122/123")
+            onLog("已读取 ${probe.displayName} 配置")
+        } else {
+            val miss = missingRegs.joinToString { "0x${it.toString(16).uppercase()}" }
+            Log.w(TAG, "读配置部分失败($routeLabel) ${probe.displayName} 未完成: $miss")
+            onLog("读配置部分未完成($miss)")
+        }
+
+        return ManageConfigFetchResult(probe.id, okRegs.toList(), missingRegs.toList())
+    }
+
+    /** 读写配置会话中由 MainViewModel 转发 0x13 / 0x16 / 0x20 应答 */
+    fun offerConfigReadFrame(probeId: String, frame: ParsedFsyFrame) {
+        if (configReadSessionProbeId == null) return
+        when (frame.func) {
+            0x13, 0x16, 0x20 -> configReadChannel.trySend(ConfigReadEvent(probeId, frame))
+        }
+    }
+
+    /**
+     * 按帧发写请求 → 等 0x16 / 0x20 应答 → 超时重试（最多 3 次）。
+     * 含非 0x06/0x10 写帧时退化为 [sendFrames] 连发。
+     */
+    suspend fun sendFramesWithRetry(
+        probe: SavedProbe,
+        frames: List<ByteArray>,
+        logLabel: String = "写配置",
+    ): ManageWriteResult {
+        if (frames.isEmpty()) return ManageWriteResult(probe.id, 0, 0)
+
+        val route = resolveConfigReadRoute(probe)
+        if (route == null) {
+            Log.i(TAG, "跳过$logLabel ${probe.displayName}：尚无 0x23 路由")
+            return ManageWriteResult(probe.id, 0, frames.size)
+        }
+        if (!isProbeReadyForConfigRead(probe, route)) {
+            Log.i(TAG, "跳过$logLabel ${probe.displayName}：探头离线")
+            return ManageWriteResult(probe.id, 0, frames.size)
+        }
+
+        val expectations = frames.map { parseWriteAckExpectation(it) }
+        if (expectations.any { it == null }) {
+            Log.w(TAG, "$logLabel 含非标准写帧，退化为连发 probe=${probe.displayName}")
+            sendFrames(probe.id, frames)
+            return ManageWriteResult(probe.id, frames.size, 0)
+        }
+
+        var okCount = 0
+        var failCount = 0
+
+        configReadSessionProbeId = probe.id
+        drainConfigReadChannel()
+        try {
+            for ((index, frame) in frames.withIndex()) {
+                val expect = expectations[index]!!
+                if (!isProbeReadyForConfigRead(probe, route)) {
+                    failCount = frames.size - index
+                    break
+                }
+
+                var acked = false
+                for (attempt in 1..CONFIG_WRITE_MAX_ATTEMPTS) {
+                    if (!isProbeReadyForConfigRead(probe, route)) break
+                    if (!sendConfigReadFrame(probe, route, frame)) break
+
+                    val ack = withTimeoutOrNull(CONFIG_WRITE_PER_FRAME_TIMEOUT_MS) {
+                        while (true) {
+                            val event = configReadChannel.receive()
+                            if (event.probeId != probe.id) continue
+                            if (event.frame.matchesWriteAck(expect)) {
+                                return@withTimeoutOrNull event.frame
+                            }
+                        }
+                        @Suppress("UNREACHABLE_CODE")
+                        null
+                    }
+
+                    if (ack != null) {
+                        okCount++
+                        acked = true
+                        break
+                    }
+                    if (attempt < CONFIG_WRITE_MAX_ATTEMPTS) {
+                        delay(CONFIG_WRITE_RETRY_GAP_MS)
+                    }
+                }
+
+                if (!acked) {
+                    failCount = frames.size - index
+                    Log.w(
+                        TAG,
+                        "$logLabel 超时 probe=${probe.displayName} reg=0x${expect.reg.toString(16).uppercase()} " +
+                            "attempts=$CONFIG_WRITE_MAX_ATTEMPTS",
+                    )
+                    break
+                }
+                if (index + 1 < frames.size) {
+                    delay(CONFIG_WRITE_INTER_FRAME_GAP_MS)
+                }
+            }
+        } finally {
+            configReadSessionProbeId = null
+            drainConfigReadChannel()
+        }
+
+        val routeLabel = if (route == ProbeCommandLink.SERIAL) "串口" else "TCP"
+        if (failCount == 0) {
+            Log.i(TAG, "$logLabel 完成($routeLabel) ${probe.displayName} frames=${frames.size}")
+            onLog("已写入 ${probe.displayName} 配置")
+        } else {
+            Log.w(TAG, "$logLabel 部分失败($routeLabel) ${probe.displayName} ok=$okCount fail=$failCount")
+            onLog("写配置部分失败($okCount/${frames.size})")
+        }
+
+        return ManageWriteResult(probe.id, okCount, failCount)
+    }
+
+    /** @deprecated 使用 [fetchManageConfigWithRetry]；保留给旧调用方 */
     fun fetchManageConfig(probe: SavedProbe) {
-        when (linkRouter.routeFor(probe.id)) {
-            ProbeCommandLink.SERIAL -> fetchManageConfigSerial(probe)
-            ProbeCommandLink.NETWORK -> fetchManageConfigTcp(probe)
-            null -> when {
-                probe.ip.isBlank() && isTelemetryOnline(probe.id) ->
-                    fetchManageConfigSerial(probe)
-                isTcpOnline(probe.id) ->
-                    fetchManageConfigTcp(probe)
-                isTelemetryOnline(probe.id) ->
-                    fetchManageConfigSerial(probe)
-                else ->
-                    Log.i(TAG, "跳过读配置 ${probe.displayName}：尚无 0x23 路由")
+        thread(name = "fsy-fetch-cfg-${probe.id}") {
+            kotlinx.coroutines.runBlocking {
+                fetchManageConfigWithRetry(probe)
             }
         }
     }
 
-    private fun manageConfigReadFrames(probe: SavedProbe): List<ByteArray> {
+    private data class ManageConfigReadSpec(val reg: Int, val frame: ByteArray)
+
+    private fun manageConfigRegList(): List<Int> = listOf(
+        NeijiProbeRegs.DOSE_HI_TH,
+        NeijiProbeRegs.DOSE_LO_TH,
+        NeijiProbeRegs.ALARM_ENABLE,
+        NeijiProbeRegs.ALARM_VOLUME,
+        NeijiProbeRegs.CONTROL_BIT2,
+    )
+
+    private fun manageConfigReadSpecs(probe: SavedProbe): List<ManageConfigReadSpec> {
         val addr = probe.modbusDeviceAddr()
-        return listOf(
-            buildReadRegsFrame(NeijiProbeRegs.DOSE_HI_TH, NeijiProbeRegs.U32_REG_COUNT, addr),
-            buildReadRegsFrame(NeijiProbeRegs.DOSE_LO_TH, NeijiProbeRegs.U32_REG_COUNT, addr),
-            buildReadRegsFrame(NeijiProbeRegs.ALARM_ENABLE, NeijiProbeRegs.U32_REG_COUNT, addr),
-            buildReadRegsFrame(NeijiProbeRegs.ALARM_VOLUME, 1, addr),
-            buildReadRegsFrame(NeijiProbeRegs.CONTROL_BIT2, NeijiProbeRegs.U32_REG_COUNT, addr),
-        )
-    }
-
-    private fun fetchManageConfigTcp(probe: SavedProbe) {
-        if (!isProbeOnline(probe.id)) {
-            Log.i(TAG, "跳过读配置 ${probe.displayName}：TCP 未在线")
-            return
-        }
-        val client = clients[probe.id]
-        if (client == null) {
-            Log.w(TAG, "跳过读配置 ${probe.displayName}：无 TCP 客户端")
-            return
-        }
-        val reads = manageConfigReadFrames(probe)
-        thread(name = "fsy-fetch-cfg-tcp-${probe.id}") {
-            reads.forEach { frame ->
-                if (!isProbeOnline(probe.id)) return@thread
-                client.send(frame)
-                try {
-                    Thread.sleep(CONFIG_READ_GAP_MS)
-                } catch (_: InterruptedException) {
-                    return@thread
-                }
+        return manageConfigRegList().map { reg ->
+            val count = when (reg) {
+                NeijiProbeRegs.ALARM_VOLUME -> 1
+                else -> NeijiProbeRegs.U32_REG_COUNT
             }
-            Log.i(TAG, "已请求(TCP) ${probe.displayName} 配置 reg50/52/82/122/123")
-            onLog("已请求 ${probe.displayName} 配置 reg50/52/82/122/123")
+            ManageConfigReadSpec(reg, buildReadRegsFrame(reg, count, addr))
         }
     }
 
-    private fun fetchManageConfigSerial(probe: SavedProbe) {
-        val sender = serialSender
-        if (sender == null) {
-            Log.w(TAG, "跳过读配置 ${probe.displayName}：串口未就绪")
-            return
+    private fun resolveConfigReadRoute(probe: SavedProbe): ProbeCommandLink? {
+        return when (linkRouter.routeFor(probe.id)) {
+            ProbeCommandLink.SERIAL -> ProbeCommandLink.SERIAL
+            ProbeCommandLink.NETWORK -> ProbeCommandLink.NETWORK
+            null -> when {
+                probe.ip.isBlank() && isTelemetryOnline(probe.id) -> ProbeCommandLink.SERIAL
+                isTcpOnline(probe.id) -> ProbeCommandLink.NETWORK
+                isTelemetryOnline(probe.id) -> ProbeCommandLink.SERIAL
+                else -> null
+            }
         }
-        if (!isTelemetryOnline(probe.id)) {
-            Log.i(TAG, "跳过读配置 ${probe.displayName}：串口路径无近期 0x23")
-            return
+    }
+
+    private fun isProbeReadyForConfigRead(probe: SavedProbe, route: ProbeCommandLink): Boolean {
+        return when (route) {
+            ProbeCommandLink.SERIAL -> isTelemetryOnline(probe.id)
+            ProbeCommandLink.NETWORK -> isProbeOnline(probe.id)
         }
-        val reads = manageConfigReadFrames(probe)
-        thread(name = "fsy-fetch-cfg-serial-${probe.id}") {
-            reads.forEach { frame ->
-                if (!isTelemetryOnline(probe.id)) return@thread
-                sender(frame)
-                try {
-                    Thread.sleep(CONFIG_READ_GAP_MS)
-                } catch (_: InterruptedException) {
-                    return@thread
+    }
+
+    private fun sendConfigReadFrame(
+        probe: SavedProbe,
+        route: ProbeCommandLink,
+        frame: ByteArray,
+    ): Boolean {
+        return when (route) {
+            ProbeCommandLink.SERIAL -> {
+                val sender = serialSender
+                if (sender == null) {
+                    Log.w(TAG, "跳过读配置 ${probe.displayName}：串口未就绪")
+                    false
+                } else {
+                    sender(frame)
+                    true
                 }
             }
-            Log.i(TAG, "已请求(串口) ${probe.displayName} 配置 reg50/52/82/122/123")
-            onLog("已请求 ${probe.displayName} 配置 reg50/52/82/122/123")
+            ProbeCommandLink.NETWORK -> {
+                val client = clients[probe.id]
+                if (client == null) {
+                    Log.w(TAG, "跳过读配置 ${probe.displayName}：无 TCP 客户端")
+                    false
+                } else {
+                    client.send(frame)
+                    true
+                }
+            }
+        }
+    }
+
+    private fun drainConfigReadChannel() {
+        while (configReadChannel.tryReceive().isSuccess) {
+            // discard stale 0x13
         }
     }
 
@@ -648,7 +866,16 @@ class ProbeConnectionManager(
         /** 上次 TCP 连接开始后此时间内不因组播再次调度（单次 connect 含多路由 8s 超时） */
         private const val CONNECT_ATTEMPT_GUARD_MS = 15_000L
         private const val WATCHDOG_INTERVAL_MS = 3_000L
+        /** 写多帧时间隔（读配置已改为按 reg 等应答） */
         private const val CONFIG_READ_GAP_MS = 100L
+        private const val CONFIG_READ_MAX_ATTEMPTS = 3
+        private const val CONFIG_READ_PER_REG_TIMEOUT_MS = 500L
+        private const val CONFIG_READ_RETRY_GAP_MS = 150L
+        private const val CONFIG_READ_INTER_REG_GAP_MS = 80L
+        private const val CONFIG_WRITE_MAX_ATTEMPTS = 3
+        private const val CONFIG_WRITE_PER_FRAME_TIMEOUT_MS = 500L
+        private const val CONFIG_WRITE_RETRY_GAP_MS = 150L
+        private const val CONFIG_WRITE_INTER_FRAME_GAP_MS = 80L
         private const val DISCOVERY_LOG_DEBOUNCE_MS = 60_000L
         /** 8s 无 0x23 则断 TCP，等组播再连（与 UI 组播超时一致，扛 PHY 短抖） */
         private const val TELEMETRY_STALE_MS = 8_000L

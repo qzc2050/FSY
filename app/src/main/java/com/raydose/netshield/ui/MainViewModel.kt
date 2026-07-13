@@ -6,6 +6,7 @@ import android.os.Build
 import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.raydose.netshield.data.AlertLogRepository
 import com.raydose.netshield.data.DisplaySoundController
 import com.raydose.netshield.data.HostAlarmController
 import com.raydose.netshield.data.HostEnvSerialRepository
@@ -66,6 +67,7 @@ import com.raydose.netshield.model.deriveDoorState
 import com.raydose.netshield.model.matchesSaved
 import com.raydose.netshield.model.mergeFromDiscovery
 import com.raydose.netshield.model.mergeConfigFromTelemetry
+import com.raydose.netshield.model.mergeFromTelemetry
 import com.raydose.netshield.model.buildControlBit2WriteFrame
 import com.raydose.netshield.model.mergeControlBit2Enables
 import com.raydose.netshield.model.toManageDraft
@@ -111,6 +113,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val repository = ProbeConfigRepository(application)
     private val hostSettingsRepository = HostSettingsRepository(application)
     private val doseHistoryRepository = ProbeDoseHistoryRepository(application)
+    private val alertLogRepository = AlertLogRepository(application)
     private val displaySoundController = DisplaySoundController(application)
     private val hostAlarmController = HostAlarmController(application)
     private val linkRouter = ProbeLinkRouter()
@@ -129,7 +132,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val lastCommittedLowerX100 = ConcurrentHashMap<String, Long>()
     private val discoveredMap = ConcurrentHashMap<String, DiscoveredDevice>()
     // private val multicastLogSeq = AtomicLong(0L) // 组播每秒日志已注释
-    private var nextAlertLogId = 1L
 
     private val sensorOfflineLogAggregator = ProbeSensorOfflineLogAggregator(
         onSensorsNormal = { ts, probeName ->
@@ -177,7 +179,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _settings = MutableStateFlow(ProbeSettingsUiState())
     private val _hostNetwork = MutableStateFlow(hostSettingsRepository.loadHostNetwork())
     private val _hostConnectivity = MutableStateFlow(detectHostConnectivity(application))
-    private val _alertLogs = MutableStateFlow<List<SystemAlertLog>>(emptyList())
+    private val _alertLogs = MutableStateFlow(alertLogRepository.load())
+    private var nextAlertLogId = (_alertLogs.value.maxOfOrNull { it.id } ?: 0L) + 1L
     private val _displaySoundSettings = MutableStateFlow(hostSettingsRepository.loadDisplaySound())
 
     private val connectionManager = ProbeConnectionManager(
@@ -298,11 +301,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun openSettings() {
         val probes = _savedProbes.value
+        val live = _liveTelemetry.value
         val loadedTime = hostSettingsRepository.loadTimeSettings()
         _settings.value = ProbeSettingsUiState(
             selectedTab = SettingsTab.DisplaySound,
             selectedProbeIndex = 0,
-            manageDrafts = probes.map { it.toManageDraft() },
+            // 左上角状态栏用 draft；须带上当前遥测，否则默认离线显示 ---
+            manageDrafts = probes.map { probe ->
+                probe.toManageDraft().mergeFromTelemetry(live[probe.id])
+            },
             draftProbes = probes,
             discoveredDevices = discoveredMap.values.sortedForAddProbeDialog(),
             displaySound = loadDisplaySoundForUi(),
@@ -836,8 +843,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 if (index !in current.manageDrafts.indices) return@launch
                 if (current.selectedProbeIndex != index) return@launch
                 val p = current.draftProbes.getOrNull(index) ?: return@launch
-                if (_liveTelemetry.value[p.id]?.isOnline == true) {
-                    connectionManager.fetchManageConfig(p)
+                if (_liveTelemetry.value[p.id]?.isOnline != true) return@launch
+                withContext(Dispatchers.IO) {
+                    connectionManager.fetchManageConfigWithRetry(p)
+                }
+                if (_settings.value.selectedProbeIndex == index &&
+                    _settings.value.manageDrafts.getOrNull(index)?.id == p.id
+                ) {
+                    applyConfigReadToSelectedProbeDraft(p.id)
                 }
             }
         } else {
@@ -849,12 +862,22 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun commitProbeVolume(index: Int) {
         val draft = _settings.value.manageDrafts.getOrNull(index) ?: return
         if (!draft.isTcpOnline) return
-        connectionManager.sendFrames(draft.id, listOf(draft.buildVolumeWriteFrame()))
-        _liveTelemetry.update { map ->
-            val t = map[draft.id] ?: LiveProbeTelemetry()
-            map + (draft.id to t.copy(volume = draft.volume))
+        viewModelScope.launch {
+            val result = connectionManager.sendFramesWithRetry(
+                draft.savedProbe,
+                listOf(draft.buildVolumeWriteFrame()),
+                "写音量",
+            )
+            if (!result.complete) {
+                Log.w(ProbeConnectionManager.TAG, "音量写入失败 probe=${draft.id} reg122")
+                return@launch
+            }
+            _liveTelemetry.update { map ->
+                val t = map[draft.id] ?: LiveProbeTelemetry()
+                map + (draft.id to t.copy(volume = draft.volume))
+            }
+            Log.d(ProbeConnectionManager.TAG, "音量已写入 probe=${draft.id} reg122")
         }
-        Log.d(ProbeConnectionManager.TAG, "音量已写入 probe=${draft.id} reg122")
     }
 
     fun updateManageDraft(index: Int, draft: ProbeManageDraft) {
@@ -891,21 +914,35 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         if (!draft.isTcpOnline) return
         val probeId = draft.id
         val frames = mutableListOf<ByteArray>()
-
-        if (prev.radiationUpperAlarmOn != draft.radiationUpperAlarmOn ||
+        val alarmChanged = prev.radiationUpperAlarmOn != draft.radiationUpperAlarmOn ||
             prev.radiationLowerAlarmOn != draft.radiationLowerAlarmOn
-        ) {
-            frames += draft.buildAlarmEnableWriteFrame()
-            patchTelemetryAlarmEnable(probeId, draft)
-        }
-        if (prev.slaveScreenOn != draft.slaveScreenOn ||
+        val controlChanged = prev.slaveScreenOn != draft.slaveScreenOn ||
             prev.alarmLightOn != draft.alarmLightOn
-        ) {
-            frames += draft.buildControlBit2WriteFrame()
-            patchTelemetryControlBit2(probeId, draft)
+
+        if (alarmChanged) {
+            frames += draft.buildAlarmEnableWriteFrame()
         }
-        if (frames.isNotEmpty()) {
-            connectionManager.sendFrames(probeId, frames)
+        if (controlChanged) {
+            frames += draft.buildControlBit2WriteFrame()
+        }
+        if (frames.isEmpty()) return
+
+        viewModelScope.launch {
+            val result = connectionManager.sendFramesWithRetry(
+                draft.savedProbe,
+                frames,
+                "写探头配置",
+            )
+            if (!result.complete) {
+                Log.w(ProbeConnectionManager.TAG, "探头配置写入失败 probe=$probeId frames=${frames.size}")
+                return@launch
+            }
+            if (alarmChanged) {
+                patchTelemetryAlarmEnable(probeId, draft)
+            }
+            if (controlChanged) {
+                patchTelemetryControlBit2(probeId, draft)
+            }
             val detail = buildList {
                 if (prev.radiationUpperAlarmOn != draft.radiationUpperAlarmOn) {
                     add("上报警=${draft.radiationUpperAlarmOn}")
@@ -965,13 +1002,24 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    private fun commitProbeUpperThreshold(index: Int) {
+    private suspend fun commitProbeUpperThreshold(index: Int) {
         val draft = _settings.value.manageDrafts.getOrNull(index) ?: return
         if (!draft.isTcpOnline) return
         val x100 = usvTextToX100(draft.doseUpperUsv) ?: return
         if (lastCommittedUpperX100[draft.id] == x100) return
         val frame = draft.buildDoseUpperWriteFrame() ?: return
-        connectionManager.sendFrames(draft.id, listOf(frame))
+        val result = connectionManager.sendFramesWithRetry(
+            draft.savedProbe,
+            listOf(frame),
+            "写上限阈值",
+        )
+        if (!result.complete) {
+            Log.w(
+                ProbeConnectionManager.TAG,
+                "上限阈值写入失败 probe=${draft.id} reg50=${draft.doseUpperUsv} μSv/h",
+            )
+            return
+        }
         lastCommittedUpperX100[draft.id] = x100
         _liveTelemetry.update { map ->
             val t = map[draft.id] ?: LiveProbeTelemetry()
@@ -983,13 +1031,24 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         )
     }
 
-    private fun commitProbeLowerThreshold(index: Int) {
+    private suspend fun commitProbeLowerThreshold(index: Int) {
         val draft = _settings.value.manageDrafts.getOrNull(index) ?: return
         if (!draft.isTcpOnline) return
         val x100 = usvTextToX100(draft.doseLowerUsv) ?: return
         if (lastCommittedLowerX100[draft.id] == x100) return
         val frame = draft.buildDoseLowerWriteFrame() ?: return
-        connectionManager.sendFrames(draft.id, listOf(frame))
+        val result = connectionManager.sendFramesWithRetry(
+            draft.savedProbe,
+            listOf(frame),
+            "写下限阈值",
+        )
+        if (!result.complete) {
+            Log.w(
+                ProbeConnectionManager.TAG,
+                "下限阈值写入失败 probe=${draft.id} reg52=${draft.doseLowerUsv} μSv/h",
+            )
+            return
+        }
         lastCommittedLowerX100[draft.id] = x100
         _liveTelemetry.update { map ->
             val t = map[draft.id] ?: LiveProbeTelemetry()
@@ -1238,7 +1297,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             applyTelemetryFromFrame(probeId, frame, ProbeCommandLink.SERIAL)
             return
         }
-        if (frame.func == 0x13) {
+        if (frame.func == 0x13 || frame.func == 0x16 || frame.func == 0x20) {
             val probeId = findSavedProbeIdByModbusAddr(frame.addr) ?: return
             applyTelemetryFromFrame(probeId, frame, null)
         }
@@ -1333,6 +1392,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             if (!fiveMin.fromHistory) {
                 maybeSyncProbeTimeOnFiveMinSkew(probeId, deviceMillis)
             }
+        }
+
+        if (frame.func == 0x13 || frame.func == 0x16 || frame.func == 0x20) {
+            connectionManager.offerConfigReadFrame(probeId, frame)
         }
 
         _liveTelemetry.update { map ->
@@ -1472,23 +1535,30 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     /**
-     * 串口/CAN：8s 无实时 0x23 则 UI 离线。
+     * 串口/CAN/LoRa：8s 无实时 0x23 则 UI 离线。
      * 网口：8s 无组播则 UI 离线（与 TCP 0x23 超时无关）。
-     * 8s 用于扛住 W5500↔7688 约 2～4s 的 PHY 短抖，断电/断链感知比 10s 略快。
+     * 有 IP 但当前走串口、或从未收到组播时，按 0x23 判定（避免 LoRa 断流后主页一直在线）。
      */
     private fun pruneStaleProbeTelemetry() {
         val now = System.currentTimeMillis()
         for (probe in _savedProbes.value) {
             val probeId = probe.id
             if (_liveTelemetry.value[probeId]?.isOnline != true) continue
-            if (probe.ip.isNotBlank()) {
-                val lastMcast = linkRouter.lastMulticastKeepaliveMillis(probeId) ?: continue
-                if (now - lastMcast < PROBE_STALE_MS) continue
-                markProbeOffline(probeId, logTag = "组播超时")
-            } else {
-                val lastRx = linkRouter.lastRx23Millis(probeId) ?: continue
-                if (now - lastRx < PROBE_STALE_MS) continue
+
+            val route = linkRouter.routeFor(probeId)
+            val lastMcast = linkRouter.lastMulticastKeepaliveMillis(probeId)
+            val useSerialStale =
+                route == ProbeCommandLink.SERIAL ||
+                    probe.ip.isBlank() ||
+                    lastMcast == null
+
+            if (useSerialStale) {
+                val lastRx = linkRouter.lastRx23Millis(probeId)
+                if (lastRx != null && now - lastRx < PROBE_STALE_MS) continue
                 markProbeOffline(probeId, logTag = "0x23超时")
+            } else {
+                if (now - lastMcast!! < PROBE_STALE_MS) continue
+                markProbeOffline(probeId, logTag = "组播超时")
             }
         }
     }
@@ -1679,14 +1749,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             kind = kind,
             timestampMillis = timestampMillis,
         )
-        _alertLogs.update { (listOf(entry) + it).take(100) }
+        _alertLogs.update { current ->
+            val next = (listOf(entry) + current).take(AlertLogRepository.MAX_LOGS)
+            alertLogRepository.save(next)
+            next
+        }
     }
 
-    private fun filterAlertLogs24h(logs: List<SystemAlertLog>, nowMillis: Long): List<SystemAlertLog> {
-        val cutoff = nowMillis - ALERT_LOG_RETENTION_MS
-        return logs.filter { log ->
-            log.timestampMillis == 0L || log.timestampMillis >= cutoff
-        }
+    fun clearAlertLogs() {
+        _alertLogs.value = emptyList()
+        alertLogRepository.clear()
     }
 
     private fun buildHomeState(
@@ -1732,7 +1804,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             slaveProbes = probes,
             selectedProbeIndex = selectedProbeIndex,
             doorState = resolveDoorState(hostAdapter, live),
-            alertLogs = filterAlertLogs24h(logs, nowMillis),
+            alertLogs = logs,
             messages = emptyList(),
             statusBarExpanded = flags.statusBarExpanded,
             sideDrawerOpen = flags.sideDrawerOpen,
@@ -1785,7 +1857,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         private const val DISCOVERY_TTL_MS = 30_000L
         /** 网口组播 / 串口 0x23：超过此时间无数据则 UI 离线（PHY 短抖约 2～4s） */
         private const val PROBE_STALE_MS = 8_000L
-        private const val ALERT_LOG_RETENTION_MS = 24L * 3_600_000L
         /** 阈值输入框停止编辑后延迟下发（不依赖失焦） */
         private const val THRESHOLD_DEBOUNCE_MS = 800L
         /** 上线后自动 24h 五分钟历史补拉；暂时关闭，需要时改 true */

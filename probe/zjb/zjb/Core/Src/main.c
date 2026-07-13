@@ -105,7 +105,7 @@ int main(void)
   OTA_Init();
   Config_Load();
   Config_ApplyIoOutputs();
-  (void)Lora_BootPrintConfig();
+  (void)Lora_BootApplyConfig();
 
   /* USER CODE END 2 */
 

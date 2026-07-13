@@ -59,6 +59,7 @@ static uint16_t lora_uart_read_frame(uint8_t *buf, uint16_t cap, uint16_t expect
                                      uint32_t timeout_ms);
 static uint16_t lora_uart_read_cfg_rsp(uint8_t *buf, uint16_t cap, uint32_t timeout_ms);
 static void lora_default_config(LORA_Config_t *config);
+static bool lora_boot_apply_config(void);
 static bool lora_boot_print_config(void);
 static bool lora_config_read(LORA_Config_t *config);
 static bool lora_config_write(const LORA_Config_t *config, uint8_t head);
@@ -68,6 +69,7 @@ static void lora_uart_mutex_init(void);
 static bool lora_uart_transmit_raw(uint8_t *pdata, uint16_t len);
 static bool lora_cfg_session_begin(void);
 static void lora_cfg_session_end(void);
+static bool lora_uart_reinit_baud(uint32_t baud);
 #if LORA_UART_RX_IRQ
 static void lora_uart_rx_ring_reset(void);
 static bool lora_uart_rx_ring_push(uint8_t b);
@@ -186,22 +188,17 @@ bool LORA_Init(void)
 #endif
     ok = lora_wait_aux_ready(LORA_AUX_TIMEOUT_MS);
     LORA_DBG("Init %s (AUX 就绪)\r\n", ok ? "完成" : "失败");
+    if (ok) {
+        ok = lora_boot_apply_config();
+        if (ok) {
 #if LORA_UART_RX_IRQ
-    if (ok) {
-        lora_uart_rx_ring_reset();
-        lora_uart_rx_irq_enable();
-    }
+            lora_uart_rx_ring_reset();
+            lora_uart_rx_irq_enable();
 #endif
-    if (ok) {
-#if LORA_BOOT_AT_DEFAULT
-        if (lora_at_default()) {
-            UartDiag_Write("[LORA] AT+DEFAULT ok\r\n");
+            s_lora_ready = 1U;
         } else {
-            UartDiag_Write("[LORA] AT+DEFAULT fail\r\n");
+            UartDiag_Write("[LORA] boot apply fail\r\n");
         }
-#endif
-        s_lora_ready = 1U;
-        (void)lora_boot_print_config();
     } else {
         UartDiag_Write("[LORA] init fail (AUX timeout?)\r\n");
     }
@@ -382,7 +379,7 @@ static bool lora_boot_print_config(void)
     };
 
     if (!LORA_Config(LORA_CFG_READ, &cfg)) {
-        UartDiag_Write("[LORA] ready 9600 mode0 (config read fail)\r\n");
+        UartDiag_Write("[LORA] ready 115200 mode0 (config read fail)\r\n");
         return false;
     }
 
@@ -391,7 +388,7 @@ static bool lora_boot_print_config(void)
     pwr_idx = cfg.option & 0x03U;
 
     (void)snprintf(msg, sizeof(msg),
-                   "[LORA] ready 9600 mode0 addr=%u chan=%u(%luMHz) "
+                   "[LORA] ready 115200 mode0 addr=%u chan=%u(%luMHz) "
                    "sped=0x%02X opt=0x%02X air=%s pwr=%s\r\n",
                    (unsigned)addr,
                    (unsigned)cfg.chan,
@@ -401,6 +398,83 @@ static bool lora_boot_print_config(void)
                    (air_idx <= LORA_AIR_RATE_19K2BPS) ? air_rate_str[air_idx] : "?",
                    (pwr_idx <= LORA_TX_POWER_10DBM) ? tx_power_str[pwr_idx] : "?");
     UartDiag_Write(msg);
+    return true;
+}
+
+static bool lora_cfg_matches_target(const LORA_Config_t *cfg)
+{
+    LORA_Config_t target;
+
+    if (cfg == NULL) {
+        return false;
+    }
+
+    lora_default_config(&target);
+    return (cfg->addr_h == target.addr_h) &&
+           (cfg->addr_l == target.addr_l) &&
+           (cfg->sped == target.sped) &&
+           (cfg->chan == target.chan) &&
+           (cfg->option == target.option);
+}
+
+static bool lora_uart_reinit_baud(uint32_t baud)
+{
+#if LORA_UART_RX_IRQ
+    lora_uart_rx_irq_disable();
+#endif
+
+    if (HAL_UART_DeInit(&s_huart5) != HAL_OK) {
+        return false;
+    }
+
+    s_huart5.Init.BaudRate = baud;
+    if (HAL_UART_Init(&s_huart5) != HAL_OK) {
+        return false;
+    }
+
+    HAL_NVIC_SetPriority(UART5_IRQn, 6, 0);
+    HAL_NVIC_EnableIRQ(UART5_IRQn);
+    return true;
+}
+
+static bool lora_boot_apply_config(void)
+{
+    LORA_Config_t cfg;
+    LORA_Config_t target;
+    bool ok;
+
+    lora_default_config(&target);
+
+    if (!LORA_Config(LORA_CFG_READ, &cfg)) {
+        ok = LORA_Config(LORA_CFG_WRITE, &target);
+        if (!ok) {
+            UartDiag_Write("[LORA] boot write fail\r\n");
+            return false;
+        }
+        ok = LORA_Config(LORA_CFG_READ, &cfg);
+    } else if (!lora_cfg_matches_target(&cfg)) {
+        ok = LORA_Config(LORA_CFG_WRITE, &target);
+        if (!ok) {
+            UartDiag_Write("[LORA] boot write fail\r\n");
+            return false;
+        }
+        ok = LORA_Config(LORA_CFG_READ, &cfg);
+    } else {
+        ok = true;
+    }
+
+    if (!ok) {
+        UartDiag_Write("[LORA] boot read fail\r\n");
+        return false;
+    }
+
+    (void)lora_boot_print_config();
+
+    if (!lora_uart_reinit_baud(LORA_USART_BAUD_RUN)) {
+        UartDiag_Write("[LORA] UART5 115200 fail\r\n");
+        return false;
+    }
+
     return true;
 }
 

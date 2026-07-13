@@ -6,6 +6,7 @@
 #include "protec_protocol.h"
 #include "ota.h"
 #include "main.h"
+#include "lora_boot.h"
 
 #include <string.h>
 #include <stdio.h>
@@ -422,7 +423,7 @@ static void CanCache_TryParseAndForward(CanSlaveCache *c)
       (void)USART1_Tx(c->buf, frame_len, 100U);
       if ((addr != (uint8_t)PROTOCOL_ADDR) && Config_LoraEnabled())
       {
-        (void)USART2_Tx(c->buf, frame_len, 100U);
+        (void)Lora_Usart2Tx(c->buf, frame_len, 100U);
       }
     }
 
@@ -537,7 +538,7 @@ static void Protocol_ForwardFromApp(const uint8_t *buf, uint16_t len)
 {
   if (Config_LoraEnabled())
   {
-    (void)USART2_Tx(buf, len, 100U);
+    (void)Lora_Usart2Tx(buf, len, 100U);
   }
   Protocol_ForwardToCan(buf, len);
 }
