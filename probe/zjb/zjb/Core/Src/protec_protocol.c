@@ -9,7 +9,7 @@
 
 #define PROTEC_FUNC_ACTIVE_MULTI   0x23U
 
-#define SW_VERSION_STR "V1.1.3.20260710R"
+#define SW_VERSION_STR "V1.1.4.20260713R"
 
 SystemStatus_t g_system_status;
 const char g_sw_version[20] = SW_VERSION_STR;
