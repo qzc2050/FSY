@@ -129,6 +129,7 @@ fun FileManagerScreen(
                 FileListPanel(
                     items = state.items,
                     isLoading = state.isLoading,
+                    searchQuery = state.searchQuery,
                     canGoUp = state.currentPath.isNotBlank() && state.currentPath != state.rootPath,
                     selectionMode = state.selectionMode,
                     selectedPaths = state.selectedPaths,
@@ -338,7 +339,7 @@ private fun FileManagerToolBar(
             OutlinedTextField(
                 value = searchQuery,
                 onValueChange = onSearchQueryChange,
-                placeholder = { Text("搜索") },
+                placeholder = { Text("搜索（含子文件夹）") },
                 singleLine = true,
                 colors = OutlinedTextFieldDefaults.colors(
                     focusedTextColor = NetShieldTextPrimary,
@@ -438,6 +439,7 @@ private fun FileManagerToolBar(
 private fun FileListPanel(
     items: List<FileListItem>,
     isLoading: Boolean,
+    searchQuery: String,
     canGoUp: Boolean,
     selectionMode: Boolean,
     selectedPaths: Set<String>,
@@ -484,7 +486,10 @@ private fun FileListPanel(
         }
         if (items.isEmpty()) {
             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Text("暂无文件", color = NetShieldTextSecondary, fontSize = 18.sp)
+                val hint = searchQuery.trim().takeIf { it.isNotEmpty() }?.let { q ->
+                    "未找到匹配「$q」的文件"
+                } ?: "暂无文件"
+                Text(hint, color = NetShieldTextSecondary, fontSize = 18.sp)
             }
             return
         }
@@ -569,9 +574,17 @@ private fun FileItemRow(
                 overflow = TextOverflow.Ellipsis,
             )
             Text(
-                text = if (item.isDirectory) "目录" else "${formatSize(item.sizeBytes)}",
+                text = when {
+                    !item.parentPathLabel.isNullOrBlank() && item.isDirectory -> item.parentPathLabel
+                    !item.parentPathLabel.isNullOrBlank() ->
+                        "${item.parentPathLabel} · ${formatSize(item.sizeBytes)}"
+                    item.isDirectory -> "目录"
+                    else -> formatSize(item.sizeBytes)
+                },
                 color = NetShieldTextSecondary,
                 fontSize = 14.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
             )
         }
         if (!selectionMode) {

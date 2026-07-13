@@ -87,6 +87,7 @@ class FileManagerViewModel(application: Application) : AndroidViewModel(applicat
             it.copy(
                 currentPath = item.path,
                 currentPathLabel = buildDisplayPath(it.storageLocation),
+                searchQuery = "",
                 selectionMode = false,
                 selectedPaths = emptySet(),
             )

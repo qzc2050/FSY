@@ -308,47 +308,126 @@ class FileManagerRepository(context: Context) {
     private fun listLocalItems(directoryPath: String, keyword: String): List<FileListItem> {
         val dir = File(directoryPath)
         if (!dir.exists() || !dir.isDirectory || !dir.canRead()) return emptyList()
-        return dir.listFiles()
-            .orEmpty()
-            .asSequence()
-            .filter { file -> keyword.isEmpty() || file.name.lowercase(Locale.getDefault()).contains(keyword) }
+        if (keyword.isEmpty()) {
+            return dir.listFiles()
+                .orEmpty()
+                .asSequence()
+                .map { file -> toLocalListItem(file) }
+                .toList()
+        }
+        return searchLocalRecursive(dir, keyword)
+    }
+
+    private fun searchLocalRecursive(root: File, keyword: String): List<FileListItem> {
+        val rootPath = root.absolutePath
+        return root.walkTopDown()
+            .onEnter { it.canRead() }
+            .filter { it.absolutePath != rootPath }
+            .filter { file -> file.name.lowercase(Locale.getDefault()).contains(keyword) }
             .map { file ->
+                val parent = file.parentFile
+                val label = if (parent != null && parent.absolutePath != rootPath) {
+                    parent.relativeTo(root).path.replace('\\', '/')
+                } else {
+                    null
+                }
+                toLocalListItem(file, parentPathLabel = label)
+            }
+            .toList()
+    }
+
+    private fun toLocalListItem(file: File, parentPathLabel: String? = null): FileListItem =
+        FileListItem(
+            path = file.absolutePath,
+            name = file.name,
+            isDirectory = file.isDirectory,
+            sizeBytes = if (file.isFile) file.length().coerceAtLeast(0L) else 0L,
+            modifiedAt = file.lastModified().coerceAtLeast(0L),
+            storageLocation = FileStorageLocation.Local,
+            parentPathLabel = parentPathLabel,
+        )
+
+    private fun listUsbItems(directoryPath: String, keyword: String): List<FileListItem> {
+        return runCatching {
+            if (keyword.isEmpty()) {
+                if (isRootUsbPath(directoryPath)) {
+                    listRootUsbItems(directoryPath, keyword)
+                } else {
+                    val dir = openUsbDirectory(directoryPath, requireWritable = false)
+                        ?: return emptyList()
+                    dir.listFiles()
+                        .asSequence()
+                        .map { file -> toUsbListItem(file) }
+                        .toList()
+                }
+            } else if (isRootUsbPath(directoryPath)) {
+                searchRootUsbRecursive(directoryPath, keyword)
+            } else {
+                val dir = openUsbDirectory(directoryPath, requireWritable = false)
+                    ?: return emptyList()
+                searchUsbRecursive(dir, keyword)
+            }
+        }.getOrDefault(emptyList())
+    }
+
+    private fun searchUsbRecursive(root: DocumentFile, keyword: String): List<FileListItem> {
+        val results = mutableListOf<FileListItem>()
+        fun walk(dir: DocumentFile, relativeParent: String?) {
+            dir.listFiles().forEach { child ->
+                val name = child.name.orEmpty().ifBlank { "未命名" }
+                if (name.lowercase(Locale.getDefault()).contains(keyword)) {
+                    results += toUsbListItem(child, parentPathLabel = relativeParent)
+                }
+                if (child.isDirectory) {
+                    val childParent = relativeParent?.let { "$it/$name" } ?: name
+                    walk(child, childParent)
+                }
+            }
+        }
+        walk(root, null)
+        return results
+    }
+
+    private fun searchRootUsbRecursive(directoryPath: String, keyword: String): List<FileListItem> {
+        val command = "find ${RootShell.quote(directoryPath)} -print"
+        val result = RootShell.run(command)
+        if (!result.isSuccess || result.stdout.isBlank()) return emptyList()
+        val root = File(directoryPath)
+        return result.stdout.lineSequence()
+            .map { it.trim() }
+            .filter { it.isNotBlank() && it != directoryPath }
+            .mapNotNull { path ->
+                val meta = rootPathMeta(path) ?: return@mapNotNull null
+                if (!meta.name.lowercase(Locale.getDefault()).contains(keyword)) return@mapNotNull null
+                val parent = File(path).parentFile
+                val label = if (parent != null && parent.absolutePath != directoryPath) {
+                    parent.relativeTo(root).path.replace('\\', '/')
+                } else {
+                    null
+                }
                 FileListItem(
-                    path = file.absolutePath,
-                    name = file.name,
-                    isDirectory = file.isDirectory,
-                    sizeBytes = if (file.isFile) file.length().coerceAtLeast(0L) else 0L,
-                    modifiedAt = file.lastModified().coerceAtLeast(0L),
-                    storageLocation = FileStorageLocation.Local,
+                    path = path,
+                    name = meta.name,
+                    isDirectory = meta.isDirectory,
+                    sizeBytes = meta.sizeBytes,
+                    modifiedAt = meta.modifiedAt,
+                    storageLocation = FileStorageLocation.Usb,
+                    parentPathLabel = label,
                 )
             }
             .toList()
     }
 
-    private fun listUsbItems(directoryPath: String, keyword: String): List<FileListItem> {
-        return runCatching {
-            if (isRootUsbPath(directoryPath)) {
-                listRootUsbItems(directoryPath, keyword)
-            } else {
-                val dir = openUsbDirectory(directoryPath, requireWritable = false)
-                    ?: return emptyList()
-                dir.listFiles()
-                    .asSequence()
-                    .filter { file -> keyword.isEmpty() || file.name.orEmpty().lowercase(Locale.getDefault()).contains(keyword) }
-                    .map { file ->
-                        FileListItem(
-                            path = file.uri.toString(),
-                            name = file.name.orEmpty().ifBlank { "未命名" },
-                            isDirectory = file.isDirectory,
-                            sizeBytes = if (file.isFile) file.length().coerceAtLeast(0L) else 0L,
-                            modifiedAt = file.lastModified().coerceAtLeast(0L),
-                            storageLocation = FileStorageLocation.Usb,
-                        )
-                    }
-                    .toList()
-            }
-        }.getOrDefault(emptyList())
-    }
+    private fun toUsbListItem(file: DocumentFile, parentPathLabel: String? = null): FileListItem =
+        FileListItem(
+            path = file.uri.toString(),
+            name = file.name.orEmpty().ifBlank { "未命名" },
+            isDirectory = file.isDirectory,
+            sizeBytes = if (file.isFile) file.length().coerceAtLeast(0L) else 0L,
+            modifiedAt = file.lastModified().coerceAtLeast(0L),
+            storageLocation = FileStorageLocation.Usb,
+            parentPathLabel = parentPathLabel,
+        )
 
     private fun listRootUsbItems(directoryPath: String, keyword: String): List<FileListItem> {
         val command = "find ${RootShell.quote(directoryPath)} -mindepth 1 -maxdepth 1 -print"

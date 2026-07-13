@@ -12,6 +12,8 @@ data class FileListItem(
     val sizeBytes: Long,
     val modifiedAt: Long,
     val storageLocation: FileStorageLocation,
+    /** 递归搜索时显示相对当前目录的父路径，如 Music */
+    val parentPathLabel: String? = null,
 )
 
 data class PendingFileTransfer(
