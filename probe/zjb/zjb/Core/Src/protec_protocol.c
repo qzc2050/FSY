@@ -9,7 +9,7 @@
 
 #define PROTEC_FUNC_ACTIVE_MULTI   0x23U
 
-#define SW_VERSION_STR "V1.1.4.20260713R"
+#define SW_VERSION_STR "V1.1.5.20260714T2"
 
 SystemStatus_t g_system_status;
 const char g_sw_version[20] = SW_VERSION_STR;
@@ -220,15 +220,26 @@ void Protec_SendRealtime(void)
 
   if (Protec_PayloadLooksValid() == 0U)
   {
-    s_bad_upload_count++;
-    if (s_bad_upload_count >= 3U)
+    /*
+     * 传感器离线/预热/异常零值不应导致整机反复复位。
+     * 保留计数供 ST-Link 观察，并置各传感器离线报警后继续发送，
+     * 让上位机仍能判断 ZJB 在线及查看 IO 状态。
+     */
+    if (s_bad_upload_count < 0xFFU)
     {
-      NVIC_SystemReset();
+      s_bad_upload_count++;
     }
-    return;
+    g_system_status.alarm_bit1 |=
+        (1UL << 6)  |  /* 温度离线 */
+        (1UL << 10) |  /* 气压离线 */
+        (1UL << 14) |  /* 湿度离线 */
+        (1UL << 18) |  /* CO2 离线 */
+        (1UL << 22);   /* PM2.5 离线 */
   }
-
-  s_bad_upload_count = 0U;
+  else
+  {
+    s_bad_upload_count = 0U;
+  }
 
   /* 组一帧 0x23 帧 */
   buf[idx++] = (uint8_t)PROTEC_ADDR;

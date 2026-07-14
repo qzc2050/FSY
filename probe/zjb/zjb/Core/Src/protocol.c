@@ -7,9 +7,24 @@
 #include "ota.h"
 #include "main.h"
 #include "lora_boot.h"
+#include "cmsis_os.h"
+#include "FreeRTOS.h"
+#include "task.h"
 
 #include <string.h>
 #include <stdio.h>
+
+static void Protocol_YieldDelay(uint32_t ms)
+{
+  if (xTaskGetSchedulerState() != taskSCHEDULER_NOT_STARTED)
+  {
+    osDelay(ms);
+  }
+  else
+  {
+    HAL_Delay(ms);
+  }
+}
 
 /* 1=USART1 打印 LoRa 完整帧 hex（CRC 通过后）；接 App 时改 0 */
 #define LORA_RX_LOG           0
@@ -262,6 +277,7 @@ static void Protocol_LoraParseStream(void)
       s_lora_rx_len = 0U;
       return;
     }
+
   }
 }
 
@@ -417,15 +433,8 @@ static void CanCache_TryParseAndForward(CanSlaveCache *c)
       continue;
     }
 
-    /* CRC 通过：CAN 始终转发；LoRa 转发看 bit9 */
-    {
-      uint8_t addr = c->buf[0];
-      (void)USART1_Tx(c->buf, frame_len, 100U);
-      if ((addr != (uint8_t)PROTOCOL_ADDR) && Config_LoraEnabled())
-      {
-        (void)Lora_Usart2Tx(c->buf, frame_len, 100U);
-      }
-    }
+    /* CAN 上行只回 App，不再横向镜像到 LoRa。 */
+    (void)USART1_Tx(c->buf, frame_len, 100U);
 
     if (c->len > frame_len)
     {
@@ -528,12 +537,12 @@ static void Protocol_ForwardToCan(const uint8_t *buf, uint16_t len)
     offset = (uint16_t)(offset + dlc);
     if (offset < len)
     {
-      HAL_Delay(1U);
+      Protocol_YieldDelay(1U);
     }
   }
 }
 
-/* App/CAN → LoRa + CAN */
+/* App 下行 → LoRa + CAN */
 static void Protocol_ForwardFromApp(const uint8_t *buf, uint16_t len)
 {
   if (Config_LoraEnabled())
@@ -543,7 +552,7 @@ static void Protocol_ForwardFromApp(const uint8_t *buf, uint16_t len)
   Protocol_ForwardToCan(buf, len);
 }
 
-/* LoRa → App + CAN */
+/* LoRa 上行只回 App，不再横向镜像到 CAN。 */
 static void Protocol_ForwardFromLora(const uint8_t *buf, uint16_t len)
 {
   if (!Config_LoraEnabled())
@@ -552,7 +561,6 @@ static void Protocol_ForwardFromLora(const uint8_t *buf, uint16_t len)
   }
 
   (void)USART1_Tx(buf, len, 100U);
-  Protocol_ForwardToCan(buf, len);
 }
 
 static void Protocol_HandleWriteMultiple(const uint8_t *frame, uint16_t len)

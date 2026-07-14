@@ -20,6 +20,7 @@
 /* Includes ------------------------------------------------------------------*/
 #include "usart.h"
 #include "cmsis_os.h"
+#include <string.h>
 
 /* USER CODE BEGIN 0 */
 static uint8_t usart1_rx_buf[USART1_RX_BUF_SIZE];
@@ -66,15 +67,72 @@ void USART1_Rx_Start(void)
   HAL_NVIC_EnableIRQ(USART1_IRQn);
 }
 
+/* 互斥勿用 osWaitForever：持锁任务异常后会导致整条 USART1「永久不发」。 */
+#ifndef USART_TX_MUTEX_WAIT_MS
+#define USART_TX_MUTEX_WAIT_MS  200U
+#endif
+/* 只有实际连续发送失败才恢复；无业务/OTA 静默不属于故障。 */
+#ifndef USART1_TX_RECOVER_FAILURES
+#define USART1_TX_RECOVER_FAILURES  3U
+#endif
+
+USART1_Diag_t g_usart1_diag;
+
+static void USART_ForceReady(UART_HandleTypeDef *huart)
+{
+  volatile uint32_t sr;
+  volatile uint32_t dr;
+
+  if (huart == NULL)
+  {
+    return;
+  }
+
+  /* 读 SR+DR 清除 ORE/FE/NE/PE，避免错误态影响后续收发 */
+  sr = huart->Instance->SR;
+  dr = huart->Instance->DR;
+  (void)sr;
+  (void)dr;
+
+  huart->ErrorCode = HAL_UART_ERROR_NONE;
+  huart->gState = HAL_UART_STATE_READY;
+  huart->RxState = HAL_UART_STATE_READY;
+  huart->Lock = HAL_UNLOCKED;
+}
+
+static void USART1_RecordFailure(HAL_StatusTypeDef status)
+{
+  if (status == HAL_BUSY)
+  {
+    g_usart1_diag.tx_busy++;
+  }
+  else if (status == HAL_TIMEOUT)
+  {
+    g_usart1_diag.tx_timeout++;
+  }
+  else
+  {
+    g_usart1_diag.tx_error++;
+  }
+
+  if (g_usart1_diag.consecutive_failures < 0xFFFFFFFFU)
+  {
+    g_usart1_diag.consecutive_failures++;
+  }
+}
+
 void USART1_TxInit(void)
 {
   static const osMutexAttr_t attr = { .name = "usart1Tx" };
   s_usart1_tx_mutex = osMutexNew(&attr);
+  memset(&g_usart1_diag, 0, sizeof(g_usart1_diag));
+  g_usart1_diag.last_ok_tick = HAL_GetTick();
 }
 
 HAL_StatusTypeDef USART1_Tx(const uint8_t *buf, uint16_t len, uint32_t timeout)
 {
   HAL_StatusTypeDef status;
+  uint8_t got_lock = 0U;
 
   if ((buf == NULL) || (len == 0U))
   {
@@ -83,17 +141,71 @@ HAL_StatusTypeDef USART1_Tx(const uint8_t *buf, uint16_t len, uint32_t timeout)
 
   if (s_usart1_tx_mutex != NULL)
   {
-    (void)osMutexAcquire(s_usart1_tx_mutex, osWaitForever);
+    if (osMutexAcquire(s_usart1_tx_mutex, USART_TX_MUTEX_WAIT_MS) != osOK)
+    {
+      /* 不持有互斥时禁止改 HAL 状态，避免破坏另一任务正在进行的 TX。 */
+      g_usart1_diag.mutex_timeout++;
+      if (g_usart1_diag.consecutive_failures < 0xFFFFFFFFU)
+      {
+        g_usart1_diag.consecutive_failures++;
+      }
+      return HAL_TIMEOUT;
+    }
+    got_lock = 1U;
   }
 
   status = HAL_UART_Transmit(&huart1, (uint8_t *)buf, len, timeout);
+  if (status != HAL_OK)
+  {
+    USART1_RecordFailure(status);
+    USART_ForceReady(&huart1);
+    g_usart1_diag.recover_count++;
+    status = HAL_UART_Transmit(&huart1, (uint8_t *)buf, len, timeout);
+  }
 
-  if (s_usart1_tx_mutex != NULL)
+  if (status == HAL_OK)
+  {
+    g_usart1_diag.tx_ok++;
+    g_usart1_diag.consecutive_failures = 0U;
+    g_usart1_diag.last_ok_tick = HAL_GetTick();
+  }
+  else
+  {
+    USART1_RecordFailure(status);
+  }
+
+  if (got_lock != 0U)
   {
     (void)osMutexRelease(s_usart1_tx_mutex);
   }
 
   return status;
+}
+
+void USART1_HealthService(void)
+{
+  if (g_usart1_diag.consecutive_failures < USART1_TX_RECOVER_FAILURES)
+  {
+    return;
+  }
+
+  /* 只有确有连续失败且成功拿锁时才恢复；不复位、不干预正在发送的任务。 */
+  if (s_usart1_tx_mutex != NULL)
+  {
+    if (osMutexAcquire(s_usart1_tx_mutex, 50U) == osOK)
+    {
+      USART_ForceReady(&huart1);
+      g_usart1_diag.recover_count++;
+      g_usart1_diag.consecutive_failures = 0U;
+      (void)osMutexRelease(s_usart1_tx_mutex);
+    }
+  }
+  else
+  {
+    USART_ForceReady(&huart1);
+    g_usart1_diag.recover_count++;
+    g_usart1_diag.consecutive_failures = 0U;
+  }
 }
 
 static uint8_t usart2_rx_buf[USART2_RX_BUF_SIZE];
@@ -149,6 +261,7 @@ void USART2_TxInit(void)
 HAL_StatusTypeDef USART2_Tx(const uint8_t *buf, uint16_t len, uint32_t timeout)
 {
   HAL_StatusTypeDef status;
+  uint8_t got_lock = 0U;
 
   if ((buf == NULL) || (len == 0U))
   {
@@ -157,12 +270,22 @@ HAL_StatusTypeDef USART2_Tx(const uint8_t *buf, uint16_t len, uint32_t timeout)
 
   if (s_usart2_tx_mutex != NULL)
   {
-    (void)osMutexAcquire(s_usart2_tx_mutex, osWaitForever);
+    if (osMutexAcquire(s_usart2_tx_mutex, USART_TX_MUTEX_WAIT_MS) != osOK)
+    {
+      USART_ForceReady(&huart2);
+      return HAL_TIMEOUT;
+    }
+    got_lock = 1U;
   }
 
   status = HAL_UART_Transmit(&huart2, (uint8_t *)buf, len, timeout);
+  if (status != HAL_OK)
+  {
+    USART_ForceReady(&huart2);
+    status = HAL_UART_Transmit(&huart2, (uint8_t *)buf, len, timeout);
+  }
 
-  if (s_usart2_tx_mutex != NULL)
+  if (got_lock != 0U)
   {
     (void)osMutexRelease(s_usart2_tx_mutex);
   }

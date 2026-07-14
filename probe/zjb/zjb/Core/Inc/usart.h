@@ -54,6 +54,20 @@ uint16_t USART1_Rx_Read(uint8_t *buf, uint16_t len);
 void USART1_Rx_PushByte(uint8_t byte);
 void USART1_TxInit(void);
 HAL_StatusTypeDef USART1_Tx(const uint8_t *buf, uint16_t len, uint32_t timeout);
+typedef struct
+{
+  volatile uint32_t tx_ok;
+  volatile uint32_t tx_busy;
+  volatile uint32_t tx_timeout;
+  volatile uint32_t tx_error;
+  volatile uint32_t mutex_timeout;
+  volatile uint32_t recover_count;
+  volatile uint32_t consecutive_failures;
+  volatile uint32_t last_ok_tick;
+} USART1_Diag_t;
+extern USART1_Diag_t g_usart1_diag;
+/** 仅在实际连续发送失败时恢复 HAL；合法静默/OTA 空闲不复位 */
+void USART1_HealthService(void);
 void USART2_Rx_Start(void);
 uint16_t USART2_Rx_GetCount(void);
 uint16_t USART2_Rx_Read(uint8_t *buf, uint16_t len);

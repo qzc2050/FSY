@@ -3,8 +3,23 @@
 #include "config_flash.h"
 #include "main.h"
 #include "usart.h"
+#include "cmsis_os.h"
+#include "FreeRTOS.h"
+#include "task.h"
 
 #include <stdio.h>
+
+static void Lora_YieldDelay(uint32_t ms)
+{
+  if (xTaskGetSchedulerState() != taskSCHEDULER_NOT_STARTED)
+  {
+    osDelay(ms);
+  }
+  else
+  {
+    HAL_Delay(ms);
+  }
+}
 
 #define LORA_CFG_RSP_LEN  6U
 #define LORA_CHAN_MHZ(ch) (410U + (uint32_t)(ch))
@@ -24,10 +39,11 @@ uint8_t Lora_WaitAuxReady(uint32_t timeout_ms)
     {
       return 0U;
     }
-    HAL_Delay(1U);
+    /* 调度运行后用 osDelay，避免 HAL_Delay 占死协议任务不让出 */
+    Lora_YieldDelay(1U);
   }
   /* 手册建议 AUX 拉高后再略等再发 */
-  HAL_Delay(2U);
+  Lora_YieldDelay(2U);
   return 1U;
 }
 

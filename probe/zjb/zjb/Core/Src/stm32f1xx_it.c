@@ -191,6 +191,18 @@ void SysTick_Handler(void)
   */
 void USART1_IRQHandler(void)
 {
+  /* 先清错误标志（读 SR+DR），避免 ORE 等错误挂起导致后续异常 */
+  if (__HAL_UART_GET_FLAG(&huart1, UART_FLAG_ORE) != 0U ||
+      __HAL_UART_GET_FLAG(&huart1, UART_FLAG_FE) != 0U ||
+      __HAL_UART_GET_FLAG(&huart1, UART_FLAG_NE) != 0U ||
+      __HAL_UART_GET_FLAG(&huart1, UART_FLAG_PE) != 0U)
+  {
+    volatile uint32_t sr = huart1.Instance->SR;
+    volatile uint32_t dr = huart1.Instance->DR;
+    (void)sr;
+    (void)dr;
+  }
+
   if (__HAL_UART_GET_FLAG(&huart1, UART_FLAG_RXNE) != 0U)
   {
     uint8_t b1 = (uint8_t)(huart1.Instance->DR & 0xFFU);
@@ -203,6 +215,17 @@ void USART1_IRQHandler(void)
   */
 void USART2_IRQHandler(void)
 {
+  if (__HAL_UART_GET_FLAG(&huart2, UART_FLAG_ORE) != 0U ||
+      __HAL_UART_GET_FLAG(&huart2, UART_FLAG_FE) != 0U ||
+      __HAL_UART_GET_FLAG(&huart2, UART_FLAG_NE) != 0U ||
+      __HAL_UART_GET_FLAG(&huart2, UART_FLAG_PE) != 0U)
+  {
+    volatile uint32_t sr = huart2.Instance->SR;
+    volatile uint32_t dr = huart2.Instance->DR;
+    (void)sr;
+    (void)dr;
+  }
+
   if (__HAL_UART_GET_FLAG(&huart2, UART_FLAG_RXNE) != 0U)
   {
     uint8_t b2 = (uint8_t)(huart2.Instance->DR & 0xFFU);
@@ -215,6 +238,17 @@ void USART2_IRQHandler(void)
   */
 void USART3_IRQHandler(void)
 {
+  if (__HAL_UART_GET_FLAG(&huart3, UART_FLAG_ORE) != 0U ||
+      __HAL_UART_GET_FLAG(&huart3, UART_FLAG_FE) != 0U ||
+      __HAL_UART_GET_FLAG(&huart3, UART_FLAG_NE) != 0U ||
+      __HAL_UART_GET_FLAG(&huart3, UART_FLAG_PE) != 0U)
+  {
+    volatile uint32_t sr = huart3.Instance->SR;
+    volatile uint32_t dr = huart3.Instance->DR;
+    (void)sr;
+    (void)dr;
+  }
+
   if (__HAL_UART_GET_FLAG(&huart3, UART_FLAG_RXNE) != 0U)
   {
     uint8_t b3 = (uint8_t)(huart3.Instance->DR & 0xFFU);
