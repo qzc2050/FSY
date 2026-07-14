@@ -18,7 +18,7 @@ object ApkRelaunchHelper {
 
     private const val ACTION_RELAUNCH = "com.raydose.netshield.action.RELAUNCH_AFTER_UPDATE"
     private const val BASE_REQUEST_CODE = 9100
-    private const val MAX_ALARM_SLOTS = 8
+    private const val MAX_ALARM_SLOTS = 10
 
     /** 安装完成回调里调用：立即拉起并安排短间隔重试。 */
     fun relaunchAfterUpdate(context: Context) {
@@ -27,7 +27,20 @@ object ApkRelaunchHelper {
         relaunchNow(appContext)
         scheduleRelaunchAlarms(
             appContext,
-            delaysMs = longArrayOf(150, 400, 900, 1800),
+            delaysMs = longArrayOf(50, 150, 350, 700, 1_200, 2_000, 3_500),
+        )
+    }
+
+    /**
+     * 在发起覆盖安装前预埋闹钟：进程被杀后仍可由 AlarmManager 拉起，
+     * 缩短停在系统桌面的空窗。
+     */
+    fun armBeforeSelfUpdate(context: Context) {
+        val appContext = context.applicationContext
+        cancelScheduledRelaunch(appContext)
+        scheduleRelaunchAlarms(
+            appContext,
+            delaysMs = longArrayOf(250, 500, 1_000, 1_800, 3_000, 4_500),
         )
     }
 
@@ -47,22 +60,41 @@ object ApkRelaunchHelper {
         val alarmManager = context.getSystemService(AlarmManager::class.java) ?: return
         val triggerBase = SystemClock.elapsedRealtime()
         delaysMs.take(MAX_ALARM_SLOTS).forEachIndexed { index, delayMs ->
-            alarmManager.set(
-                AlarmManager.ELAPSED_REALTIME_WAKEUP,
-                triggerBase + delayMs,
-                buildActivityPendingIntent(context, BASE_REQUEST_CODE + index),
-            )
+            val pi = buildActivityPendingIntent(context, BASE_REQUEST_CODE + index)
+            val triggerAt = triggerBase + delayMs
+            runCatching {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                    alarmManager.setExactAndAllowWhileIdle(
+                        AlarmManager.ELAPSED_REALTIME_WAKEUP,
+                        triggerAt,
+                        pi,
+                    )
+                } else {
+                    alarmManager.setExact(
+                        AlarmManager.ELAPSED_REALTIME_WAKEUP,
+                        triggerAt,
+                        pi,
+                    )
+                }
+            }.onFailure {
+                alarmManager.set(
+                    AlarmManager.ELAPSED_REALTIME_WAKEUP,
+                    triggerAt,
+                    pi,
+                )
+            }
         }
     }
 
-    private fun launchIntent(context: Context): Intent =
+    fun launchIntent(context: Context): Intent =
         Intent(context, MainActivity::class.java).apply {
             action = ACTION_RELAUNCH
             addFlags(
                 Intent.FLAG_ACTIVITY_NEW_TASK or
                     Intent.FLAG_ACTIVITY_CLEAR_TOP or
                     Intent.FLAG_ACTIVITY_SINGLE_TOP or
-                    Intent.FLAG_ACTIVITY_NO_ANIMATION,
+                    Intent.FLAG_ACTIVITY_NO_ANIMATION or
+                    Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED,
             )
         }
 

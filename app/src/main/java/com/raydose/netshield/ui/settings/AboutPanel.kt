@@ -178,7 +178,7 @@ fun AboutPanel(
                             onSuccess = {
                                 showApkUpdateDialog = false
                                 showMessage(
-                                    message = "已调起系统安装。确认后可能短暂看到系统桌面，安装完成将自动返回本应用。",
+                                    message = "正在安装更新，完成后将自动重启本应用。",
                                     toast = false,
                                 )
                             },

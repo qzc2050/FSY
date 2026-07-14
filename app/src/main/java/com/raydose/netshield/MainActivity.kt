@@ -29,6 +29,7 @@ import androidx.compose.runtime.setValue
 import androidx.core.content.ContextCompat
 import com.raydose.netshield.data.ApkInstallHelper
 import com.raydose.netshield.data.ApkRelaunchHelper
+import com.raydose.netshield.data.ApkUpdateBrightnessCover
 import com.raydose.netshield.data.DisplaySoundController
 import com.raydose.netshield.data.FileManagerRepository
 import com.raydose.netshield.data.HostSettingsRepository
@@ -68,6 +69,9 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // 尽早 restore 亮屏，缩短更新后黑屏；可能略闪桌面，可接受。
+        // dim + bl_power 看门狗在 restoreIfNeeded 内 stop。
+        ApkUpdateBrightnessCover.restoreIfNeeded(this)
         ApkRelaunchHelper.cancelScheduledRelaunch(this)
         enableEdgeToEdge(
             statusBarStyle = SystemBarStyle.dark(Color.TRANSPARENT),

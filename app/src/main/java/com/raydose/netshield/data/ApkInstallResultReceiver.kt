@@ -12,31 +12,38 @@ import android.widget.Toast
 class ApkInstallResultReceiver : BroadcastReceiver() {
 
     override fun onReceive(context: Context, intent: Intent) {
-        val status = intent.getIntExtra(PackageInstaller.EXTRA_STATUS, PackageInstaller.STATUS_FAILURE)
-        val message = intent.getStringExtra(PackageInstaller.EXTRA_STATUS_MESSAGE).orEmpty()
-        when (status) {
-            PackageInstaller.STATUS_SUCCESS -> {
-                Log.i(TAG, "APK install session succeeded, relaunch app")
-                ApkRelaunchHelper.relaunchAfterUpdate(context)
-            }
-            PackageInstaller.STATUS_PENDING_USER_ACTION -> {
-                val confirm = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                    intent.getParcelableExtra(Intent.EXTRA_INTENT, Intent::class.java)
-                } else {
-                    @Suppress("DEPRECATION")
-                    intent.getParcelableExtra(Intent.EXTRA_INTENT)
+        val pending = goAsync()
+        try {
+            val status = intent.getIntExtra(PackageInstaller.EXTRA_STATUS, PackageInstaller.STATUS_FAILURE)
+            val message = intent.getStringExtra(PackageInstaller.EXTRA_STATUS_MESSAGE).orEmpty()
+            when (status) {
+                PackageInstaller.STATUS_SUCCESS -> {
+                    Log.i(TAG, "APK install session succeeded; relaunch app")
+                    ApkRelaunchHelper.relaunchAfterUpdate(context)
                 }
-                if (confirm != null) {
-                    confirm.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_NO_ANIMATION)
-                    context.startActivity(confirm)
-                } else {
-                    Log.w(TAG, "Install pending user action but no confirm intent")
+                PackageInstaller.STATUS_PENDING_USER_ACTION -> {
+                    val confirm = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                        intent.getParcelableExtra(Intent.EXTRA_INTENT, Intent::class.java)
+                    } else {
+                        @Suppress("DEPRECATION")
+                        intent.getParcelableExtra(Intent.EXTRA_INTENT)
+                    }
+                    if (confirm != null) {
+                        confirm.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_NO_ANIMATION)
+                        context.startActivity(confirm)
+                    } else {
+                        Log.w(TAG, "Install pending user action but no confirm intent")
+                    }
+                }
+                else -> {
+                    Log.w(TAG, "APK install session failed: status=$status msg=$message")
+                    ApkRelaunchHelper.cancelScheduledRelaunch(context)
+                    ApkUpdateBrightnessCover.restoreIfNeeded(context)
+                    showInstallFailureToast(context.applicationContext, message)
                 }
             }
-            else -> {
-                Log.w(TAG, "APK install session failed: status=$status msg=$message")
-                showInstallFailureToast(context.applicationContext, message)
-            }
+        } finally {
+            pending.finish()
         }
     }
 

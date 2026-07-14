@@ -122,7 +122,7 @@ fun ApkUpdatePickerDialog(
                 fontWeight = FontWeight.SemiBold,
             )
             Text(
-                text = "请选择 APK 文件，将调起系统安装界面完成本机应用更新。",
+                text = "请选择 APK 文件完成本机应用更新，安装完成后将自动重启本应用。",
                 color = NetShieldTextSecondary,
                 fontSize = 16.sp,
                 modifier = Modifier.padding(top = 8.dp),
