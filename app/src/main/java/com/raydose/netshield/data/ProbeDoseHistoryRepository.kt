@@ -29,14 +29,8 @@ class ProbeDoseHistoryRepository(context: Context) {
     }
 
     fun dailySummaries(probeId: String, fallbackBaseRateUsvH: Double, dayCount: Int = 7): List<DailyDoseSummary> {
-        val samples = loadSamples(probeId)
-        /* 无真实样本时仅内存模拟展示，不落盘，避免占满 5min 桶导致真帧被拒 */
-        val forAgg = if (samples.isEmpty()) {
-            buildSimulatedSamples(probeId, fallbackBaseRateUsvH, dayCount)
-        } else {
-            samples
-        }
-        return aggregateDaily(forAgg, dayCount)
+        // fallbackBaseRateUsvH 保留兼容调用方；无真实 5min 样本时日累计显示 0，不再用剂量率编假历史
+        return aggregateDaily(loadSamples(probeId), dayCount)
     }
 
     private fun loadSamples(probeId: String): List<ProbeDoseSample> {
@@ -91,28 +85,6 @@ class ProbeDoseHistoryRepository(context: Context) {
                 )
             }
         }
-    }
-
-    private fun buildSimulatedSamples(
-        probeId: String,
-        baseRateUsvH: Double,
-        dayCount: Int,
-    ): List<ProbeDoseSample> {
-        /* 无真实 5min 帧时：用剂量率估算每窗累计 μSv ≈ rate × 5/60 */
-        val rate = if (baseRateUsvH <= 0.0) 0.08 else baseRateUsvH
-        val end = System.currentTimeMillis()
-        val start = end - TimeUnit.DAYS.toMillis(dayCount.toLong())
-        val samples = mutableListOf<ProbeDoseSample>()
-        var cursor = alignToFiveMinuteBucket(start)
-        var index = 0
-        while (cursor <= end) {
-            val drift = 0.95 - (index % 48) * 0.003
-            val doseUsv = (rate * (SAMPLE_INTERVAL_MINUTES / 60.0) * drift).coerceAtLeast(0.001)
-            samples += ProbeDoseSample(probeId, doseUsv, cursor)
-            cursor += SAMPLE_INTERVAL_MS
-            index++
-        }
-        return samples
     }
 
     private fun alignToFiveMinuteBucket(millis: Long): Long {

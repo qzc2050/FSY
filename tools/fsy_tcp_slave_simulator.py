@@ -29,9 +29,9 @@ MCAST_GRP = "236.2.3.6"
 MCAST_PORT = 2468
 
 MODEL = "FSY-I"
-SN = "1905CCM0101"
+SN = "1905FSY0103"
 DEFAULT_TCP_PORT = 5001
-PROTO_ADDR = "1"
+PROTO_ADDR = "3"
 PROTO_TYPE = "0"
 # 文档里数据流端口；组播串里展示用（TCP 模式仍以 tcp_port 为准）
 DATA_PORT_STR = "5000"
@@ -78,47 +78,49 @@ DEFAULT_UPLOAD_VALUES: List[int] = [
     304,
     101759,
     32,
-    1540,
-    370,
+    420,     # CO2：与 App 一致，线值即 ppm（不 ×10）
+    370,     # PM2.5：×10 ug/m3
     0,
-    0x3BE,
+    0x3BF,   # status：bit0=1 门开（与 App 探头侧一致）
     0,
     0,
     0,
 ]
 
 # 报警阈值默认值（顺序：辐射上/下、温度上/下、气压上/下、湿度上/下、CO2上/下、PM2.5上/下）
-# 单位同实时上传：辐射×100 uSv/h，温度×10 ℃，气压 Pa，湿度 %，CO2×10 ppm，PM2.5×10 ug/m3
+# 单位同 App：辐射×100 uSv/h，温度×10 ℃，气压 Pa，湿度 %，CO2 ppm（原样），PM2.5×10 ug/m3
 DEFAULT_THRESHOLDS: List[int] = [
     10000,  0,       # 辐射  上限 100.00 uSv/h / 下限 0.00 uSv/h
     600,    0,       # 温度  上限 60.0 ℃      / 下限 0.0 ℃
     110000, 90000,   # 气压  上限 110000 Pa    / 下限 90000 Pa
     90,     10,      # 湿度  上限 90 %         / 下限 10 %
-    10000,  0,       # CO2   上限 1000.0 ppm   / 下限 0.0 ppm
+    1000,   0,       # CO2   上限 1000 ppm     / 下限 0 ppm
     1500,   0,       # PM2.5 上限 150.0 ug/m3  / 下限 0.0 ug/m3
 ]
 
-# 报警使能默认：bit0/bit1=0 表示辐射上下限报警均启用（与安卓 UI 一致）
-DEFAULT_ALARM_ENABLE = 0
+# 报警使能默认：与 App 一致，bit=1 表示启用；bit0/bit1=1 辐射上下限均开
+DEFAULT_ALARM_ENABLE = 0b11
 DEFAULT_VOLUME = 50  # 寄存器 0x7A，0~100
+FIVE_MIN_AUTO_INTERVAL_SEC = 300.0  # 勾选自动五分钟上传的周期
 
 # 寄存器地址定义
 REG_REALTIME    = 0x0001  # 实时上传数据（11×u32）
 REG_STATUS_BIT  = 0x000F  # 状态位图（2 regs = 1×u32）
-REG_FIVE_MIN    = 0x001E  # 五分钟值（表地址 30）
-REG_DEVICE_TIME = 0x0020  # 设备 RTC 时间（4 regs = 8 bytes）
+REG_FIVE_MIN    = 0x001E  # 五分钟值（表地址 30）：累计 μSv×100
+REG_DEVICE_TIME = 0x0020  # 旧 RTC 地址（兼容）
 REG_RAD_UPPER   = 0x0032  # 辐射报警上阈值（2 regs = 1×u32）
 REG_RAD_LOWER   = 0x0034  # 辐射报警下阈值（2 regs = 1×u32）
 REG_THRESHOLDS  = 0x0040  # 报警阈值（24 regs = 48 bytes = 12×u32）
-REG_ALARM_ENABLE = 0x0052  # 报警使能（2 regs = 1×u32，bit=1 禁止）
+REG_ALARM_ENABLE = 0x0052  # 报警使能（2 regs = 1×u32，bit=1 启用，与 App 一致）
 REG_SERIALNUM   = 0x0056  # 序列号（8 regs = 16 bytes ASCII）
+REG_TIME        = 0x005E  # App 对时写/读 RTC（4 regs = 8 bytes）；模拟机时间源用 PC
 REG_VERSION     = 0x0062  # 固件版本字符串（10 regs = 20 bytes）
 REG_CONTROL_VOL  = 0x007A  # controlbit1 音量（1 reg = uint16 0~100）
 REG_CONTROL_BIT2 = 0x007B # controlbit2（2 regs = 1×u32）
 
 CONTROL_BIT2_MASK = 0x7FFE  # bit1..bit14，可控制；bit0 门状态不允许控制
 
-# 报警使能 0x52：bit=1 表示禁止该项报警
+# 报警使能 0x52：bit=1 表示启用该项报警（与 App ProbeProtocolExt 一致）
 _ALARM_ENABLE_BIT_NAMES = (
     "辐射上阈值", "辐射下阈值", "辐射离线",
     "保留3", "温度上阈值", "温度下阈值", "温度离线",
@@ -146,6 +148,7 @@ _REG_READ_NAMES = {
     REG_THRESHOLDS: "报警阈值块(0x0040)",
     REG_ALARM_ENABLE: "报警使能(0x0052)",
     REG_SERIALNUM: "序列号(0x0056)",
+    REG_TIME: "设备时间(0x005E)",
     REG_VERSION: "固件版本(0x0062)",
     REG_CONTROL_VOL: "报警音量(0x007A)",
     REG_CONTROL_BIT2: "controlbit2(0x007B)",
@@ -166,8 +169,8 @@ _THR_ITEM_FMT: List[tuple] = [
     ("气压下限", 1.0, "Pa", 0),
     ("湿度上限", 1.0, "%", 0),
     ("湿度下限", 1.0, "%", 0),
-    ("CO2上限", 10.0, "ppm", 1),
-    ("CO2下限", 10.0, "ppm", 1),
+    ("CO2上限", 1.0, "ppm", 0),
+    ("CO2下限", 1.0, "ppm", 0),
     ("PM2.5上限", 10.0, "ug/m3", 1),
     ("PM2.5下限", 10.0, "ug/m3", 1),
 ]
@@ -202,7 +205,8 @@ def _format_thresholds_brief(thr: List[int]) -> str:
 def _format_controlbit2(v: int) -> str:
     v &= 0xFFFFFFFF
     hints: List[str] = []
-    hints.append("门关" if (v & 1) else "门开")
+    # 与 App 探头侧一致：bit0=1 门开，bit0=0 门关
+    hints.append("门开" if (v & 1) else "门关")
     if (v >> 7) & 1:
         hints.append("风扇开")
     if (v >> 8) & 1:
@@ -219,13 +223,13 @@ def _format_controlbit2(v: int) -> str:
 def _format_alarm_enable_mask(mask: int) -> str:
     mask &= 0xFFFFFFFF
     if mask == 0:
-        return "全部启用(bit全0)"
-    disabled = [
+        return "全部关闭(bit全0)"
+    enabled = [
         name
         for bit, name in enumerate(_ALARM_ENABLE_BIT_NAMES)
         if bit < 32 and (mask >> bit) & 1 and not name.startswith("保留")
     ]
-    return f"禁止: {', '.join(disabled) if disabled else '无'} (raw=0x{mask:08X})"
+    return f"启用: {', '.join(enabled) if enabled else '无'} (raw=0x{mask:08X})"
 
 
 def _reg_operation_name(start: int) -> str:
@@ -261,11 +265,11 @@ def describe_host_request(req: bytes) -> str:
         bc = req[6]
         data = req[7:7 + bc] if len(req) >= 7 + bc else b""
 
-        if start == REG_DEVICE_TIME and bc >= 6:
+        if start in (REG_DEVICE_TIME, REG_TIME) and bc >= 6:
             y, mo, d, h, mi, s = data[0], data[1], data[2], data[3], data[4], data[5]
             return (
-                f"写 设备时间 → 20{y:02d}-{mo:02d}-{d:02d} {h:02d}:{mi:02d}:{s:02d} | "
-                f"{req.hex(' ').upper()}"
+                f"写 设备时间(0x{start:04X}) → 20{y:02d}-{mo:02d}-{d:02d} {h:02d}:{mi:02d}:{s:02d} "
+                f"(模拟机忽略写入，仍用 PC 时钟) | {req.hex(' ').upper()}"
             )
 
         if start in (REG_RAD_UPPER, REG_RAD_LOWER) and bc >= 4:
@@ -329,9 +333,9 @@ def describe_host_response(req: bytes, rsp: bytes) -> str:
             serial = payload.decode("ascii", errors="replace").rstrip("\x00").strip()
             return f"读应答 序列号: {serial!r}"
 
-        if start == REG_DEVICE_TIME and len(payload) >= 6:
+        if start in (REG_DEVICE_TIME, REG_TIME) and len(payload) >= 6:
             y, mo, d, h, mi, s = payload[0], payload[1], payload[2], payload[3], payload[4], payload[5]
-            return f"读应答 设备时间: 20{y:02d}-{mo:02d}-{d:02d} {h:02d}:{mi:02d}:{s:02d}"
+            return f"读应答 设备时间(0x{start:04X}): 20{y:02d}-{mo:02d}-{d:02d} {h:02d}:{mi:02d}:{s:02d}"
 
         if start == REG_STATUS_BIT and len(payload) >= 4:
             v = struct.unpack_from("<I", payload, 0)[0]
@@ -370,10 +374,11 @@ def build_upload_frame(device_addr: int, values: Optional[List[int]] = None) -> 
     return head + struct.pack("<H", crc)
 
 
-def build_five_minute_upload_frame(device_addr: int, dose_rate_x100: int, ts: Optional[time.struct_time] = None) -> bytes:
+def build_five_minute_upload_frame(device_addr: int, dose_uSv_x100: int, ts: Optional[time.struct_time] = None) -> bytes:
     """
-    0x23 五分钟值（主动上传 / 历史应答）：
-    地址|0x23|0x0C|起始寄存器(0x001E, LE)|data_time[8]|dose_rate(uint32, *100)|CRC
+    0x23 五分钟值（主动上传）：
+    地址|0x23|0x0C|起始寄存器(0x001E, LE)|data_time[8]|累计剂量(uint32, μSv×100)|CRC
+    时间戳用 PC 本地时钟。
     """
     func = 0x23
     byte_count = 0x0C
@@ -393,10 +398,19 @@ def build_five_minute_upload_frame(device_addr: int, dose_rate_x100: int, ts: Op
             0x00,
         ]
     )
-    payload = data_time + u32le(max(0, int(dose_rate_x100)))
+    payload = data_time + u32le(max(0, int(dose_uSv_x100)))
     head = bytes([device_addr, func, byte_count]) + struct.pack("<H", start_reg) + payload
     crc = crc16_modbus(head)
     return head + struct.pack("<H", crc)
+
+
+def _pc_time_bytes(reg_bytes: int) -> bytes:
+    """RTC 载荷：始终用 PC 本地时间，不受 App 对时写入影响。"""
+    t = time.localtime()
+    time_bytes = bytes(
+        [t.tm_year % 100, t.tm_mon, t.tm_mday, t.tm_hour, t.tm_min, t.tm_sec, 0, 0]
+    )
+    return (time_bytes + bytes(max(0, reg_bytes - 8)))[:reg_bytes]
 
 
 def _crc_ok(frame: bytes) -> bool:
@@ -603,8 +617,10 @@ class TcpSlave:
         self._status_bit: int = self._upload_values[7] if len(self._upload_values) > 7 else 0
         self._control_bit2: int = self._status_bit & CONTROL_BIT2_MASK
         self._push_send_count = 0  # 0x23 推送计数，用于降低日志频率
-        # 存储被写入的设备时间（year%100, month, day, hour, min, sec），None 表示用实时时钟
-        self._device_time: Optional[tuple] = None
+        # 五分钟自动上传（勾选后每 FIVE_MIN_AUTO_INTERVAL_SEC 发一帧 0x001E）
+        self._five_min_auto = False
+        self._five_min_dose_provider: Optional[Callable[[], int]] = None
+        self._five_min_dose_x100 = 0
 
     def stop(self) -> None:
         self._stop.set()
@@ -760,17 +776,25 @@ class TcpSlave:
             ver = self.firmware_version.encode("ascii", errors="replace")[:20].ljust(20, b"\x00")
             data.extend(ver[:reg_bytes])
 
-        elif start == REG_DEVICE_TIME:
-            # 设备 RTC 时间：[year%100, month, day, hour, min, sec, 0, 0]
-            # 若曾被同步则返回存储值，否则返回本机实时时钟
-            if self._device_time is not None:
-                y, mo, d, h, mi, s = self._device_time
-            else:
-                t = time.localtime()
-                y, mo, d, h, mi, s = t.tm_year % 100, t.tm_mon, t.tm_mday, t.tm_hour, t.tm_min, t.tm_sec
-            time_bytes = bytes([y, mo, d, h, mi, s, 0, 0])
-            payload = (time_bytes + bytes(max(0, reg_bytes - 8)))[:reg_bytes]
-            data.extend(payload)
+        elif start in (REG_DEVICE_TIME, REG_TIME):
+            # App 写 0x005E 对时：模拟机 ACK 但不改钟；读始终返回 PC 时间
+            data.extend(_pc_time_bytes(reg_bytes))
+
+        elif start == REG_RAD_UPPER:
+            with self._lock:
+                hi = self._thresholds[0]
+            data.extend(u32le(hi)[:reg_bytes].ljust(reg_bytes, b"\x00"))
+
+        elif start == REG_RAD_LOWER:
+            with self._lock:
+                lo = self._thresholds[1]
+            data.extend(u32le(lo)[:reg_bytes].ljust(reg_bytes, b"\x00"))
+
+        elif start == REG_REALTIME:
+            with self._lock:
+                vals = list(self._upload_values)
+            payload = b"".join(u32le(v) for v in vals)
+            data.extend((payload + bytes(max(0, reg_bytes - len(payload))))[:reg_bytes])
 
         elif start == REG_THRESHOLDS:
             # 12 个 u32 报警阈值（48 bytes）
@@ -824,9 +848,13 @@ class TcpSlave:
             return
         data = req[7:7 + bc]
 
-        if start == REG_DEVICE_TIME and bc >= 8:
+        if start in (REG_DEVICE_TIME, REG_TIME) and bc >= 6:
+            # ACK 由外层完成；模拟机用 PC 时钟，忽略 App 下发的时间
             y, mo, d, h, mi, s = data[0], data[1], data[2], data[3], data[4], data[5]
-            self._device_time = (y, mo, d, h, mi, s)
+            self._log(
+                f"[TIME] 收到对时写 0x{start:04X} → 20{y:02d}-{mo:02d}-{d:02d} "
+                f"{h:02d}:{mi:02d}:{s:02d}，已忽略（仍用 PC 时钟）"
+            )
 
         elif start in (REG_RAD_UPPER, REG_RAD_LOWER) and bc >= 4:
             value = struct.unpack_from("<I", data, 0)[0]
@@ -872,9 +900,23 @@ class TcpSlave:
         if _CTRL_REG_NAMES.get(reg):
             return
 
-    def push_five_minute_value(self, dose_rate_x100: int) -> bool:
+    def set_five_min_auto(
+        self,
+        enabled: bool,
+        dose_uSv_x100: int = 0,
+        dose_provider: Optional[Callable[[], int]] = None,
+    ) -> None:
+        """开启/关闭每 5 分钟自动推送累计剂量（0x23 / 0x001E）。"""
+        with self._lock:
+            self._five_min_auto = bool(enabled)
+            self._five_min_dose_x100 = max(0, int(dose_uSv_x100))
+            self._five_min_dose_provider = dose_provider
+        state = "开" if enabled else "关"
+        self._log(f"[TCP PUSH 5MIN] 自动上传已{state}，周期 {FIVE_MIN_AUTO_INTERVAL_SEC:.0f}s")
+
+    def push_five_minute_value(self, dose_uSv_x100: int) -> bool:
         """
-        手动触发一次五分钟值主动上传（0x23 / 0x001E）。
+        手动触发一次五分钟值主动上传（0x23 / 0x001E，累计 μSv×100）。
         返回是否发送成功（仅代表已写入 socket）。
         """
         with self._lock:
@@ -883,17 +925,38 @@ class TcpSlave:
             self._log("[TCP PUSH 5MIN] 跳过：当前无客户端连接")
             return False
 
-        frame = build_five_minute_upload_frame(self.device_addr, dose_rate_x100)
+        frame = build_five_minute_upload_frame(self.device_addr, dose_uSv_x100)
         try:
             with self._write_lock:
                 c.sendall(frame)
-            self._log(f"[TCP PUSH 5MIN 0x23] {frame.hex(' ').upper()}")
+            self._log(
+                f"[TCP PUSH 5MIN 0x23] 累计={dose_uSv_x100 / 100:.2f} μSv | {frame.hex(' ').upper()}"
+            )
             return True
         except OSError as e:
             self._log(f"[TCP PUSH 5MIN 失败] {e}")
             with self._lock:
                 self._close_locked()
             return False
+
+    def five_min_auto_loop(self) -> None:
+        """勾选自动五分钟后周期推送；等待期间可随时 stop。"""
+        while not self._stop.wait(timeout=FIVE_MIN_AUTO_INTERVAL_SEC):
+            with self._lock:
+                enabled = self._five_min_auto
+                provider = self._five_min_dose_provider
+                fallback = self._five_min_dose_x100
+            if not enabled:
+                continue
+            dose = fallback
+            if provider is not None:
+                try:
+                    dose = max(0, int(provider()))
+                    with self._lock:
+                        self._five_min_dose_x100 = dose
+                except Exception as e:
+                    self._log(f"[TCP PUSH 5MIN] 读取累计剂量失败，用上次值: {e}")
+            self.push_five_minute_value(dose)
 
     def push_loop(self) -> None:
         while not self._stop.is_set():
@@ -1018,8 +1081,10 @@ class TcpSlave:
             daemon=True,
         )
         t_push = threading.Thread(target=self.push_loop, daemon=True)
+        t_5min = threading.Thread(target=self.five_min_auto_loop, daemon=True)
         t_mcast.start()
         t_push.start()
+        t_5min.start()
         self.accept_loop()
 
 
@@ -1031,7 +1096,7 @@ def main() -> None:
         help="可选：指定目标 IP（如安卓 IP）以在多网卡下选择与该局域网对应的源地址；省略则用默认路由推断",
     )
     ap.add_argument("--tcp-port", type=int, default=DEFAULT_TCP_PORT, help="TCP 服务端口（组播里控制端口）")
-    ap.add_argument("--device-addr", type=lambda x: int(x, 0), default=0x01, help="从机协议地址，如 0x01")
+    ap.add_argument("--device-addr", type=lambda x: int(x, 0), default=0x03, help="从机协议地址，如 0x03")
     ap.add_argument("--push-interval", type=float, default=1.0, help="TCP 上 0x23 推送周期(秒)")
     ap.add_argument(
         "--discovery-unicast",

@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import queue
+import random
 import sys
 import threading
 import tkinter as tk
@@ -26,6 +27,7 @@ from fsy_tcp_slave_simulator import (  # noqa: E402
     DEFAULT_THRESHOLDS,
     DEFAULT_ALARM_ENABLE,
     DEFAULT_VOLUME,
+    FIVE_MIN_AUTO_INTERVAL_SEC,
     infer_local_ipv4,
     SN,
     TcpSlave,
@@ -53,6 +55,7 @@ class SlaveGui:
         self._alarm_enable_q: queue.Queue[int] = queue.Queue()
         self._volume_q: queue.Queue[int] = queue.Queue()
         self._poll_scheduled = False
+        self._dose_jitter_token = 0
 
         self._build()
         self._refresh_local_ip()
@@ -82,7 +85,7 @@ class SlaveGui:
 
         ttk.Label(frm, text="从机地址:").grid(row=2, column=2, sticky=tk.E, **pad)
         self.entry_addr = ttk.Entry(frm, width=10)
-        self.entry_addr.insert(0, "0x01")
+        self.entry_addr.insert(0, "0x03")
         self.entry_addr.grid(row=2, column=3, sticky=tk.W, **pad)
 
         ttk.Label(frm, text="固件版本号(≤20字符):").grid(row=3, column=0, sticky=tk.W, **pad)
@@ -112,8 +115,17 @@ class SlaveGui:
         upload_box.columnconfigure(3, weight=1)
 
         ttk.Label(upload_box, text="辐射量(uSv/h):").grid(row=0, column=0, sticky=tk.W, **pad)
-        self.entry_dose = ttk.Entry(upload_box, width=14)
-        self.entry_dose.grid(row=0, column=1, sticky=tk.EW, **pad)
+        dose_cell = ttk.Frame(upload_box)
+        dose_cell.grid(row=0, column=1, sticky=tk.EW, **pad)
+        self.entry_dose = ttk.Entry(dose_cell, width=10)
+        self.entry_dose.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        self.var_dose_jitter = tk.BooleanVar(value=False)
+        ttk.Checkbutton(
+            dose_cell,
+            text="0.20~0.50波动",
+            variable=self.var_dose_jitter,
+            command=self._on_toggle_dose_jitter,
+        ).pack(side=tk.LEFT, padx=(6, 0))
         ttk.Label(upload_box, text="温度(℃):").grid(row=0, column=2, sticky=tk.W, **pad)
         self.entry_temp = ttk.Entry(upload_box, width=14)
         self.entry_temp.grid(row=0, column=3, sticky=tk.EW, **pad)
@@ -151,14 +163,17 @@ class SlaveGui:
 
         self._sync_fields_from_values(DEFAULT_UPLOAD_VALUES)
 
-        # 五分钟值手动上传区
-        five_min_box = ttk.LabelFrame(frm, text="五分钟值主动上传（0x23 / 寄存器 0x001E）")
+        # 五分钟值：累计 μSv（与 App 一致）；可手动发，或勾选每 5 分钟自动发
+        five_min_box = ttk.LabelFrame(
+            frm,
+            text="五分钟值主动上传（0x23 / 寄存器 0x001E，累计 μSv×100）",
+        )
         five_min_box.grid(row=6, column=0, columnspan=4, sticky=tk.EW, padx=8, pady=4)
         five_min_box.columnconfigure(1, weight=1)
 
-        ttk.Label(five_min_box, text="辐射量(uSv/h):").grid(row=0, column=0, sticky=tk.W, **pad)
+        ttk.Label(five_min_box, text="累计剂量(μSv):").grid(row=0, column=0, sticky=tk.W, **pad)
         self.entry_5min_dose = ttk.Entry(five_min_box, width=14)
-        self.entry_5min_dose.insert(0, "0.00")
+        self.entry_5min_dose.insert(0, "0.25")
         self.entry_5min_dose.grid(row=0, column=1, sticky=tk.W, **pad)
         self.btn_send_5min = ttk.Button(
             five_min_box,
@@ -166,7 +181,16 @@ class SlaveGui:
             command=self._on_send_five_minute,
             state=tk.DISABLED,
         )
-        self.btn_send_5min.grid(row=0, column=2, columnspan=2, padx=8, pady=4)
+        self.btn_send_5min.grid(row=0, column=2, padx=8, pady=4)
+        self.var_5min_auto = tk.BooleanVar(value=False)
+        self.chk_5min_auto = ttk.Checkbutton(
+            five_min_box,
+            text=f"每{int(FIVE_MIN_AUTO_INTERVAL_SEC // 60)}分钟自动发送",
+            variable=self.var_5min_auto,
+            command=self._on_toggle_five_min_auto,
+            state=tk.DISABLED,
+        )
+        self.chk_5min_auto.grid(row=0, column=3, sticky=tk.W, **pad)
 
         # 探头管理：报警使能 0x52、音量 0x7A、屏/光使能（status bit13/14）
         cfg_box = ttk.LabelFrame(
@@ -179,7 +203,7 @@ class SlaveGui:
         self.var_rad_alarm_on = tk.BooleanVar(value=True)
         ttk.Checkbutton(
             cfg_box,
-            text="辐射报警使能（0x52 bit0/1=0 启用，对应安卓「报警」开关）",
+            text="辐射报警使能（0x52 bit0/1=1 启用，与 App 一致）",
             variable=self.var_rad_alarm_on,
         ).grid(row=0, column=0, columnspan=3, sticky=tk.W, **pad)
 
@@ -273,14 +297,14 @@ class SlaveGui:
         self.lbl_volume.configure(text=str(int(float(_value))))
 
     def _sync_enable_flags_from_value(self, enable: int) -> None:
-        # bit0/1=1 表示禁止辐射上下限报警
-        on = (enable & 0b11) == 0
+        # 与 App 一致：bit0/1=1 表示启用辐射上下限报警
+        on = (enable & 0b11) != 0
         self.var_rad_alarm_on.set(on)
 
     def _alarm_enable_from_ui(self) -> int:
         if self.var_rad_alarm_on.get():
-            return 0
-        return 0b11
+            return 0b11
+        return 0
 
     def _sync_screen_light_from_status(self, status: int) -> None:
         self.var_light_on.set(((status >> 13) & 1) != 0)
@@ -305,7 +329,8 @@ class SlaveGui:
         keys = ["dose_hi", "dose_lo", "temp_hi", "temp_lo",
                 "pres_hi", "pres_lo", "hum_hi",  "hum_lo",
                 "co2_hi",  "co2_lo",  "pm25_hi", "pm25_lo"]
-        scales = [100.0, 100.0, 10.0, 10.0, 1.0, 1.0, 1.0, 1.0, 10.0, 10.0, 10.0, 10.0]
+        # CO2：与 App 一致线值即 ppm；PM2.5 仍 ×10
+        scales = [100.0, 100.0, 10.0, 10.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 10.0, 10.0]
         for i, key in enumerate(keys):
             e = self._thr_entries[key]
             e.delete(0, tk.END)
@@ -324,8 +349,8 @@ class SlaveGui:
             pres_lo  = self._parse_u32(self._thr_entries["pres_lo"].get(), "气压下限")
             hum_hi   = self._parse_u32(self._thr_entries["hum_hi"].get(),  "湿度上限")
             hum_lo   = self._parse_u32(self._thr_entries["hum_lo"].get(),  "湿度下限")
-            co2_hi   = max(0, int(round(float(self._thr_entries["co2_hi"].get().strip()) * 10)))
-            co2_lo   = max(0, int(round(float(self._thr_entries["co2_lo"].get().strip()) * 10)))
+            co2_hi   = self._parse_u32(self._thr_entries["co2_hi"].get(), "CO2上限")
+            co2_lo   = self._parse_u32(self._thr_entries["co2_lo"].get(), "CO2下限")
             pm25_hi  = max(0, int(round(float(self._thr_entries["pm25_hi"].get().strip()) * 10)))
             pm25_lo  = max(0, int(round(float(self._thr_entries["pm25_lo"].get().strip()) * 10)))
         except ValueError as e:
@@ -343,7 +368,7 @@ class SlaveGui:
         self.entry_hum.delete(0, tk.END)
         self.entry_hum.insert(0, str(values[3]))
         self.entry_co2.delete(0, tk.END)
-        self.entry_co2.insert(0, f"{values[4] / 10:.1f}")
+        self.entry_co2.insert(0, str(values[4]))
         self.entry_pm25.delete(0, tk.END)
         self.entry_pm25.insert(0, f"{values[5] / 10:.1f}")
         self.entry_alarm.delete(0, tk.END)
@@ -363,7 +388,7 @@ class SlaveGui:
             temp = int(round(float(self.entry_temp.get().strip()) * 10))
             press = self._parse_u32(self.entry_press.get(), "气压")
             hum = self._parse_u32(self.entry_hum.get(), "湿度")
-            co2 = max(0, int(round(float(self.entry_co2.get().strip()) * 10)))
+            co2 = self._parse_u32(self.entry_co2.get(), "CO2")
             pm25 = max(0, int(round(float(self.entry_pm25.get().strip()) * 10)))
             alarm = self._parse_u32(self.entry_alarm.get(), "报警状态")
             status = self._apply_screen_light_to_status(
@@ -376,6 +401,19 @@ class SlaveGui:
             raise ValueError(f"字段输入错误: {e}") from e
         vals = [dose, temp, press, hum, co2, pm25, alarm, status, r1, r2, r3]
         return vals
+
+    def _on_toggle_dose_jitter(self) -> None:
+        self._dose_jitter_token += 1
+        if self.var_dose_jitter.get():
+            self._tick_dose_jitter(self._dose_jitter_token)
+
+    def _tick_dose_jitter(self, token: int) -> None:
+        if token != self._dose_jitter_token or not self.var_dose_jitter.get():
+            return
+        v = random.uniform(0.20, 0.50)
+        self.entry_dose.delete(0, tk.END)
+        self.entry_dose.insert(0, f"{v:.2f}")
+        self.root.after(1000, lambda: self._tick_dose_jitter(token))
 
     def _append_log(self, line: str) -> None:
         self.txt.configure(state=tk.NORMAL)
@@ -533,18 +571,24 @@ class SlaveGui:
         self.btn_start.configure(state=tk.DISABLED)
         self.btn_stop.configure(state=tk.NORMAL)
         self.btn_send_5min.configure(state=tk.NORMAL)
+        self.chk_5min_auto.configure(state=tk.NORMAL)
         self.btn_apply_thr.configure(state=tk.NORMAL)
         self.btn_apply_cfg.configure(state=tk.NORMAL)
+        if self.var_5min_auto.get():
+            self._apply_five_min_auto_to_slave()
         self._append_log("[系统] 已启动（组播 + TCP 监听）")
 
     def _on_stop(self) -> None:
         if self._slave is None:
             return
+        self._slave.set_five_min_auto(False)
         self._slave.stop()
         self._slave = None
         self.btn_start.configure(state=tk.NORMAL)
         self.btn_stop.configure(state=tk.DISABLED)
         self.btn_send_5min.configure(state=tk.DISABLED)
+        self.chk_5min_auto.configure(state=tk.DISABLED)
+        self.var_5min_auto.set(False)
         self.btn_apply_thr.configure(state=tk.DISABLED)
         self.btn_apply_cfg.configure(state=tk.DISABLED)
         self._append_log("[系统] 已请求停止")
@@ -576,13 +620,37 @@ class SlaveGui:
         except Exception as e:
             messagebox.showerror("错误", f"应用阈值失败: {e}")
 
+    def _parse_five_min_dose_x100(self) -> int:
+        return max(0, int(round(float(self.entry_5min_dose.get().strip()) * 100)))
+
+    def _apply_five_min_auto_to_slave(self) -> None:
+        if self._slave is None:
+            return
+        try:
+            dose_x100 = self._parse_five_min_dose_x100()
+        except ValueError:
+            messagebox.showerror("错误", "累计剂量输入非法，请填写有效数字（如 0.25）。")
+            self.var_5min_auto.set(False)
+            return
+        self._slave.set_five_min_auto(
+            enabled=self.var_5min_auto.get(),
+            dose_uSv_x100=dose_x100,
+            dose_provider=self._parse_five_min_dose_x100,
+        )
+
+    def _on_toggle_five_min_auto(self) -> None:
+        if self._slave is None:
+            self.var_5min_auto.set(False)
+            return
+        self._apply_five_min_auto_to_slave()
+
     def _on_send_five_minute(self) -> None:
         if self._slave is None:
             return
         try:
-            dose_x100 = max(0, int(round(float(self.entry_5min_dose.get().strip()) * 100)))
+            dose_x100 = self._parse_five_min_dose_x100()
         except ValueError:
-            messagebox.showerror("错误", "辐射量输入非法，请填写有效数字（如 0.25）。")
+            messagebox.showerror("错误", "累计剂量输入非法，请填写有效数字（如 0.25）。")
             return
         ok = self._slave.push_five_minute_value(dose_x100)
         if not ok:

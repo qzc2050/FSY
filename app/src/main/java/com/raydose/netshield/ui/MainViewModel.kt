@@ -769,7 +769,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
         }.takeIf { it.isNotBlank() && it != Build.UNKNOWN } ?: "—"
         return AboutDeviceInfo(
-            productName = "NetShield 联盾环境辐射监测系统 控制主机",
+            productName = "NetShield 联盾环境辐射监测系统",
             hostModel = model,
             serialNumber = serial,
             softwareVersion = version,

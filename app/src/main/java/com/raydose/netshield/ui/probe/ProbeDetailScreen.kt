@@ -50,6 +50,7 @@ import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.TextFieldValue
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.raydose.netshield.data.FileManagerRepository
@@ -63,6 +64,8 @@ import com.raydose.netshield.ui.theme.NetShieldAtmospherePlayerOverlay
 import com.raydose.netshield.ui.theme.NetShieldTextPrimary
 import com.raydose.netshield.ui.theme.NetShieldTextSecondary
 import com.raydose.netshield.ui.theme.ScreenSpec
+import com.raydose.netshield.ui.theme.TabletFormFactor
+import com.raydose.netshield.ui.theme.rememberTabletFormFactor
 
 @Composable
 fun ProbeDetailScreen(
@@ -186,7 +189,7 @@ fun ProbeDetailScreen(
                         val name = nameDrafts[probe.id].orEmpty()
                         val location = locationDrafts[probe.id].orEmpty()
                         val baseRate = probe.doseRateText.toDoubleOrNull() ?: 0.0
-                        val rows = remember(probe.id, probe.doseRateText) {
+                        val rows = remember(probe.id) {
                             dailyDosesFor(probe.id, baseRate)
                         }
                         ProbeDataColumn(
@@ -332,6 +335,15 @@ private fun ProbeDataColumn(
 ) {
     var showEditDialog by remember { mutableStateOf(false) }
     var showExportDialog by remember { mutableStateOf(false) }
+    val formFactor = rememberTabletFormFactor()
+    val compact = formFactor == TabletFormFactor.Compact
+    val nameSp = if (compact) 18.sp else 22.sp
+    val statusSp = if (compact) 15.sp else 18.sp
+    val locationSp = if (compact) 16.sp else 20.sp
+    // 10 寸列窄：名字多占些；位置/编辑取余，避免再卡死在 35% 宽里截断
+    val nameWeight = if (compact) 1.55f else 1.2f
+    val locationWeight = if (compact) 0.95f else 1.1f
+    val editWeight = if (compact) 0.35f else 0.4f
 
     Column(
         modifier = modifier
@@ -340,20 +352,21 @@ private fun ProbeDataColumn(
             .background(NetShieldAtmospherePlayerOverlay)
             .padding(10.dp),
     ) {
-        Box(
+        Row(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
             Column(
                 modifier = Modifier
-                    .align(Alignment.CenterStart)
-                    .fillMaxWidth(0.35f),
+                    .weight(nameWeight)
+                    .padding(end = 4.dp),
             ) {
                 Text(
                     text = if (name.isBlank()) "Detector" else name,
                     color = NetShieldTextPrimary,
-                    fontSize = 22.sp,
+                    fontSize = nameSp,
                     fontWeight = FontWeight.SemiBold,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
@@ -361,27 +374,34 @@ private fun ProbeDataColumn(
                 Text(
                     text = if (probe.isOnline) "在线" else "离线",
                     color = if (probe.isOnline) NetShieldAccentBlue else NetShieldTextSecondary,
-                    fontSize = 18.sp,
+                    fontSize = statusSp,
                 )
             }
             Text(
                 text = location.ifBlank { "大门口" },
                 color = NetShieldTextPrimary,
-                fontSize = 20.sp,
+                fontSize = locationSp,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.align(Alignment.Center),
-            )
-            Icon(
-                imageVector = Icons.Outlined.Edit,
-                contentDescription = "编辑探头信息",
-                tint = NetShieldTextPrimary,
                 modifier = Modifier
-                    .align(Alignment.CenterEnd)
-                    .size(28.dp)
-                    .clickable { showEditDialog = true }
-                    .padding(4.dp),
+                    .weight(locationWeight)
+                    .padding(horizontal = 2.dp),
+                textAlign = TextAlign.Center,
             )
+            Box(
+                modifier = Modifier.weight(editWeight),
+                contentAlignment = Alignment.CenterEnd,
+            ) {
+                Icon(
+                    imageVector = Icons.Outlined.Edit,
+                    contentDescription = "编辑探头信息",
+                    tint = NetShieldTextPrimary,
+                    modifier = Modifier
+                        .size(if (compact) 24.dp else 28.dp)
+                        .clickable { showEditDialog = true }
+                        .padding(4.dp),
+                )
+            }
         }
 
         hint?.let {
