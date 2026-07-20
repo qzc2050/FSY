@@ -87,7 +87,7 @@
 
 /* Note: Following vector table addresses must be defined in line with linker
          configuration (0x08000000 -> leave USER_VECT_TAB_ADDRESS disabled). */
-/* #define USER_VECT_TAB_ADDRESS */
+ #define USER_VECT_TAB_ADDRESS 
 
 #if defined(USER_VECT_TAB_ADDRESS)
 #if defined(DUAL_CORE) && defined(CORE_CM4)

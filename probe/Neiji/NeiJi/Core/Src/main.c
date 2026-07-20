@@ -80,7 +80,8 @@ int main(void)
 {
 
   /* USER CODE BEGIN 1 */
-
+  /* Boot 跳转可能带着 PRIMASK=1；恢复总中断，否则 HAL_Delay/SysTick 会挂死 */
+  __enable_irq();
   /* USER CODE END 1 */
 
   /* SDRAM @ cacheable（对齐 RAD-I）：CPU 走 Cache，减轻与 LTDC 的 FMC 争用 */
@@ -119,6 +120,7 @@ int main(void)
                    (unsigned)NEIJI_DIAG_BUILD);
     UartDiag_Write(early_msg);
   }
+  UartDiag_Write("[INIT] I2C/TIM/SPI...\r\n");
   MX_I2C1_Init();
   MX_I2C4_Init();
   MX_TIM2_Init();
@@ -128,10 +130,15 @@ int main(void)
   MX_SPI1_Init();
   MX_QUADSPI_Init();
   MX_USART3_UART_Init();
+  UartDiag_Write("[INIT] FMC/SDRAM...\r\n");
   MX_FMC_Init();
   if (SDRAM_SelfTest() != 0)
   {
     UartDiag_Write("[SDRAM] FAIL -> continue without halt\r\n");
+  }
+  else
+  {
+    UartDiag_Write("[SDRAM] ok\r\n");
   }
   FMC_ConfigLtdcSdramArbitration();
   MX_LTDC_Init();

@@ -123,6 +123,19 @@ CFG_MODEL_MAX_LEN = 12
 CFG_HW_VERSION_MAX_LEN = 16
 CFG_PRODUCT_NAME_MAX_BYTES = 16
 
+# OTA（与 ZJB / 程序更新OTA协议 一致：200→208×N→202）
+REG_OTA_START = 200          # 0x00C8，固件总长度 u32
+REG_OTA_DONE = 202           # 0x00CA，固件 CRC32
+REG_OTA_STATUS = 204         # 0x00CC，state + written_bytes
+REG_OTA_DATA = 208           # 0x00D0，固件数据块
+OTA_CHUNK_MAX = 128          # 单包最大字节（偶数）
+OTA_APP_MAX_SIZE = 0x000E0000  # 896KB，与 App Flash 区一致
+OTA_STATE_IDLE = 0
+OTA_STATE_STARTED = 1
+OTA_STATE_VERIFY = 2
+OTA_STATE_ERROR = 3
+OTA_STATE_DONE = 4
+
 
 def format_dose_rate(raw_x100: int) -> str:
     dose_usv = max(0.0, raw_x100 / 100.0)
@@ -364,6 +377,48 @@ def zjb_control_bit2_flags(value: int) -> Tuple[bool, bool, bool]:
 def u32_to_reg_values(value: int) -> List[int]:
     value &= 0xFFFFFFFF
     return [value & 0xFFFF, (value >> 16) & 0xFFFF]
+
+
+def ota_crc32(data: bytes) -> int:
+    """固件 CRC32：poly 0x04C11DB7，init 0xFFFFFFFF，无最终异或（与 Boot/ZJB 一致）。"""
+    crc = 0xFFFFFFFF
+    for b in data:
+        crc ^= (b & 0xFF) << 24
+        for _ in range(8):
+            if crc & 0x80000000:
+                crc = ((crc << 1) & 0xFFFFFFFF) ^ 0x04C11DB7
+            else:
+                crc = (crc << 1) & 0xFFFFFFFF
+    return crc & 0xFFFFFFFF
+
+
+def bytes_to_reg_values(data: bytes) -> List[int]:
+    """原始字节 → Modbus u16 小端寄存器列表（长度须为偶数）。"""
+    if len(data) % 2:
+        raise ValueError("OTA 数据长度必须为偶数")
+    return [data[i] | (data[i + 1] << 8) for i in range(0, len(data), 2)]
+
+
+def build_ota_start(addr: int, total_size: int) -> bytes:
+    return build_write_multi(addr, REG_OTA_START, u32_to_reg_values(total_size))
+
+
+def build_ota_done(addr: int, crc32: int) -> bytes:
+    return build_write_multi(addr, REG_OTA_DONE, u32_to_reg_values(crc32))
+
+
+def build_ota_data(addr: int, chunk: bytes) -> bytes:
+    """写 reg208：chunk 最长 128B，奇数长度末尾补 0xFF。"""
+    if len(chunk) > OTA_CHUNK_MAX:
+        raise ValueError(f"OTA 分包超过 {OTA_CHUNK_MAX} 字节")
+    if len(chunk) % 2:
+        chunk = chunk + b"\xFF"
+    return build_write_multi(addr, REG_OTA_DATA, bytes_to_reg_values(chunk))
+
+
+def build_ota_status_read(addr: int) -> bytes:
+    """读 reg204：state(u32) + written_bytes(u32)，共 4 个寄存器。"""
+    return build_read_holding(addr, REG_OTA_STATUS, 4)
 
 
 def reg_payload_to_time(payload: bytes) -> str:

@@ -61,6 +61,23 @@
 #define SET_OTA_FLAG_OFFSET       0x0000U
 #define SET_OTA_FLAG_ADDR         (SET_FLASH_ADDR + SET_OTA_FLAG_OFFSET)
 
+/* 与 NeijiBoot flash_layout.h / FSY-I ota_bl.h 一致 */
+#define OTA_FLAG_MAGIC            0x4F544155U   /* 'OTAU' */
+#define OTA_STATUS_IDLE           0x00000000U
+#define OTA_STATUS_PENDING        0x00000001U
+#define OTA_STATUS_DONE           0x00000002U
+
+typedef struct
+{
+    uint32_t magic;
+    uint32_t app_size;
+    uint32_t app_crc32;
+    uint32_t status;
+    uint32_t reserved[4];
+    uint32_t flag_crc;      /* CRC32(前 32 字节) */
+    uint32_t reserved2[7];
+} OtaFlag_t;
+
 #define SET_DEVICE_CFG_OFFSET     0x0400U
 #define SET_DEVICE_CFG_ADDR       (SET_FLASH_ADDR + SET_DEVICE_CFG_OFFSET)
 #define SET_DEVICE_CFG_MAX_SIZE   512U

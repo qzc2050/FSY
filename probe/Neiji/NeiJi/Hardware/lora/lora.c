@@ -3,6 +3,7 @@
 #include "fsy_dispatch.h"
 #include "fsy_frame.h"
 #include "main.h"
+#include "ota.h"
 #include "uart_diag.h"
 
 #include "FreeRTOS.h"
@@ -1421,6 +1422,7 @@ void LORA_Poll(void)
         if (resp_len > 0) {
             (void)LORA_Transmit(resp, (uint16_t)resp_len);
         }
+        (void)OTA_CommitPending();
 
         loops++;
         if (loops >= LORA_POLL_MAX_LOOPS) {

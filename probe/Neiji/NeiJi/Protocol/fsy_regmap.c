@@ -1,6 +1,7 @@
 #include "fsy_regmap.h"
 #include "device_config.h"
 #include "net_config.h"
+#include "ota.h"
 #include "w5500.h"
 #include "w5500_dhcp.h"
 #include "pcf85063.h"
@@ -44,6 +45,14 @@ static void store_u32_le(uint8_t *p, uint32_t v)
     p[1] = (uint8_t)((v >> 8) & 0xFFU);
     p[2] = (uint8_t)((v >> 16) & 0xFFU);
     p[3] = (uint8_t)(v >> 24);
+}
+
+static uint32_t load_u32_le(const uint8_t *p)
+{
+    return ((uint32_t)p[0]) |
+           ((uint32_t)p[1] << 8) |
+           ((uint32_t)p[2] << 16) |
+           ((uint32_t)p[3] << 24);
 }
 
 static int reg_in_range(uint16_t reg, uint16_t base, uint16_t count)
@@ -390,10 +399,31 @@ int Fsy_Regmap_ReadBlock(uint16_t start_reg, uint16_t reg_count,
     }
 
     memset(out, 0, byte_count);
+
+    /* OTA 状态：reg204~207 = state(u32) + written_bytes(u32) */
+    if ((start_reg == FSY_REG_OTA_STATUS) &&
+        (reg_count == FSY_REG_OTA_STATUS_REGS) &&
+        (byte_count >= 8U)) {
+        store_u32_le(&out[0], (uint32_t)OTA_GetState());
+        store_u32_le(&out[4], OTA_GetWrittenBytes());
+        return 8;
+    }
+
     for (i = 0U; i < reg_count; i++) {
         uint16_t reg = (uint16_t)(start_reg + i);
         uint32_t val = 0U;
         uint8_t cfg_pair[2];
+
+        if (reg_in_range(reg, FSY_REG_OTA_STATUS, FSY_REG_OTA_STATUS_REGS)) {
+            uint32_t state = (uint32_t)OTA_GetState();
+            uint32_t written = OTA_GetWrittenBytes();
+            uint32_t word = (reg < (FSY_REG_OTA_STATUS + 2U)) ? state : written;
+            uint16_t half = (uint16_t)((reg - FSY_REG_OTA_STATUS) & 1U);
+            store_u16_le(&out[(uint16_t)(i * 2U)],
+                         (half == 0U) ? (uint16_t)(word & 0xFFFFU)
+                                      : (uint16_t)((word >> 16) & 0xFFFFU));
+            continue;
+        }
 
         if ((reg >= FSY_REG_TIME) &&
             (reg < (uint16_t)(FSY_REG_TIME + FSY_REG_TIME_REGS))) {
@@ -539,6 +569,25 @@ int Fsy_Regmap_WriteBlock(uint16_t start_reg, const uint8_t *data,
     }
 
     reg_count = (uint16_t)(byte_count / 2U);
+
+    /*
+     * OTA：对齐 ZJB——合法帧一律返回 0 以便发 0x20 ACK；
+     * 失败看 reg204 state=ERROR。
+     */
+    if ((start_reg == FSY_REG_OTA_START) && (byte_count == 4U)) {
+        (void)OTA_StartSession(load_u32_le(data));
+        return 0;
+    }
+    if ((start_reg == FSY_REG_OTA_DONE) && (byte_count == 4U)) {
+        (void)OTA_Finish(load_u32_le(data));
+        return 0;
+    }
+    if ((start_reg == FSY_REG_OTA_DATA) &&
+        (byte_count >= 2U) && (byte_count <= OTA_CHUNK_MAX_BYTES)) {
+        (void)OTA_WriteChunk(data, byte_count);
+        return 0;
+    }
+
     if ((start_reg == FSY_REG_TIME) && (reg_count == FSY_REG_TIME_REGS)) {
         for (i = 0U; i < reg_count; i++) {
             uint16_t reg = (uint16_t)(start_reg + i);

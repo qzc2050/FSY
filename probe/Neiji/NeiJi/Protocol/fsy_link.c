@@ -5,6 +5,7 @@
 #include "can_driver.h"
 #include "lora.h"
 #include "net_tcp.h"
+#include "ota.h"
 #include "uart1_port.h"
 
 #include <stddef.h>
@@ -52,6 +53,9 @@ void Fsy_Link_OnUartBytes(UartRingBuf *rx_ring,
         return;
     }
 
+    /* 先落盘上一包 OTA DATA，再收新帧，避免叠写 */
+    (void)OTA_CommitPending();
+
     fsy_drain_ring_to_asm(rx_ring);
 
     for (;;) {
@@ -94,12 +98,15 @@ void Fsy_Link_OnUartBytes(UartRingBuf *rx_ring,
             if (resp_len > 0) {
                 (void)write_fn(resp, (uint16_t)resp_len);
             }
+            /* 0x20 已发出后再写 Flash，避免 DATA 应答超时 */
+            (void)OTA_CommitPending();
             return;
         }
 
         if (resp_len > 0) {
             (void)write_fn(resp, (uint16_t)resp_len);
         }
+        (void)OTA_CommitPending();
     }
 }
 
@@ -164,6 +171,7 @@ bool Fsy_Link_ProcessOneFrame(UartRingBuf *rx_ring,
     if (resp_len > 0) {
         (void)write_fn(resp, (uint16_t)resp_len);
     }
+    (void)OTA_CommitPending();
 
     return true;
 }

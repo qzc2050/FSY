@@ -80,9 +80,9 @@
             <nStopB2X>0</nStopB2X>
           </BeforeMake>
           <AfterMake>
-            <RunUserProg1>0</RunUserProg1>
+            <RunUserProg1>1</RunUserProg1>
             <RunUserProg2>0</RunUserProg2>
-            <UserProg1Name></UserProg1Name>
+            <UserProg1Name>fromelf.exe --bin -o ".\NeiJi\NeiJi.bin" ".\NeiJi\NeiJi.axf"</UserProg1Name>
             <UserProg2Name></UserProg2Name>
             <UserProg1Dos16Mode>0</UserProg1Dos16Mode>
             <UserProg2Dos16Mode>0</UserProg2Dos16Mode>
@@ -275,8 +275,8 @@
               </OCR_RVCT3>
               <OCR_RVCT4>
                 <Type>1</Type>
-                <StartAddress>0x8000000</StartAddress>
-                <Size>0x100000</Size>
+                <StartAddress>0x8020000</StartAddress>
+                <Size>0xe0000</Size>
               </OCR_RVCT4>
               <OCR_RVCT5>
                 <Type>1</Type>
@@ -903,6 +903,11 @@
               <FileName>set_flash.c</FileName>
               <FileType>1</FileType>
               <FilePath>../Hardware/storage/set_flash.c</FilePath>
+            </File>
+            <File>
+              <FileName>ota.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../Hardware/storage/ota.c</FilePath>
             </File>
             <File>
               <FileName>device_config.c</FileName>
@@ -2276,11 +2281,6 @@
               <FilePath>../LVGL/src/font/lv_font.c</FilePath>
             </File>
             <File>
-              <FileName>lv_font_dejavu_16_persian_hebrew.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>../LVGL/src/font/lv_font_dejavu_16_persian_hebrew.c</FilePath>
-            </File>
-            <File>
               <FileName>lv_font_fmt_txt.c</FileName>
               <FileType>1</FileType>
               <FilePath>../LVGL/src/font/lv_font_fmt_txt.c</FilePath>
@@ -2291,134 +2291,14 @@
               <FilePath>../LVGL/src/font/lv_font_loader.c</FilePath>
             </File>
             <File>
-              <FileName>lv_font_montserrat_10.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>../LVGL/src/font/lv_font_montserrat_10.c</FilePath>
-            </File>
-            <File>
-              <FileName>lv_font_montserrat_12.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>../LVGL/src/font/lv_font_montserrat_12.c</FilePath>
-            </File>
-            <File>
-              <FileName>lv_font_montserrat_12_subpx.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>../LVGL/src/font/lv_font_montserrat_12_subpx.c</FilePath>
-            </File>
-            <File>
               <FileName>lv_font_montserrat_14.c</FileName>
               <FileType>1</FileType>
               <FilePath>../LVGL/src/font/lv_font_montserrat_14.c</FilePath>
             </File>
             <File>
-              <FileName>lv_font_montserrat_16.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>../LVGL/src/font/lv_font_montserrat_16.c</FilePath>
-            </File>
-            <File>
-              <FileName>lv_font_montserrat_18.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>../LVGL/src/font/lv_font_montserrat_18.c</FilePath>
-            </File>
-            <File>
-              <FileName>lv_font_montserrat_20.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>../LVGL/src/font/lv_font_montserrat_20.c</FilePath>
-            </File>
-            <File>
-              <FileName>lv_font_montserrat_22.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>../LVGL/src/font/lv_font_montserrat_22.c</FilePath>
-            </File>
-            <File>
               <FileName>lv_font_montserrat_24.c</FileName>
               <FileType>1</FileType>
               <FilePath>../LVGL/src/font/lv_font_montserrat_24.c</FilePath>
-            </File>
-            <File>
-              <FileName>lv_font_montserrat_26.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>../LVGL/src/font/lv_font_montserrat_26.c</FilePath>
-            </File>
-            <File>
-              <FileName>lv_font_montserrat_28.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>../LVGL/src/font/lv_font_montserrat_28.c</FilePath>
-            </File>
-            <File>
-              <FileName>lv_font_montserrat_28_compressed.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>../LVGL/src/font/lv_font_montserrat_28_compressed.c</FilePath>
-            </File>
-            <File>
-              <FileName>lv_font_montserrat_30.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>../LVGL/src/font/lv_font_montserrat_30.c</FilePath>
-            </File>
-            <File>
-              <FileName>lv_font_montserrat_32.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>../LVGL/src/font/lv_font_montserrat_32.c</FilePath>
-            </File>
-            <File>
-              <FileName>lv_font_montserrat_34.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>../LVGL/src/font/lv_font_montserrat_34.c</FilePath>
-            </File>
-            <File>
-              <FileName>lv_font_montserrat_36.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>../LVGL/src/font/lv_font_montserrat_36.c</FilePath>
-            </File>
-            <File>
-              <FileName>lv_font_montserrat_38.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>../LVGL/src/font/lv_font_montserrat_38.c</FilePath>
-            </File>
-            <File>
-              <FileName>lv_font_montserrat_40.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>../LVGL/src/font/lv_font_montserrat_40.c</FilePath>
-            </File>
-            <File>
-              <FileName>lv_font_montserrat_42.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>../LVGL/src/font/lv_font_montserrat_42.c</FilePath>
-            </File>
-            <File>
-              <FileName>lv_font_montserrat_44.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>../LVGL/src/font/lv_font_montserrat_44.c</FilePath>
-            </File>
-            <File>
-              <FileName>lv_font_montserrat_46.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>../LVGL/src/font/lv_font_montserrat_46.c</FilePath>
-            </File>
-            <File>
-              <FileName>lv_font_montserrat_48.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>../LVGL/src/font/lv_font_montserrat_48.c</FilePath>
-            </File>
-            <File>
-              <FileName>lv_font_montserrat_8.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>../LVGL/src/font/lv_font_montserrat_8.c</FilePath>
-            </File>
-            <File>
-              <FileName>lv_font_simsun_16_cjk.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>../LVGL/src/font/lv_font_simsun_16_cjk.c</FilePath>
-            </File>
-            <File>
-              <FileName>lv_font_unscii_16.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>../LVGL/src/font/lv_font_unscii_16.c</FilePath>
-            </File>
-            <File>
-              <FileName>lv_font_unscii_8.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>../LVGL/src/font/lv_font_unscii_8.c</FilePath>
             </File>
             <File>
               <FileName>lv_hal_disp.c</FileName>
@@ -2691,11 +2571,6 @@
               <FilePath>../LVGL/app/fonts/ui_font_hansanbold128.c</FilePath>
             </File>
             <File>
-              <FileName>ui_font_hansanbold24.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>../LVGL/app/fonts/ui_font_hansanbold24.c</FilePath>
-            </File>
-            <File>
               <FileName>ui_font_hansanbold28.c</FileName>
               <FileType>1</FileType>
               <FilePath>../LVGL/app/fonts/ui_font_hansanbold28.c</FilePath>
@@ -2711,19 +2586,9 @@
               <FilePath>../LVGL/app/fonts/ui_font_hansanbold36.c</FilePath>
             </File>
             <File>
-              <FileName>ui_font_hansanbold48.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>../LVGL/app/fonts/ui_font_hansanbold48.c</FilePath>
-            </File>
-            <File>
               <FileName>ui_font_hansanbold64.c</FileName>
               <FileType>1</FileType>
               <FilePath>../LVGL/app/fonts/ui_font_hansanbold64.c</FilePath>
-            </File>
-            <File>
-              <FileName>ui_img_1261263291.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>../LVGL/app/images/ui_img_1261263291.c</FilePath>
             </File>
             <File>
               <FileName>ui_img_1464373361.c</FileName>
@@ -2769,11 +2634,6 @@
               <FileName>ui_img_2138131786.c</FileName>
               <FileType>1</FileType>
               <FilePath>../LVGL/app/images/ui_img_2138131786.c</FilePath>
-            </File>
-            <File>
-              <FileName>ui_img_373985928.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>../LVGL/app/images/ui_img_373985928.c</FilePath>
             </File>
             <File>
               <FileName>ui_img_532493655.c</FileName>

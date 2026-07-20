@@ -29,15 +29,13 @@ LV_IMG_DECLARE(ui_img_182239421);
 LV_IMG_DECLARE(ui_img_1640302447);
 LV_IMG_DECLARE(ui_img_820325126);
 LV_IMG_DECLARE(ui_img_966723152);
-LV_IMG_DECLARE(ui_img_1261263291);
-LV_IMG_DECLARE(ui_img_373985928);
+/* ui_img_1261263291(返回主页) / ui_img_373985928(修改)：源文件保留，工程未引用；需要时再加回 uvprojx */
 
 LV_FONT_DECLARE(ui_font_hansanbold128);
-LV_FONT_DECLARE(ui_font_hansanbold24);
+/* ui_font_hansanbold24 / 48：源文件保留，暂未加入工程；需要时再加回 uvprojx */
 LV_FONT_DECLARE(ui_font_hansanbold28);
 LV_FONT_DECLARE(ui_font_hansanbold32);
 LV_FONT_DECLARE(ui_font_hansanbold36);
-LV_FONT_DECLARE(ui_font_hansanbold48);
 LV_FONT_DECLARE(ui_font_hansanbold64);
 
 lv_anim_t *opaon_Animation(lv_obj_t *TargetObject, int delay);

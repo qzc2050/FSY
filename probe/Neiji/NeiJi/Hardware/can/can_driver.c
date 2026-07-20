@@ -4,6 +4,7 @@
 #include "fsy_frame.h"
 #include "fsy_link.h"
 #include "main.h"
+#include "ota.h"
 #include "uart_diag.h"
 
 #include <string.h>
@@ -189,6 +190,7 @@ static void can_cache_try_dispatch(CanRtuCache *cache)
         if (resp_len > 0) {
             (void)Fsy_Link_WriteUart(resp, (uint16_t)resp_len);
         }
+        (void)OTA_CommitPending();
 
         if (cache->len > frame_len) {
             memmove(cache->buf, &cache->buf[frame_len], cache->len - frame_len);

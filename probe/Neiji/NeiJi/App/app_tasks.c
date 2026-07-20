@@ -11,6 +11,7 @@
 
 #include "device_config.h"
 #include "flash_fs_mutex.h"
+#include "ota.h"
 #include "hist_5min.h"
 #include "hist_5min_query.h"
 #include "sensor_task.h"
@@ -49,7 +50,8 @@ static const osThreadAttr_t uartTaskAttributes = {
 
     .name = "uartTask",
 
-    .stack_size = 512 * 4,
+    /* OTA START 擦 Download 扇区在本任务上下文执行，需更大栈 */
+    .stack_size = 1024 * 4,
 
     .priority = (osPriority_t)osPriorityAboveNormal,
 
@@ -110,6 +112,7 @@ void App_TasksInit(void)
     DeviceConfig_TaskInit();
     (void)DeviceConfig_Init();
     (void)Hist5Min_Init();
+    OTA_Init();
 
     Ui_TaskInit();
     UartDiag_Write("[APP] after Ui_TaskInit\r\n");
@@ -151,15 +154,19 @@ static void UartTask(void *argument)
 
         Fsy_Link_OnUartBytes(rb, Fsy_Link_WriteUart);
 
+        /* OTA 传包期间专供串口，避免 LoRa/CAN 抢占拖死 DATA 应答 */
+        if (OTA_IsRealtimeMuted() == 0U) {
 #if CAN_DRIVER_ENABLE
-        CanDriver_Poll();
+            CanDriver_Poll();
 #endif
-
-        if (LORA_IsEnabled()) {
-            LORA_Poll();
+            if (LORA_IsEnabled()) {
+                LORA_Poll();
+            }
         }
 
-        (void)osDelay(UART_RX_POLL_MS);
+        OTA_Service();
+
+        (void)osDelay((OTA_IsRealtimeMuted() != 0U) ? 2U : UART_RX_POLL_MS);
 
     }
 
@@ -186,6 +193,12 @@ static void UploadTask(void *argument)
 
         uint32_t now = osKernelGetTickCount();
         int upload_rc;
+
+        OTA_Service();
+        if (OTA_IsRealtimeMuted() != 0U) {
+            (void)osDelay(UART_RX_POLL_MS);
+            continue;
+        }
 
         if ((last_maintain_tick == 0U) ||
             ((now - last_maintain_tick) >= 30000U)) {

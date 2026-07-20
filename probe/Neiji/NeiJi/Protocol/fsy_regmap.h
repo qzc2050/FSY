@@ -128,6 +128,13 @@
 #define FSY_REG_CURRENT_IP        192U
 #define FSY_REG_CURRENT_IP_REGS   2U
 
+/* OTA（见 Hardware/storage/ota.h，与上位机/ZJB 一致） */
+#define FSY_REG_OTA_START         200U
+#define FSY_REG_OTA_DONE          202U
+#define FSY_REG_OTA_STATUS        204U
+#define FSY_REG_OTA_STATUS_REGS   4U
+#define FSY_REG_OTA_DATA          208U
+
 void Fsy_Regmap_Init(void);
 
 

@@ -1226,7 +1226,8 @@ void ui_Main_Interface_screen_init(void)
     lv_obj_set_style_pad_right(ui_Main_Interface, 20, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_pad_top(ui_Main_Interface, 20, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_pad_bottom(ui_Main_Interface, 20, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_text_font(ui_Main_Interface, &lv_font_montserrat_48, LV_PART_MAIN | LV_STATE_DEFAULT);
+    /* 原 SquareLine 默认 montserrat_48 仅作根屏字体且几乎被各标签覆盖，改用 LV 默认字以省 Flash */
+    lv_obj_set_style_text_font(ui_Main_Interface, LV_FONT_DEFAULT, LV_PART_MAIN | LV_STATE_DEFAULT);
 
     ui_Panel_temperature = lv_obj_create(ui_Main_Interface);
     lv_obj_set_width(ui_Panel_temperature, 140);

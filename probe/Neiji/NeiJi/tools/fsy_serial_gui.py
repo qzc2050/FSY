@@ -27,6 +27,15 @@ from fsy_protocol import (
     FC_READ_HOLDING_RESP,
     FC_WRITE_MULTI_RESP,
     FC_WRITE_SINGLE_RESP,
+    OTA_APP_MAX_SIZE,
+    OTA_CHUNK_MAX,
+    REG_OTA_DATA,
+    REG_OTA_DONE,
+    REG_OTA_START,
+    build_ota_data,
+    build_ota_done,
+    build_ota_start,
+    ota_crc32,
     ALARM_BIT_DOSE_HI,
     ALARM_BIT_DOSE_LO,
     REG_ADDRESS,
@@ -230,6 +239,7 @@ class PendingRequest:
     retries_left: int = 0
     tx_frame: bytes = b""
     config_mode: bool = True
+    quiet: bool = False  # True：不刷 TX/RX 十六进制到日志
 
 
 class SerialWorker:
@@ -330,6 +340,13 @@ class FactoryApp(tk.Tk):
         self._pending: Optional[PendingRequest] = None
         self._poll_after_id: Optional[str] = None
         self._cfg_busy = False
+        self._ota_busy = False
+        self._ota_cancel = False
+        self._ota_bin: bytes = b""
+        self._ota_offset = 0
+        self._ota_crc32 = 0
+        self._ota_total = 0
+        self._ota_last_log_pct = -1
         self._cps_poll_after_id: Optional[str] = None
         self._cps_csv_base_dir = CPS_CSV_ROOT
         self._cps_csv_path = cps_csv_path_for_time(self._cps_csv_base_dir)
@@ -438,13 +455,16 @@ class FactoryApp(tk.Tk):
         rt_tab = ttk.Frame(notebook, padding=4)
         cfg_tab = ttk.Frame(notebook, padding=12)
         geiger_tab = ttk.Frame(notebook, padding=12)
+        ota_tab = ttk.Frame(notebook, padding=12)
         notebook.add(rt_tab, text="实时参数")
         notebook.add(cfg_tab, text="生产配置")
         notebook.add(geiger_tab, text="盖革算法")
+        notebook.add(ota_tab, text="固件更新")
 
         self._build_rt_tab(rt_tab)
         self._build_cfg_tab(cfg_tab)
         self._build_geiger_tab(geiger_tab)
+        self._build_ota_tab(ota_tab)
 
         log_frame = ttk.LabelFrame(self, text="通信日志", padding=4)
         log_frame.pack(fill=tk.BOTH, expand=True, padx=8, pady=(0, 8))
@@ -1251,6 +1271,302 @@ class FactoryApp(tk.Tk):
 
         make_step(0)
 
+    def _build_ota_tab(self, parent: ttk.Frame) -> None:
+        tip = ttk.Label(
+            parent,
+            text=(
+                "串口 OTA：写 reg200(长度) → 循环写 reg208(≤128B) → 写 reg202(CRC32)。\n"
+                "请使用链接到 0x08020000 的 NeiJi App .bin；升级后设备复位进 Boot 搬运。\n"
+                "App 已实现 OTA 收包；升级后观察 Boot 打印 ota: PENDING / update DONE。"
+            ),
+            foreground="#666",
+            justify=tk.LEFT,
+            wraplength=900,
+        )
+        tip.pack(anchor=tk.W, pady=(0, 12))
+
+        file_row = ttk.Frame(parent)
+        file_row.pack(fill=tk.X, pady=4)
+        ttk.Label(file_row, text="固件文件:").pack(side=tk.LEFT)
+        self.ota_file_var = tk.StringVar(value="")
+        ttk.Entry(file_row, textvariable=self.ota_file_var, width=64).pack(
+            side=tk.LEFT, padx=8, fill=tk.X, expand=True
+        )
+        ttk.Button(file_row, text="浏览…", command=self._ota_browse, width=8).pack(
+            side=tk.LEFT
+        )
+
+        info = ttk.LabelFrame(parent, text="文件信息", padding=10)
+        info.pack(fill=tk.X, pady=8)
+        self.ota_info_var = tk.StringVar(value="未选择文件")
+        ttk.Label(info, textvariable=self.ota_info_var).pack(anchor=tk.W)
+
+        prog_frame = ttk.Frame(parent)
+        prog_frame.pack(fill=tk.X, pady=8)
+        self.ota_progress = ttk.Progressbar(
+            prog_frame, orient=tk.HORIZONTAL, mode="determinate", maximum=100
+        )
+        self.ota_progress.pack(fill=tk.X, side=tk.LEFT, expand=True)
+        self.ota_pct_var = tk.StringVar(value="0%")
+        ttk.Label(prog_frame, textvariable=self.ota_pct_var, width=8).pack(
+            side=tk.LEFT, padx=(8, 0)
+        )
+
+        self.ota_status_var = tk.StringVar(value="空闲")
+        ttk.Label(parent, textvariable=self.ota_status_var, foreground="#333").pack(
+            anchor=tk.W, pady=(0, 8)
+        )
+
+        btn_row = ttk.Frame(parent)
+        btn_row.pack(fill=tk.X, pady=4)
+        self.btn_ota_start = ttk.Button(
+            btn_row, text="开始升级（串口）", command=self._ota_start, width=16
+        )
+        self.btn_ota_start.pack(side=tk.LEFT, padx=(0, 8))
+        self.btn_ota_cancel = ttk.Button(
+            btn_row, text="取消", command=self._ota_cancel_click, width=10, state=tk.DISABLED
+        )
+        self.btn_ota_cancel.pack(side=tk.LEFT)
+
+    def _ota_browse(self) -> None:
+        path = filedialog.askopenfilename(
+            title="选择 NeiJi App 固件",
+            filetypes=[
+                ("固件 bin", "*.bin"),
+                ("Hex", "*.hex"),
+                ("所有文件", "*.*"),
+            ],
+        )
+        if not path:
+            return
+        if path.lower().endswith(".hex"):
+            messagebox.showwarning(
+                "提示",
+                "请选择链接地址为 0x08020000 的 .bin（非 Boot）。\n"
+                "Keil 可在 Options → Output 勾选 Create HEX File 旁生成 .bin，"
+                "或用 fromelf / objcopy 从 axf 导出。",
+            )
+        self.ota_file_var.set(path)
+        try:
+            with open(path, "rb") as f:
+                data = f.read()
+        except OSError as exc:
+            messagebox.showerror("错误", f"无法读取文件:\n{exc}")
+            return
+        if not data:
+            messagebox.showerror("错误", "文件为空")
+            return
+        if len(data) > OTA_APP_MAX_SIZE:
+            messagebox.showerror(
+                "错误",
+                f"固件过大 {len(data)} 字节，上限 {OTA_APP_MAX_SIZE}（896KB）",
+            )
+            return
+        crc = ota_crc32(data)
+        self._ota_bin = data
+        self._ota_crc32 = crc
+        self._ota_total = len(data)
+        self.ota_info_var.set(
+            f"大小 {len(data)} 字节 ({len(data) / 1024:.1f} KB)  "
+            f"CRC32=0x{crc:08X}  分包≤{OTA_CHUNK_MAX}B"
+        )
+        self.ota_status_var.set("文件已加载，可开始升级")
+        self.ota_progress["value"] = 0
+        self.ota_pct_var.set("0%")
+
+    def _ota_set_busy_ui(self, busy: bool) -> None:
+        self._ota_busy = busy
+        state_run = tk.DISABLED if busy else tk.NORMAL
+        state_cancel = tk.NORMAL if busy else tk.DISABLED
+        self.btn_ota_start.configure(state=state_run)
+        self.btn_ota_cancel.configure(state=state_cancel)
+        # OTA 全程只准备一次串口，避免每包 flush/reset 拖死 UI
+        if busy:
+            self._cfg_busy = True
+            self.scanner.ignore_text = True
+            self.scanner.reset()
+            self.worker.flush_rx()
+            self._ota_last_log_pct = -1
+        else:
+            self._cfg_busy = False
+            self.scanner.ignore_text = False
+
+    def _ota_cancel_click(self) -> None:
+        if not self._ota_busy:
+            return
+        self._ota_cancel = True
+        self.ota_status_var.set("正在取消…")
+        self._log("OTA 用户取消")
+
+    def _ota_fail(self, msg: str) -> None:
+        self._ota_set_busy_ui(False)
+        self._ota_cancel = False
+        self.ota_status_var.set(f"失败: {msg}")
+        self._log(f"OTA FAIL: {msg}")
+        messagebox.showerror("固件更新失败", msg)
+
+    def _ota_update_progress(self) -> None:
+        if self._ota_total <= 0:
+            pct = 0
+        else:
+            pct = min(100, int(self._ota_offset * 100 / self._ota_total))
+        self.ota_progress["value"] = pct
+        self.ota_pct_var.set(f"{pct}%")
+        # 每 5% 打一行进度，避免每包刷几百字符 hex 卡死界面
+        if pct >= self._ota_last_log_pct + 5 or (pct == 100 and self._ota_last_log_pct < 100):
+            self._ota_last_log_pct = pct
+            self._log(f"OTA 进度 {pct}%  {self._ota_offset}/{self._ota_total}")
+
+    def _ota_start(self) -> None:
+        if not self._require_connected():
+            return
+        if self._ota_busy or self._cfg_busy:
+            messagebox.showinfo("提示", "当前忙，请稍后再试")
+            return
+        if self._link_kind != "serial":
+            if not messagebox.askyesno(
+                "确认",
+                "当前为 TCP 连接。OTA 流程相同，是否继续？\n"
+                "（建议先用串口验证）",
+            ):
+                return
+        path = self.ota_file_var.get().strip()
+        if not path or not self._ota_bin:
+            messagebox.showinfo("提示", "请先选择固件 .bin")
+            return
+        if len(self._ota_bin) != self._ota_total or self._ota_total == 0:
+            messagebox.showinfo("提示", "请重新浏览加载固件文件")
+            return
+
+        self._ota_cancel = False
+        self._ota_offset = 0
+        self._ota_set_busy_ui(True)
+        self._ota_update_progress()
+        addr = self._slave_addr()
+        self.ota_status_var.set(
+            f"发送 START size={self._ota_total} addr={addr}…"
+        )
+        self._log(
+            f"OTA START size={self._ota_total} crc=0x{self._ota_crc32:08X} addr={addr}"
+        )
+
+        frame = build_ota_start(addr, self._ota_total)
+
+        def on_ok(_pf: ParsedFrame) -> None:
+            if self._ota_cancel:
+                self._ota_fail("已取消")
+                return
+            self.ota_status_var.set("START 应答 OK，开始传数据…")
+            self._ota_send_next_chunk()
+
+        def on_fail(err: str) -> None:
+            self._ota_fail(
+                f"START(reg200) 失败: {err}\n"
+                "请确认已烧录含 OTA 的 App；串口应出现 [OTA] START / STARTED。"
+            )
+
+        self._begin_request(
+            frame,
+            FC_WRITE_MULTI_RESP,
+            on_ok,
+            on_fail,
+            # START 按固件大小预擦全部 Download 扇区（约 4×128KB ≈ 数秒～十几秒）
+            timeout=45.0,
+            expect_reg=REG_OTA_START,
+            retries=0,
+            config_mode=False,  # 已在 _ota_set_busy_ui 准备过
+            quiet=False,
+        )
+
+    def _ota_send_next_chunk(self) -> None:
+        if self._ota_cancel:
+            self._ota_fail("已取消")
+            return
+        if self._ota_offset >= self._ota_total:
+            self._ota_send_done()
+            return
+
+        end = min(self._ota_offset + OTA_CHUNK_MAX, self._ota_total)
+        chunk = self._ota_bin[self._ota_offset : end]
+        addr = self._slave_addr()
+        frame = build_ota_data(addr, chunk)
+        chunk_len = len(chunk)
+        offset_now = self._ota_offset
+
+        self.ota_status_var.set(
+            f"DATA {offset_now}/{self._ota_total} (+{chunk_len}B)…"
+        )
+
+        def on_ok(_pf: ParsedFrame) -> None:
+            if self._ota_cancel:
+                self._ota_fail("已取消")
+                return
+            self._ota_offset = end
+            self._ota_update_progress()
+            # 让出主线程，进度条/界面才能流畅刷新
+            self.after(0, self._ota_send_next_chunk)
+
+        def on_fail(err: str) -> None:
+            self._ota_fail(f"DATA(reg208) @offset={offset_now} 失败: {err}")
+
+        self._begin_request(
+            frame,
+            FC_WRITE_MULTI_RESP,
+            on_ok,
+            on_fail,
+            # DATA 阶段只编程；禁止重发同一包（已编程区再写会失败/错位）
+            timeout=10.0,
+            expect_reg=REG_OTA_DATA,
+            retries=0,
+            config_mode=False,
+            quiet=True,  # 勿每包刷 ~400 字符 hex
+        )
+
+    def _ota_send_done(self) -> None:
+        if self._ota_cancel:
+            self._ota_fail("已取消")
+            return
+        addr = self._slave_addr()
+        frame = build_ota_done(addr, self._ota_crc32)
+        self.ota_status_var.set(f"发送 DONE CRC32=0x{self._ota_crc32:08X}…")
+        self._log(f"OTA DONE crc=0x{self._ota_crc32:08X}")
+
+        def on_ok(_pf: ParsedFrame) -> None:
+            self._ota_set_busy_ui(False)
+            self._ota_cancel = False
+            self.ota_progress["value"] = 100
+            self.ota_pct_var.set("100%")
+            self.ota_status_var.set(
+                "DONE 应答 OK — 设备应复位，Boot 搬运后重启 App"
+            )
+            self._log("OTA DONE ACK OK")
+            messagebox.showinfo(
+                "固件更新",
+                "CRC/DONE 已应答。\n"
+                "请观察串口是否出现 [NeijiBoot] ota: PENDING … update DONE，"
+                "以及 App 重新启动日志。",
+            )
+
+        def on_fail(err: str) -> None:
+            self._ota_fail(
+                f"DONE(reg202) 失败: {err}\n"
+                "若 DATA 已全部应答，设备可能仍在写 Flag/复位；"
+                "请看串口是否出现 [NeijiBoot] ota / App 重启日志。"
+            )
+
+        self._begin_request(
+            frame,
+            FC_WRITE_MULTI_RESP,
+            on_ok,
+            on_fail,
+            # Finish 含整包 CRC；Flag 写入已挪到 ACK 之后
+            timeout=20.0,
+            expect_reg=REG_OTA_DONE,
+            retries=0,  # 禁止重发 DONE，避免重复擦写 Set
+            config_mode=False,
+            quiet=False,
+        )
+
     def _slave_addr(self) -> int:
         try:
             addr = int(self.slave_addr_var.get())
@@ -1285,9 +1601,9 @@ class FactoryApp(tk.Tk):
                 pass
             self._poll_after_id = None
 
-    def _send_frame(self, frame: bytes) -> bool:
+    def _send_frame(self, frame: bytes, quiet: bool = False) -> bool:
         ok = self.worker.send(frame)
-        if ok:
+        if ok and not quiet:
             self._log(f"TX  {frame.hex(' ').upper()}")
         return ok
 
@@ -1301,13 +1617,14 @@ class FactoryApp(tk.Tk):
         expect_reg: Optional[int] = None,
         retries: int = 3,
         config_mode: bool = True,
+        quiet: bool = False,
     ) -> None:
         self._cancel_pending()
         if config_mode:
             self._prep_config_tx()
 
         def start_attempt(remaining: int) -> None:
-            if not self._send_frame(frame):
+            if not self._send_frame(frame, quiet=quiet):
                 self._cancel_pending()
                 on_fail("发送失败")
                 return
@@ -1322,8 +1639,11 @@ class FactoryApp(tk.Tk):
                 retries_left=remaining,
                 tx_frame=frame,
                 config_mode=config_mode,
+                quiet=quiet,
             )
-            self._poll_after_id = self.after(50, self._poll_pending)
+            # OTA 传包时缩短轮询，超时检测更及时；正常配置仍 50ms
+            poll_ms = 10 if (quiet or self._ota_busy) else 50
+            self._poll_after_id = self.after(poll_ms, self._poll_pending)
 
         start_attempt(retries)
 
@@ -1333,6 +1653,10 @@ class FactoryApp(tk.Tk):
         if time.monotonic() > self._pending.deadline:
             pending = self._pending
             if pending.retries_left > 0:
+                # 旧逻辑写死 5s；OTA 擦扇区需要更长
+                retry_timeout = 45.0 if pending.expect_reg == REG_OTA_START else (
+                    10.0 if pending.expect_reg in (REG_OTA_DATA, REG_OTA_DONE) else 5.0
+                )
                 self._log(
                     f"WARN 配置应答超时，重试 ({pending.retries_left} 次剩余)..."
                 )
@@ -1340,7 +1664,7 @@ class FactoryApp(tk.Tk):
                 self.scanner.reset()
 
                 def retry() -> None:
-                    if not self._send_frame(pending.tx_frame):
+                    if not self._send_frame(pending.tx_frame, quiet=pending.quiet):
                         self._cancel_pending()
                         pending.on_fail("发送失败")
                         return
@@ -1348,14 +1672,16 @@ class FactoryApp(tk.Tk):
                         expect_fc=pending.expect_fc,
                         on_ok=pending.on_ok,
                         on_fail=pending.on_fail,
-                        deadline=time.monotonic() + 5.0,
+                        deadline=time.monotonic() + retry_timeout,
                         expect_reg=pending.expect_reg,
                         slave_addr=pending.slave_addr,
                         retries_left=pending.retries_left - 1,
                         tx_frame=pending.tx_frame,
                         config_mode=pending.config_mode,
+                        quiet=pending.quiet,
                     )
-                    self._poll_after_id = self.after(50, self._poll_pending)
+                    poll_ms = 10 if (pending.quiet or self._ota_busy) else 50
+                    self._poll_after_id = self.after(poll_ms, self._poll_pending)
 
                 retry()
                 return
@@ -1370,7 +1696,8 @@ class FactoryApp(tk.Tk):
                 f"3) 串口线/波特率 115200 正确"
             )
             return
-        self._poll_after_id = self.after(50, self._poll_pending)
+        poll_ms = 10 if self._ota_busy else 50
+        self._poll_after_id = self.after(poll_ms, self._poll_pending)
 
     def _dispatch_pending(self, pf: ParsedFrame) -> bool:
         pending = self._pending
@@ -1393,6 +1720,8 @@ class FactoryApp(tk.Tk):
             return False
 
         ok = pending.on_ok
+        if not pending.quiet:
+            self._log(f"RX  {pf.raw.hex(' ').upper()}")
         self._cancel_pending()
         ok(pf)
         return True
@@ -2378,10 +2707,9 @@ class FactoryApp(tk.Tk):
 
     def _handle_frame(self, pf: ParsedFrame) -> None:
         if self._dispatch_pending(pf):
-            self._log(f"RX  {pf.raw.hex(' ').upper()}")
             return
 
-        if self._cfg_busy and pf.func == FC_ACTIVE_UPLOAD:
+        if (self._cfg_busy or self._ota_busy) and pf.func == FC_ACTIVE_UPLOAD:
             return
 
         self._maybe_sync_slave_from_rx(pf)
@@ -2452,6 +2780,14 @@ class FactoryApp(tk.Tk):
     def _log(self, line: str) -> None:
         self.log_text.configure(state=tk.NORMAL)
         self.log_text.insert(tk.END, line + "\n")
+        # OTA 时限制日志长度，避免 Text 控件积累数万行卡死
+        if self._ota_busy:
+            try:
+                line_count = int(float(self.log_text.index("end-1c").split(".")[0]))
+            except (tk.TclError, ValueError):
+                line_count = 0
+            if line_count > 800:
+                self.log_text.delete("1.0", "400.0")
         self.log_text.see(tk.END)
         self.log_text.configure(state=tk.DISABLED)
 
