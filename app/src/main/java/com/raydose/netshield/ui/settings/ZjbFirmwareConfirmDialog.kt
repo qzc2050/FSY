@@ -27,6 +27,8 @@ fun ZjbFirmwareConfirmDialog(
     sizeBytes: Long,
     onDismiss: () -> Unit,
     onConfirm: () -> Unit,
+    title: String = "确认升级转接板固件？",
+    hint: String = "升级完成后转接板将自动重启，请稍候再查看硬件版本。",
 ) {
     Dialog(onDismissRequest = onDismiss) {
         Column(
@@ -37,7 +39,7 @@ fun ZjbFirmwareConfirmDialog(
                 .padding(24.dp),
         ) {
             Text(
-                text = "确认升级转接板固件？",
+                text = title,
                 color = NetShieldTextPrimary,
                 fontSize = 22.sp,
                 fontWeight = FontWeight.SemiBold,
@@ -55,7 +57,7 @@ fun ZjbFirmwareConfirmDialog(
                 modifier = Modifier.padding(top = 6.dp),
             )
             Text(
-                text = "升级完成后转接板将自动重启，请稍候再查看硬件版本。",
+                text = hint,
                 color = NetShieldTextSecondary,
                 fontSize = 16.sp,
                 modifier = Modifier.padding(top = 10.dp),

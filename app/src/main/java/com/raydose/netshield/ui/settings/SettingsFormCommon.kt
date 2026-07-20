@@ -261,18 +261,24 @@ internal fun SettingsInlineActionButton(
     text: String,
     onClick: () -> Unit,
     filled: Boolean = false,
+    enabled: Boolean = true,
     modifier: Modifier = Modifier,
 ) {
     if (filled) {
         Button(
             onClick = onClick,
             modifier = modifier,
+            enabled = enabled,
             colors = ButtonDefaults.buttonColors(containerColor = NetShieldAccentBlue),
         ) {
             Text(text, fontSize = 16.sp, color = NetShieldTextPrimary)
         }
     } else {
-        androidx.compose.material3.OutlinedButton(onClick = onClick, modifier = modifier) {
+        androidx.compose.material3.OutlinedButton(
+            onClick = onClick,
+            modifier = modifier,
+            enabled = enabled,
+        ) {
             Text(text, fontSize = 16.sp, color = NetShieldTextPrimary)
         }
     }

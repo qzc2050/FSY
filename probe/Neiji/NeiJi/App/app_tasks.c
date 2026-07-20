@@ -200,6 +200,8 @@ static void UploadTask(void *argument)
             continue;
         }
 
+        Fsy_Link_PollUploadRoute();
+
         if ((last_maintain_tick == 0U) ||
             ((now - last_maintain_tick) >= 30000U)) {
             last_maintain_tick = now;

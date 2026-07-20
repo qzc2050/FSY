@@ -1,5 +1,6 @@
 #include "can_driver.h"
 
+#include "can_heartbeat.h"
 #include "fsy_dispatch.h"
 #include "fsy_frame.h"
 #include "fsy_link.h"
@@ -188,7 +189,7 @@ static void can_cache_try_dispatch(CanRtuCache *cache)
 
         resp_len = Fsy_Dispatch_Request(cache->buf, frame_len, resp, sizeof(resp));
         if (resp_len > 0) {
-            (void)Fsy_Link_WriteUart(resp, (uint16_t)resp_len);
+            (void)Fsy_Link_WriteCan(resp, (uint16_t)resp_len);
         }
         (void)OTA_CommitPending();
 
@@ -506,6 +507,12 @@ void CanDriver_Poll(void)
         uint8_t addr;
 
         if (item.dlc == 0U) {
+            continue;
+        }
+
+        /* ZJB 心跳：刷新链路状态，不参与 RTU 组包 */
+        if (item.std_id == CAN_HB_STD_ID) {
+            CanHb_OnFrame(item.std_id, item.data, item.dlc);
             continue;
         }
 

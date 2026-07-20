@@ -880,6 +880,11 @@
               <FilePath>../Hardware/can/can_driver.c</FilePath>
             </File>
             <File>
+              <FileName>can_heartbeat.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../Hardware/can/can_heartbeat.c</FilePath>
+            </File>
+            <File>
               <FileName>lora.c</FileName>
               <FileType>1</FileType>
               <FilePath>../Hardware/lora/lora.c</FilePath>

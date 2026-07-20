@@ -13,8 +13,7 @@
 #define Dev_Tk_Wait(ms, tk_var)  ((uint32_t)((HAL_GetTick() - (tk_var)) >= (ms)))
 #define Dev_Tk_Init(tk_ptr)      do { *(tk_ptr) = HAL_GetTick(); } while (0)
 
-/* RTC 墙钟对齐：等首个 :00/:05/… 边界后再开完整窗；首条不完整窗丢弃 */
-static uint8_t s_dose_window_armed;       /* 1=已对齐，开始累计完整窗 */
+/* RTC 墙钟对齐：minute%5==0 && second==0 为 5min 边界；上电起即累计，首条不完整窗也上报 */
 static uint16_t s_dose_last_boundary_hm;  /* 上次触发的 hour*60+minute，防同分钟重复 */
 static uint8_t s_dose_boundary_inited;
 
@@ -156,7 +155,7 @@ static void Geiger_Dose_On5MinuteTick(const Pcf85063_DateTime_t *dt)
 /********************************************************************************************
 * 函数名：Geiger_Dose_Periodic_Save
 * 描  述：RTC 墙钟对齐：minute%5==0 && second==0 为 5min 边界；
-*         上电后丢弃首条不完整窗，从下一边界起累计完整 5min。
+*         上电起即累计，首条不完整窗也上报（有总比没有好）。
 *         窗内 30s 块：second==0 或 30（与墙钟对齐）。
 *         测试快模式仍用相对 tick。
 ********************************************************************************************/
@@ -210,21 +209,9 @@ static void Geiger_Dose_Periodic_Save(void)
         if (!s_dose_boundary_inited || s_dose_last_boundary_hm != hm) {
             s_dose_boundary_inited = 1U;
             s_dose_last_boundary_hm = hm;
-
-            if (!s_dose_window_armed) {
-                /* 丢弃首条不完整窗：清累计，从本边界起开完整窗 */
-                data_var.dose_5min_acc = 0.0f;
-                data_var.dose_30s_acc = 0.0f;
-                s_dose_window_armed = 1U;
-            } else {
-                Geiger_Dose_On5MinuteTick(&dt);
-            }
+            Geiger_Dose_On5MinuteTick(&dt);
             last_30s_half = 0U; /* 与 second==0 对齐，避免同秒再跑 30s */
         }
-        return;
-    }
-
-    if (!s_dose_window_armed) {
         return;
     }
 

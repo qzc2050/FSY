@@ -21,12 +21,22 @@ SPI模式1或SPI模式2通过w5500.h 文件的
 #include "config.h"
 #include "network_cmd.h"
 #include "main.h"
+#include "ota.h"
 
 #ifndef W5500_SEND_BUSY_TIMEOUT_MS
 #define W5500_SEND_BUSY_TIMEOUT_MS  500U
 #endif
+#ifndef W5500_SEND_BUSY_TIMEOUT_OTA_MS
+#define W5500_SEND_BUSY_TIMEOUT_OTA_MS  3000U
+#endif
 
 extern int printf(const char *fmt, ...);
+
+static uint32_t w5500_send_busy_timeout_ms(void)
+{
+    return (OTA_IsRealtimeMuted() != 0U) ? W5500_SEND_BUSY_TIMEOUT_OTA_MS
+                                         : W5500_SEND_BUSY_TIMEOUT_MS;
+}
 
 static uint16_t local_port;
 
@@ -195,6 +205,7 @@ uint16_t send(SOCKET s, const uint8_t * buf, uint16_t len)
   uint16_t ret=0;
   uint16_t freesize=0;
   uint32_t t0;
+  uint32_t busy_ms = w5500_send_busy_timeout_ms();
 
   if (len > getIINCHIP_TxMAX(s)) ret = getIINCHIP_TxMAX(s);
   else ret = len;
@@ -209,7 +220,7 @@ uint16_t send(SOCKET s, const uint8_t * buf, uint16_t len)
       ret = 0;
       break;
     }
-    if ((HAL_GetTick() - t0) >= W5500_SEND_BUSY_TIMEOUT_MS)
+    if ((HAL_GetTick() - t0) >= busy_ms)
     {
       ret = 0;
       break;
@@ -232,13 +243,18 @@ uint16_t send(SOCKET s, const uint8_t * buf, uint16_t len)
     status = IINCHIP_READ(Sn_SR(s));
     if ((status != SOCK_ESTABLISHED) && (status != SOCK_CLOSE_WAIT) )
     {
-      printf("SEND_OK Problem!!\r\n");
-      close(s);
+      /* OTA 期间勿 close：避免误拆会话后 listen recovered、上位机 DATA 超时 */
+      if (OTA_IsRealtimeMuted() == 0U) {
+        printf("SEND_OK Problem!!\r\n");
+        close(s);
+      }
       return 0;
     }
-    if ((HAL_GetTick() - t0) >= W5500_SEND_BUSY_TIMEOUT_MS)
+    if ((HAL_GetTick() - t0) >= busy_ms)
     {
-      printf("SEND timeout\r\n");
+      if (OTA_IsRealtimeMuted() == 0U) {
+        printf("SEND timeout\r\n");
+      }
       return 0;
     }
   }

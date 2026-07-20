@@ -17,6 +17,8 @@ data class ProbeManageDraft(
     val alarmLightOn: Boolean = true,
     /** 最近一次读到的 reg123 原值，写时保留 bit15 等未编辑位 */
     val controlBit2Raw: Long = NEIJI_CTRL2_DEFAULT,
+    /** reg98 软件版本；离线或未读到时为空 */
+    val softwareVersion: String = "",
 ) {
     val id: String get() = savedProbe.id
     val displayName: String get() = savedProbe.displayName

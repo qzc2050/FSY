@@ -18,13 +18,19 @@ bool Fsy_Link_ProcessOneFrame(UartRingBuf *rx_ring,
 void Fsy_Link_ProcessRx(UartRingBuf *rx_ring,
                         int (*write_fn)(const uint8_t *data, uint16_t len));
 
-/** 0x23 主动上传：UART1 + TCP + CAN */
+/** 0x23 主动上报：调试串口镜像 + 按优先级 TCP>CAN>LoRa 选一路 */
 int Fsy_Link_WriteUpload(const uint8_t *data, uint16_t len);
 
-/** 串口应答：UART1 + CAN */
+/** 周期检测上报主通道变化并打调试日志（拔插网线时可观察） */
+void Fsy_Link_PollUploadRoute(void);
+
+/** 串口应答：仅 UART1 */
 int Fsy_Link_WriteUart(const uint8_t *data, uint16_t len);
 
-/** TCP 应答：TCP + CAN */
+/** TCP 应答：仅 TCP */
 int Fsy_Link_WriteTcp(const uint8_t *data, uint16_t len);
+
+/** CAN 应答：仅 CAN */
+int Fsy_Link_WriteCan(const uint8_t *data, uint16_t len);
 
 #endif

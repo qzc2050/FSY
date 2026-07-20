@@ -26,6 +26,8 @@ data class LiveProbeTelemetry(
     val slaveScreenOn: Boolean? = null,
     val alarmLightOn: Boolean? = null,
     val controlBit2Value: Long? = null,
+    /** reg98 软件版本字符串 */
+    val softwareVersion: String? = null,
 ) {
     /** 离线时清空实时读数，避免主页仍显示最后一帧剂量 */
     fun asOffline(): LiveProbeTelemetry = copy(

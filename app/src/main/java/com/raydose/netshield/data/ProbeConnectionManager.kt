@@ -15,9 +15,13 @@ import com.raydose.netshield.net.FsyMulticastDiscovery
 import com.raydose.netshield.model.modbusDeviceAddr
 import com.raydose.netshield.net.FsyTcpClient
 import com.raydose.netshield.net.ParsedFsyFrame
+import com.raydose.netshield.net.buildOtaDataFrame
+import com.raydose.netshield.net.buildOtaDoneFrame
+import com.raydose.netshield.net.buildOtaStartFrame
 import com.raydose.netshield.net.buildReadRegsFrame
 import com.raydose.netshield.net.matchesManageConfigRead
 import com.raydose.netshield.net.matchesWriteAck
+import com.raydose.netshield.net.otaCrc32
 import com.raydose.netshield.net.parseWriteAckExpectation
 import com.raydose.netshield.net.findRoutesToHost
 import com.raydose.netshield.net.listFsyNetworkOptions
@@ -80,6 +84,8 @@ class ProbeConnectionManager(
     private val lastDiscoveryLogMs = ConcurrentHashMap<String, Long>()
     /** 组播已确认的 serial/ip，TCP 连接唯一依据 */
     private val tcpDiscoveryAnchors = ConcurrentHashMap<String, TcpDiscoveryAnchor>()
+    /** OTA 期间固件静默 0x23，禁止因此断 TCP / 判离线 */
+    private val otaActiveProbeIds = ConcurrentHashMap.newKeySet<String>()
 
     private data class TcpDiscoveryAnchor(
         val serial: String,
@@ -202,7 +208,7 @@ class ProbeConnectionManager(
     }
 
     /**
-     * 进入探头管理时按需读取（Neiji reg 50/52/82/122/123）。
+     * 进入探头管理时按需读取（Neiji reg 50/52/82/98/122/123）。
      * 按寄存器发 0x03 → 等 0x13 应答 → 超时重试（最多 3 次）。
      */
     suspend fun fetchManageConfigWithRetry(probe: SavedProbe): ManageConfigFetchResult {
@@ -272,7 +278,7 @@ class ProbeConnectionManager(
 
         val routeLabel = if (route == ProbeCommandLink.SERIAL) "串口" else "TCP"
         if (missingRegs.isEmpty()) {
-            Log.i(TAG, "读配置完成($routeLabel) ${probe.displayName} reg50/52/82/122/123")
+            Log.i(TAG, "读配置完成($routeLabel) ${probe.displayName} reg50/52/82/98/122/123")
             onLog("已读取 ${probe.displayName} 配置")
         } else {
             val miss = missingRegs.joinToString { "0x${it.toString(16).uppercase()}" }
@@ -389,6 +395,153 @@ class ProbeConnectionManager(
         return ManageWriteResult(probe.id, okCount, failCount)
     }
 
+    /**
+     * 探头固件 OTA：START → DATA(≤128B) → DONE。
+     * DATA/DONE 禁止重试；START 可短重试。OTA 期间暂停 0x23 僵死断线。
+     */
+    suspend fun upgradeFirmware(
+        probe: SavedProbe,
+        fileBytes: ByteArray,
+        onProgress: (ZjbOtaProgress) -> Unit,
+    ): Result<Unit> = runCatching {
+        if (!NeijiFirmwareRules.isValidPayload(fileBytes.size.toLong())) {
+            error(NeijiFirmwareRules.REJECT_MESSAGE)
+        }
+
+        val route = resolveConfigReadRoute(probe)
+            ?: error("探头离线，无法升级固件")
+        if (!isProbeReadyForConfigRead(probe, route)) {
+            error("探头离线，无法升级固件")
+        }
+
+        val addr = probe.modbusDeviceAddr()
+        val crc32 = otaCrc32(fileBytes)
+        val totalChunks = (fileBytes.size + OTA_CHUNK_SIZE - 1) / OTA_CHUNK_SIZE
+
+        otaActiveProbeIds.add(probe.id)
+        configReadSessionProbeId = probe.id
+        drainConfigReadChannel()
+        try {
+            onProgress(ZjbOtaProgress("发送 OTA_START", 0f))
+            sendOtaWrite(
+                probe = probe,
+                route = route,
+                frame = buildOtaStartFrame(fileBytes.size, addr),
+                reg = REG_OTA_START,
+                timeoutMs = OTA_START_TIMEOUT_MS,
+                maxAttempts = OTA_START_MAX_ATTEMPTS,
+                label = "OTA_START",
+            )
+
+            var offset = 0
+            var chunkIndex = 0
+            while (offset < fileBytes.size) {
+                val end = minOf(offset + OTA_CHUNK_SIZE, fileBytes.size)
+                var chunk = fileBytes.copyOfRange(offset, end)
+                if (chunk.size % 2 != 0) {
+                    chunk = chunk + byteArrayOf(0xFF.toByte())
+                }
+                chunkIndex++
+                onProgress(
+                    ZjbOtaProgress(
+                        statusText = "发送固件 $chunkIndex/$totalChunks",
+                        progress = offset.toFloat() / fileBytes.size.toFloat(),
+                        deviceWritten = offset.toLong(),
+                    ),
+                )
+                sendOtaWrite(
+                    probe = probe,
+                    route = route,
+                    frame = buildOtaDataFrame(chunk, addr),
+                    reg = REG_OTA_DATA,
+                    timeoutMs = OTA_DATA_TIMEOUT_MS,
+                    maxAttempts = 1,
+                    label = "OTA_DATA#$chunkIndex",
+                )
+                /* 给内机写 Flash / 轮询 W5500 留间隙，降低 TCP 会话被拆风险 */
+                if (route == ProbeCommandLink.NETWORK) {
+                    delay(OTA_TCP_INTER_CHUNK_GAP_MS)
+                }
+                offset = end
+            }
+
+            onProgress(ZjbOtaProgress("发送 OTA_DONE", 1f, deviceWritten = fileBytes.size.toLong()))
+            sendOtaWrite(
+                probe = probe,
+                route = route,
+                frame = buildOtaDoneFrame(crc32, addr),
+                reg = REG_OTA_DONE,
+                timeoutMs = OTA_DONE_TIMEOUT_MS,
+                maxAttempts = 1,
+                label = "OTA_DONE",
+            )
+
+            onProgress(
+                ZjbOtaProgress(
+                    statusText = "固件已发送，探头将校验并重启",
+                    progress = 1f,
+                    deviceWritten = fileBytes.size.toLong(),
+                ),
+            )
+            val routeLabel = if (route == ProbeCommandLink.SERIAL) "串口" else "TCP"
+            Log.i(TAG, "OTA 完成($routeLabel) ${probe.displayName} size=${fileBytes.size}")
+            onLog("已推送 ${probe.displayName} 固件")
+        } finally {
+            configReadSessionProbeId = null
+            drainConfigReadChannel()
+            otaActiveProbeIds.remove(probe.id)
+        }
+    }
+
+    private suspend fun sendOtaWrite(
+        probe: SavedProbe,
+        route: ProbeCommandLink,
+        frame: ByteArray,
+        reg: Int,
+        timeoutMs: Long,
+        maxAttempts: Int,
+        label: String,
+    ) {
+        val expect = parseWriteAckExpectation(frame)
+            ?: error("$label 帧格式错误")
+        var lastError: String? = null
+        for (attempt in 1..maxAttempts) {
+            if (!isProbeReadyForOta(probe, route)) {
+                error("探头连接中断（$label）")
+            }
+            if (!sendConfigReadFrame(probe, route, frame)) {
+                error("发送失败（$label）")
+            }
+            val ack = withTimeoutOrNull(timeoutMs) {
+                while (true) {
+                    val event = configReadChannel.receive()
+                    if (event.probeId != probe.id) continue
+                    if (event.frame.matchesWriteAck(expect)) {
+                        return@withTimeoutOrNull event.frame
+                    }
+                }
+                @Suppress("UNREACHABLE_CODE")
+                null
+            }
+            if (ack != null) return
+            lastError = "$label 无应答"
+            if (attempt < maxAttempts) {
+                delay(OTA_RETRY_GAP_MS)
+            }
+        }
+        error(lastError ?: "$label 失败")
+    }
+
+    private fun isProbeReadyForOta(probe: SavedProbe, route: ProbeCommandLink): Boolean {
+        if (probe.id !in otaActiveProbeIds) {
+            return isProbeReadyForConfigRead(probe, route)
+        }
+        return when (route) {
+            ProbeCommandLink.SERIAL -> serialSender != null
+            ProbeCommandLink.NETWORK -> clients[probe.id] != null
+        }
+    }
+
     /** @deprecated 使用 [fetchManageConfigWithRetry]；保留给旧调用方 */
     fun fetchManageConfig(probe: SavedProbe) {
         thread(name = "fsy-fetch-cfg-${probe.id}") {
@@ -404,6 +557,7 @@ class ProbeConnectionManager(
         NeijiProbeRegs.DOSE_HI_TH,
         NeijiProbeRegs.DOSE_LO_TH,
         NeijiProbeRegs.ALARM_ENABLE,
+        NeijiProbeRegs.SOFTWARE_VERSION,
         NeijiProbeRegs.ALARM_VOLUME,
         NeijiProbeRegs.CONTROL_BIT2,
     )
@@ -413,6 +567,7 @@ class ProbeConnectionManager(
         return manageConfigRegList().map { reg ->
             val count = when (reg) {
                 NeijiProbeRegs.ALARM_VOLUME -> 1
+                NeijiProbeRegs.SOFTWARE_VERSION -> NeijiProbeRegs.SOFTWARE_VERSION_REGS
                 else -> NeijiProbeRegs.U32_REG_COUNT
             }
             ManageConfigReadSpec(reg, buildReadRegsFrame(reg, count, addr))
@@ -724,6 +879,7 @@ class ProbeConnectionManager(
 
     /** TCP 已连但 0x23 超时 → 返回重连原因；连接正常或仍在等待首帧则 null */
     private fun tcpStaleReconnectReason(probeId: String, now: Long): TcpStaleReconnectReason? {
+        if (probeId in otaActiveProbeIds) return null
         if (clients[probeId] == null) return null
         val connectedAt = tcpConnectedAtMs[probeId] ?: return null
         val lastRx = lastRx23Ms[probeId] ?: 0L
@@ -879,5 +1035,16 @@ class ProbeConnectionManager(
         private const val DISCOVERY_LOG_DEBOUNCE_MS = 60_000L
         /** 8s 无 0x23 则断 TCP，等组播再连（与 UI 组播超时一致，扛 PHY 短抖） */
         private const val TELEMETRY_STALE_MS = 8_000L
+        private const val OTA_CHUNK_SIZE = 128
+        private const val REG_OTA_START = 0x00C8
+        private const val REG_OTA_DONE = 0x00CA
+        private const val REG_OTA_DATA = 0x00D0
+        /** START 预擦 Download 扇区可能十余秒 */
+        private const val OTA_START_TIMEOUT_MS = 45_000L
+        private const val OTA_START_MAX_ATTEMPTS = 2
+        private const val OTA_DATA_TIMEOUT_MS = 10_000L
+        private const val OTA_DONE_TIMEOUT_MS = 20_000L
+        private const val OTA_RETRY_GAP_MS = 200L
+        private const val OTA_TCP_INTER_CHUNK_GAP_MS = 15L
     }
 }

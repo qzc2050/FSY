@@ -25,4 +25,8 @@ object NeijiProbeRegs {
 
     /** uint32 阈值 / 使能 / control2 占 2 个 holding reg（4 字节） */
     const val U32_REG_COUNT = 2
+
+    /** reg98：软件版本 ASCII，10 reg / 20B（与 fsy_regmap.h / ZJB 0x62 同址） */
+    const val SOFTWARE_VERSION = 0x0062
+    const val SOFTWARE_VERSION_REGS = 10
 }

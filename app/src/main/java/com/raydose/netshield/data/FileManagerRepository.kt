@@ -754,15 +754,35 @@ class FileManagerRepository(context: Context) {
     }
 
     /** 读取所选 ZJB 固件 bin（本地或 U 盘）。调用方应已通过 [ZjbFirmwareRules] 校验。 */
-    fun readFirmwareBin(location: FileStorageLocation, path: String): Result<ByteArray> = runCatching {
-        require(path.isNotBlank()) { ZjbFirmwareRules.REJECT_MESSAGE }
+    fun readFirmwareBin(location: FileStorageLocation, path: String): Result<ByteArray> =
+        readFirmwareBin(
+            location = location,
+            path = path,
+            isValid = ZjbFirmwareRules::isValidSelection,
+            rejectMessage = ZjbFirmwareRules.REJECT_MESSAGE,
+        )
+
+    /** 读取所选 NeiJi 探头固件 bin。调用方应已通过 [NeijiFirmwareRules] 校验。 */
+    fun readNeijiFirmwareBin(location: FileStorageLocation, path: String): Result<ByteArray> =
+        readFirmwareBin(
+            location = location,
+            path = path,
+            isValid = NeijiFirmwareRules::isValidSelection,
+            rejectMessage = NeijiFirmwareRules.REJECT_MESSAGE,
+        )
+
+    private fun readFirmwareBin(
+        location: FileStorageLocation,
+        path: String,
+        isValid: (String, Long) -> Boolean,
+        rejectMessage: String,
+    ): Result<ByteArray> = runCatching {
+        require(path.isNotBlank()) { rejectMessage }
         when (location) {
             FileStorageLocation.Local -> {
                 val source = requireLocalFile(path)
-                require(source.isFile) { ZjbFirmwareRules.REJECT_MESSAGE }
-                require(ZjbFirmwareRules.isValidSelection(source.name, source.length())) {
-                    ZjbFirmwareRules.REJECT_MESSAGE
-                }
+                require(source.isFile) { rejectMessage }
+                require(isValid(source.name, source.length())) { rejectMessage }
                 source.readBytes()
             }
             FileStorageLocation.Usb -> {
@@ -773,9 +793,7 @@ class FileManagerRepository(context: Context) {
                 } else {
                     copyUsbEntryToLocal(requireUsbDocument(path), stagingDir)
                 }
-                require(file.isFile && ZjbFirmwareRules.isValidSelection(file.name, file.length())) {
-                    ZjbFirmwareRules.REJECT_MESSAGE
-                }
+                require(file.isFile && isValid(file.name, file.length())) { rejectMessage }
                 file.readBytes()
             }
         }

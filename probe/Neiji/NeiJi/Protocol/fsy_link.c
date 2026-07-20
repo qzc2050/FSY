@@ -3,13 +3,16 @@
 #include "fsy_dispatch.h"
 #include "fsy_frame.h"
 #include "can_driver.h"
+#include "can_heartbeat.h"
 #include "lora.h"
 #include "net_tcp.h"
 #include "ota.h"
 #include "uart1_port.h"
+#include "uart_diag.h"
 
 #include <stddef.h>
 #include <stdbool.h>
+#include <stdio.h>
 #include <string.h>
 
 #define FSY_ASM_BUF_SIZE     FSY_FRAME_MAX_LEN
@@ -53,7 +56,6 @@ void Fsy_Link_OnUartBytes(UartRingBuf *rx_ring,
         return;
     }
 
-    /* 先落盘上一包 OTA DATA，再收新帧，避免叠写 */
     (void)OTA_CommitPending();
 
     fsy_drain_ring_to_asm(rx_ring);
@@ -98,7 +100,6 @@ void Fsy_Link_OnUartBytes(UartRingBuf *rx_ring,
             if (resp_len > 0) {
                 (void)write_fn(resp, (uint16_t)resp_len);
             }
-            /* 0x20 已发出后再写 Flash，避免 DATA 应答超时 */
             (void)OTA_CommitPending();
             return;
         }
@@ -132,6 +133,8 @@ bool Fsy_Link_ProcessOneFrame(UartRingBuf *rx_ring,
     if ((rx_ring == NULL) || (write_fn == NULL)) {
         return false;
     }
+
+    (void)OTA_CommitPending();
 
     if (UartRingBuf_Count(rx_ring) < 4U) {
         return false;
@@ -183,36 +186,89 @@ void Fsy_Link_ProcessRx(UartRingBuf *rx_ring,
     }
 }
 
-static void fsy_link_mirror_can(const uint8_t *data, uint16_t len)
+/**
+ * 主动上报选路：TCP > CAN(ZJB 心跳) > LoRa；调试串口始终镜像一份便于抓包。
+ */
+typedef enum {
+    FSY_UPLOAD_ROUTE_NONE = 0,
+    FSY_UPLOAD_ROUTE_TCP,
+    FSY_UPLOAD_ROUTE_CAN,
+    FSY_UPLOAD_ROUTE_LORA,
+} FsyUploadRoute;
+
+static FsyUploadRoute s_last_upload_route = FSY_UPLOAD_ROUTE_NONE;
+
+static FsyUploadRoute fsy_link_resolve_upload_route(void)
 {
-    if (CanDriver_IsReady()) {
-        (void)CanDriver_TransmitRtu(data, len);
+    if (Net_Tcp_IsConnected()) {
+        return FSY_UPLOAD_ROUTE_TCP;
+    }
+    if (CanDriver_IsReady() && CanHb_IsZjbLinked()) {
+        return FSY_UPLOAD_ROUTE_CAN;
+    }
+    if (LORA_IsEnabled() && LORA_IsReady()) {
+        return FSY_UPLOAD_ROUTE_LORA;
+    }
+    return FSY_UPLOAD_ROUTE_NONE;
+}
+
+static const char *fsy_link_route_name(FsyUploadRoute route)
+{
+    switch (route) {
+    case FSY_UPLOAD_ROUTE_TCP:  return "TCP";
+    case FSY_UPLOAD_ROUTE_CAN:  return "CAN";
+    case FSY_UPLOAD_ROUTE_LORA: return "LoRa";
+    default:                    return "NONE";
     }
 }
 
-static void fsy_link_mirror_lora(const uint8_t *data, uint16_t len)
+/** 主通道变化时打调试串口日志（拔插网线时可观察） */
+void Fsy_Link_PollUploadRoute(void)
 {
-    if (LORA_IsEnabled() && LORA_IsReady()) {
-        (void)LORA_Transmit((uint8_t *)data, len);
+    char msg[48];
+    FsyUploadRoute route = fsy_link_resolve_upload_route();
+
+    if (route == s_last_upload_route) {
+        return;
     }
+    s_last_upload_route = route;
+    (void)snprintf(msg, sizeof(msg), "[LINK] upload via %s\r\n",
+                   fsy_link_route_name(route));
+    UartDiag_Write(msg);
 }
 
 int Fsy_Link_WriteUpload(const uint8_t *data, uint16_t len)
 {
     int uart_rc;
+    FsyUploadRoute route;
 
     if ((data == NULL) || (len == 0U)) {
         return -1;
     }
 
+    Fsy_Link_PollUploadRoute();
+    route = s_last_upload_route;
+
     uart_rc = Uart1_Port_Write(data, len);
-    (void)Net_Tcp_Write(data, len);
-    fsy_link_mirror_can(data, len);
-    fsy_link_mirror_lora(data, len);
+
+    switch (route) {
+    case FSY_UPLOAD_ROUTE_TCP:
+        (void)Net_Tcp_Write(data, len);
+        break;
+    case FSY_UPLOAD_ROUTE_CAN:
+        (void)CanDriver_TransmitRtu(data, len);
+        break;
+    case FSY_UPLOAD_ROUTE_LORA:
+        (void)LORA_Transmit((uint8_t *)data, len);
+        break;
+    default:
+        break;
+    }
 
     return (uart_rc == (int)len) ? (int)len : -1;
 }
 
+/** 调试串口应答：只回 UART */
 int Fsy_Link_WriteUart(const uint8_t *data, uint16_t len)
 {
     if ((data == NULL) || (len == 0U)) {
@@ -220,10 +276,10 @@ int Fsy_Link_WriteUart(const uint8_t *data, uint16_t len)
     }
 
     (void)Uart1_Port_Write(data, len);
-    fsy_link_mirror_can(data, len);
     return (int)len;
 }
 
+/** TCP 应答：只回 TCP */
 int Fsy_Link_WriteTcp(const uint8_t *data, uint16_t len)
 {
     if ((data == NULL) || (len == 0U)) {
@@ -231,6 +287,18 @@ int Fsy_Link_WriteTcp(const uint8_t *data, uint16_t len)
     }
 
     (void)Net_Tcp_Write(data, len);
-    fsy_link_mirror_can(data, len);
+    return (int)len;
+}
+
+/** CAN 应答：只回 CAN */
+int Fsy_Link_WriteCan(const uint8_t *data, uint16_t len)
+{
+    if ((data == NULL) || (len == 0U)) {
+        return -1;
+    }
+
+    if (!CanDriver_TransmitRtu(data, len)) {
+        return -1;
+    }
     return (int)len;
 }

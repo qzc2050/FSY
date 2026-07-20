@@ -1,5 +1,6 @@
 package com.raydose.netshield.ui.settings
 
+import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -15,20 +16,36 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.raydose.netshield.data.FileManagerRepository
+import com.raydose.netshield.data.NeijiFirmwareRules
+import com.raydose.netshield.data.ZjbOtaProgress
+import com.raydose.netshield.model.FileListItem
+import com.raydose.netshield.model.FileStorageLocation
 import com.raydose.netshield.model.ProbeManageDraft
 import com.raydose.netshield.ui.theme.NetShieldAccentBlue
 import com.raydose.netshield.ui.theme.NetShieldSettingsEditorPanel
 import com.raydose.netshield.ui.theme.NetShieldTextPrimary
 import com.raydose.netshield.ui.theme.NetShieldTextSecondary
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 private val CardOuterPadding = 12.dp
 private val CardFooterPadding = 20.dp
@@ -56,6 +73,14 @@ fun ProbeManagePanel(
     onSaveClick: () -> Unit,
     onDataDetailClick: (Int) -> Unit,
     onRemoveProbe: (Int) -> Unit,
+    fileManagerRepository: FileManagerRepository,
+    usbGrantEpoch: Int,
+    onRequestUsbAccess: () -> Unit,
+    onUpgradeProbeFirmware: suspend (
+        probeId: String,
+        fileBytes: ByteArray,
+        onProgress: (ZjbOtaProgress) -> Unit,
+    ) -> Result<Unit>,
     showSaveSuccess: Boolean = false,
     onDismissSaveSuccess: () -> Unit = {},
     modifier: Modifier = Modifier,
@@ -65,6 +90,55 @@ fun ProbeManagePanel(
         initialPage = selectedProbeIndex.coerceIn(0, pageCount - 1),
         pageCount = { pageCount },
     )
+    val scope = rememberCoroutineScope()
+    val context = LocalContext.current
+
+    var showUpdateDialog by remember { mutableStateOf(false) }
+    var isUpgrading by remember { mutableStateOf(false) }
+    var upgradeProgress by remember { mutableFloatStateOf(0f) }
+    var upgradeStatus by remember { mutableStateOf("未开始") }
+    var pendingUpgrade by remember {
+        mutableStateOf<Pair<FileStorageLocation, FileListItem>?>(null)
+    }
+    var upgradeHint by remember { mutableStateOf<String?>(null) }
+
+    fun showMessage(message: String) {
+        upgradeHint = message
+        Toast.makeText(context.applicationContext, message, Toast.LENGTH_LONG).show()
+    }
+
+    fun startUpgrade(location: FileStorageLocation, item: FileListItem) {
+        val draft = manageDrafts.getOrNull(selectedProbeIndex) ?: return
+        scope.launch {
+            isUpgrading = true
+            upgradeProgress = 0f
+            upgradeStatus = "读取固件文件..."
+            upgradeHint = null
+            val bytesResult = withContext(Dispatchers.IO) {
+                fileManagerRepository.readNeijiFirmwareBin(location, item.path)
+            }
+            bytesResult.onFailure { error ->
+                isUpgrading = false
+                showMessage(error.message ?: "读取固件失败")
+                return@launch
+            }
+            val bytes = bytesResult.getOrThrow()
+            onUpgradeProbeFirmware(draft.id, bytes) { progress ->
+                upgradeStatus = progress.statusText
+                upgradeProgress = progress.progress
+            }.fold(
+                onSuccess = {
+                    showUpdateDialog = false
+                    pendingUpgrade = null
+                    showMessage("探头固件已推送，设备将校验并重启。重启后请重新进入本页确认软件版本。")
+                },
+                onFailure = { error ->
+                    showMessage(error.message ?: "探头固件升级失败")
+                },
+            )
+            isUpgrading = false
+        }
+    }
 
     LaunchedEffect(selectedProbeIndex, pageCount) {
         val target = selectedProbeIndex.coerceIn(0, pageCount - 1)
@@ -94,9 +168,32 @@ fun ProbeManagePanel(
                 modifier = Modifier.padding(horizontal = 28.dp, vertical = 4.dp),
             )
         }
+        upgradeHint?.let { hint ->
+            Text(
+                text = hint,
+                color = NetShieldAccentBlue,
+                fontSize = 15.sp,
+                modifier = Modifier.padding(horizontal = 28.dp, vertical = 4.dp),
+            )
+        }
+        if (isUpgrading) {
+            Text(
+                text = upgradeStatus,
+                color = NetShieldAccentBlue,
+                fontSize = 15.sp,
+                modifier = Modifier.padding(horizontal = 28.dp, vertical = 2.dp),
+            )
+            LinearProgressIndicator(
+                progress = { upgradeProgress.coerceIn(0f, 1f) },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 28.dp, vertical = 4.dp),
+            )
+        }
 
         HorizontalPager(
             state = pagerState,
+            userScrollEnabled = !isUpgrading,
             modifier = Modifier
                 .weight(1f)
                 .fillMaxWidth()
@@ -112,10 +209,55 @@ fun ProbeManagePanel(
                 onVolumeCommitted = { onVolumeCommitted(page) },
                 onDataDetailClick = { onDataDetailClick(page) },
                 onDeleteClick = { onRemoveProbe(page) },
+                onFirmwareUpdateClick = {
+                    if (!isUpgrading) {
+                        upgradeHint = null
+                        showUpdateDialog = true
+                    }
+                },
                 onAddClick = onAddClick,
                 onSaveClick = onSaveClick,
             )
         }
+    }
+
+    if (showUpdateDialog) {
+        ZjbFirmwareUpdateDialog(
+            repository = fileManagerRepository,
+            usbGrantEpoch = usbGrantEpoch,
+            isUpgrading = isUpgrading,
+            upgradeProgress = upgradeProgress,
+            upgradeStatus = upgradeStatus,
+            title = "探头固件更新",
+            subtitle = "请选择文件名含 neiji_V 的探头固件 .bin。升级完成后探头将自动重启。",
+            onDismiss = {
+                if (!isUpgrading) showUpdateDialog = false
+            },
+            onRequestUsbAccess = onRequestUsbAccess,
+            onUpgrade = { location, item ->
+                if (!NeijiFirmwareRules.isValidSelection(item.name, item.sizeBytes)) {
+                    showMessage(NeijiFirmwareRules.REJECT_MESSAGE)
+                    return@ZjbFirmwareUpdateDialog
+                }
+                pendingUpgrade = location to item
+            },
+        )
+    }
+
+    pendingUpgrade?.let { (location, item) ->
+        ZjbFirmwareConfirmDialog(
+            fileName = item.name,
+            sizeBytes = item.sizeBytes,
+            title = "确认升级探头固件？",
+            hint = "升级完成后探头将自动重启，请稍候再查看软件版本。",
+            onDismiss = {
+                if (!isUpgrading) pendingUpgrade = null
+            },
+            onConfirm = {
+                pendingUpgrade = null
+                startUpgrade(location, item)
+            },
+        )
     }
 }
 
@@ -130,6 +272,7 @@ private fun ProbeManageCard(
     onVolumeCommitted: () -> Unit,
     onDataDetailClick: () -> Unit,
     onDeleteClick: () -> Unit,
+    onFirmwareUpdateClick: () -> Unit,
     onAddClick: () -> Unit,
     onSaveClick: () -> Unit,
 ) {
@@ -159,6 +302,7 @@ private fun ProbeManageCard(
                 onVolumeCommitted = onVolumeCommitted,
                 onDataDetailClick = onDataDetailClick,
                 onDeleteClick = onDeleteClick,
+                onFirmwareUpdateClick = onFirmwareUpdateClick,
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(

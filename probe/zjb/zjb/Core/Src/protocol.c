@@ -1,7 +1,12 @@
 #include "protocol.h"
+#include "usart.h"
+#include "can.h"
+#include "can_heartbeat.h"
+#include "config.h"
 
 #include "usart.h"
 #include "can.h"
+#include "can_heartbeat.h"
 #include "config_flash.h"
 #include "protec_protocol.h"
 #include "ota.h"
@@ -492,6 +497,12 @@ void Protocol_OnCanFrames(void)
 
   while (CanRxQ_Pop(&item) != 0U)
   {
+    /* 忽略心跳 ID，勿当 RTU 组包 */
+    if (item.stdId == CAN_HB_STD_ID)
+    {
+      continue;
+    }
+
     uint8_t addr = (uint8_t)(item.stdId & 0xFFU);
     CanSlaveCache *c = CanCache_GetOrAlloc(addr);
     CanCache_Append(c, item.data, item.dlc, item.tick);
@@ -503,6 +514,36 @@ void Protocol_OnCanFrames(void)
       break;
     }
   }
+}
+
+void Protocol_CanHeartbeatPoll(void)
+{
+  static uint32_t s_last_hb_ms = 0U;
+  static uint8_t s_seq = 0U;
+  uint32_t now = HAL_GetTick();
+  CAN_TxHeaderTypeDef txHeader;
+  uint32_t txMailbox;
+  uint8_t data[CAN_HB_DLC];
+
+  if ((s_last_hb_ms != 0U) && ((now - s_last_hb_ms) < CAN_HB_PERIOD_MS))
+  {
+    return;
+  }
+  s_last_hb_ms = now;
+
+  data[0] = CAN_HB_MAGIC0;
+  data[1] = CAN_HB_MAGIC1;
+  data[2] = CAN_HB_MAGIC2;
+  data[3] = s_seq++;
+
+  txHeader.StdId = CAN_HB_STD_ID;
+  txHeader.ExtId = 0U;
+  txHeader.IDE = CAN_ID_STD;
+  txHeader.RTR = CAN_RTR_DATA;
+  txHeader.DLC = CAN_HB_DLC;
+  txHeader.TransmitGlobalTime = DISABLE;
+
+  (void)HAL_CAN_AddTxMessage(&hcan, &txHeader, data, &txMailbox);
 }
 
 /* 转发到 CAN：StdId = RTU addr，8 字节切片 */

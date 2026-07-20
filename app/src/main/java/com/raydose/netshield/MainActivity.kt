@@ -333,6 +333,9 @@ class MainActivity : ComponentActivity() {
                         onUpgradeZjbFirmware = { bytes, onProgress ->
                             viewModel.upgradeZjbFirmware(bytes, onProgress)
                         },
+                        onUpgradeProbeFirmware = { probeId, bytes, onProgress ->
+                            viewModel.upgradeProbeFirmware(probeId, bytes, onProgress)
+                        },
                     )
                 } else if (showMusic) {
                     MusicScreen(

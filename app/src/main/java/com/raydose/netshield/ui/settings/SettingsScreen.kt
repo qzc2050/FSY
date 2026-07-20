@@ -88,6 +88,11 @@ fun SettingsScreen(
     onRequestUsbAccess: () -> Unit,
     onInstallApk: (java.io.File) -> Result<Unit>,
     onUpgradeZjbFirmware: suspend (ByteArray, (com.raydose.netshield.data.ZjbOtaProgress) -> Unit) -> Result<Unit>,
+    onUpgradeProbeFirmware: suspend (
+        probeId: String,
+        fileBytes: ByteArray,
+        onProgress: (com.raydose.netshield.data.ZjbOtaProgress) -> Unit,
+    ) -> Result<Unit>,
 ) {
     Box(modifier = Modifier.fillMaxSize()) {
         BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
@@ -180,6 +185,10 @@ fun SettingsScreen(
                                     onSaveClick = onSaveClick,
                                     onDataDetailClick = onDataDetailClick,
                                     onRemoveProbe = onRemoveProbe,
+                                    fileManagerRepository = fileManagerRepository,
+                                    usbGrantEpoch = usbGrantEpoch,
+                                    onRequestUsbAccess = onRequestUsbAccess,
+                                    onUpgradeProbeFirmware = onUpgradeProbeFirmware,
                                     modifier = Modifier.weight(1f),
                                 )
                                 SettingsTab.About -> AboutPanel(

@@ -346,7 +346,8 @@ int OTA_WriteChunk(const uint8_t *data, uint16_t len)
         return -1;
     }
 
-    if (OTA_CommitPending() != 0) {
+    /* 上一包须已由链路层在发 0x20 后 CommitPending；此处只入队，保证先 ACK 再擦写 */
+    if (s_has_pending != 0U) {
         s_state = OTA_STATE_ERROR;
         return -1;
     }

@@ -7,7 +7,8 @@
 #include "uart_ringbuf.h"
 
 #define NET_TCP_SYN_HOLD_MS       5000U
-#define NET_TCP_RX_CAP            512U
+/* 须大于单帧 OTA（~140B）且留余量；过大时再分多次 PollRx 取完即可 */
+#define NET_TCP_RX_CAP            2048U
 #define NET_TCP_SOCK_INIT_WAIT_MS 50U
 #define NET_TCP_LISTEN_RETRY_MS   3000U
 

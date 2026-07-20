@@ -8,6 +8,7 @@
 #include "net_config.h"
 #include "net_tcp.h"
 #include "fsy_link.h"
+#include "ota.h"
 #include "uart_ringbuf.h"
 
 #include <stdio.h>
@@ -102,6 +103,17 @@ static void NetTask(void *argument)
 #else
     for (;;) {
         W5500_PhyLink_DebouncedLoopBegin();
+
+        if (OTA_IsRealtimeMuted() != 0U) {
+            /* OTA：专供 TCP 收包应答，跳过 DHCP/组播，避免 SPI 占用与误复位 */
+            if (!W5500_Is_Network_Recovering()) {
+                Net_Tcp_PollRx(&s_tcp_rx);
+                Fsy_Link_ProcessRx(&s_tcp_rx, NetTcpWriteAdapter);
+            }
+            (void)osDelay(1);
+            continue;
+        }
+
         DHCP_Client_Task();
         DHCP_Watchdog_Task();
 

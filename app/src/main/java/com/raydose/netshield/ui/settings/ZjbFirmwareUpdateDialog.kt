@@ -57,6 +57,8 @@ fun ZjbFirmwareUpdateDialog(
     onDismiss: () -> Unit,
     onRequestUsbAccess: () -> Unit,
     onUpgrade: (FileStorageLocation, FileListItem) -> Unit,
+    title: String = "转接板固件更新",
+    subtitle: String = "请选择转接板固件文件。升级完成后转接板将自动重启。",
 ) {
     var storage by remember { mutableStateOf(FileStorageLocation.Usb) }
     var entries by remember { mutableStateOf<List<FileListItem>>(emptyList()) }
@@ -112,13 +114,13 @@ fun ZjbFirmwareUpdateDialog(
                 .padding(20.dp),
         ) {
             Text(
-                text = "转接板固件更新",
+                text = title,
                 color = NetShieldTextPrimary,
                 fontSize = 24.sp,
                 fontWeight = FontWeight.SemiBold,
             )
             Text(
-                text = "请选择转接板固件文件。升级完成后转接板将自动重启。",
+                text = subtitle,
                 color = NetShieldTextSecondary,
                 fontSize = 16.sp,
                 modifier = Modifier.padding(top = 8.dp),

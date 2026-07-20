@@ -13,7 +13,7 @@
 /* 出厂默认（Flash 无有效配置时使用） */
 #define NEIJI_DEVICE_SN                 "2026FSYI0101"
 #define NEIJI_PRODUCT_NAME              "\xE9\x9B\xB7\xE6\xB2\x83-\xE6\x8E\xA2\xE6\xB5\x8B\xE5\x99\xA8"
-#define DEVICE_SOFTWARE_VERSION         "NeiJi V1.0"
+#define DEVICE_SOFTWARE_VERSION         "V1.1.1.20260720R"
 #define DEVICE_PROTOCOL_TYPE_CODE       (2U)
 #define DEVICE_UDP_DISCOVER_RESERVED    (0U)
 

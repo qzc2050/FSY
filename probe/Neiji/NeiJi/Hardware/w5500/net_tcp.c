@@ -2,6 +2,7 @@
 
 #include "network_cmd.h"
 #include "net_config.h"
+#include "ota.h"
 #include "socket.h"
 #include "w5500.h"
 #include "w5500_dhcp.h"
@@ -169,6 +170,11 @@ static void net_phy_link_maintain(void)
             s_phy_link_up = link_up;
             return;
         }
+        /* OTA 传包期间禁止因 PHY 抖动拆 TCP，否则 App 会 DATA 超时 */
+        if (OTA_IsRealtimeMuted() != 0U) {
+            s_phy_link_up = link_up;
+            return;
+        }
         s_phy_link_up = link_up;
         close(SETTING_SOCKET_NUM);
         g_tcp_sock_ready = 0;
@@ -200,8 +206,6 @@ static void net_phy_link_maintain(void)
 static uint16_t net_tcp_socket_recv(uint8_t sock, uint8_t *rdata, uint16_t cap)
 {
     uint16_t rx_size;
-    uint16_t drop_len;
-    uint16_t got;
     uint16_t n;
 
     if ((rdata == NULL) || (cap == 0U) || (getSn_SR(sock) != SOCK_ESTABLISHED)) {
@@ -213,19 +217,9 @@ static uint16_t net_tcp_socket_recv(uint8_t sock, uint8_t *rdata, uint16_t cap)
         return 0;
     }
 
-    if (rx_size > cap) {
-        drop_len = rx_size;
-        while (drop_len > 0U) {
-            got = recv(sock, rdata, (drop_len > cap) ? cap : drop_len);
-            if (got == 0U) {
-                break;
-            }
-            drop_len = (got >= drop_len) ? 0u : (uint16_t)(drop_len - got);
-        }
-        return 0;
-    }
-
-    n = recv(sock, rdata, rx_size);
+    /* 勿整包丢弃：超过 cap 时只取前 cap，剩余下次 PollRx 再取 */
+    n = (rx_size > cap) ? cap : rx_size;
+    n = recv(sock, rdata, n);
     return (n > cap) ? cap : n;
 }
 
@@ -354,8 +348,23 @@ void Net_Tcp_DeInit(void)
 void Net_Tcp_PeriodicMaintain(void)
 {
     uint32_t now;
+    uint8_t sr;
 
     if (W5500_Is_Network_Recovering()) {
+        return;
+    }
+
+    /* OTA：只保活已建立连接，不做 listen 强拉/PHY 维护，避免误杀会话 */
+    if (OTA_IsRealtimeMuted() != 0U) {
+        sr = getSn_SR(SETTING_SOCKET_NUM);
+        if (sr == SOCK_ESTABLISHED) {
+            g_tcp_sock_ready = 1;
+            s_sock_prev_st = sr;
+            return;
+        }
+        if (sr == SOCK_CLOSE_WAIT) {
+            net_tcp_recover_listen(SETTING_SOCKET_NUM, SETTING_SOCKET_PORT);
+        }
         return;
     }
 

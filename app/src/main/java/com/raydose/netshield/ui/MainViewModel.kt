@@ -345,6 +345,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         zjbOtaClient.upgrade(fileBytes, onProgress)
     }
 
+    suspend fun upgradeProbeFirmware(
+        probeId: String,
+        fileBytes: ByteArray,
+        onProgress: (ZjbOtaProgress) -> Unit,
+    ): Result<Unit> = withContext(Dispatchers.IO) {
+        val probe = _savedProbes.value.firstOrNull { it.id == probeId }
+            ?: return@withContext Result.failure(IllegalStateException("探头不存在"))
+        connectionManager.upgradeFirmware(probe, fileBytes, onProgress)
+    }
+
     fun updateDisplaySound(settings: DisplaySoundSettings) {
         _displaySoundSettings.value = settings
         _settings.update { it.copy(displaySound = settings, statusHint = null) }
@@ -819,7 +829,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _homeSelectedProbeId.value = probeId
     }
 
-    /** 进入设置页或切换探头卡片时：从遥测合并一次并主动读 reg50/52/82/122/123；停留期间 0x23 不刷新阈值/使能表单 */
+    /** 进入设置页或切换探头卡片时：从遥测合并一次并主动读 reg50/52/82/98/122/123；停留期间 0x23 不刷新阈值/使能表单 */
     private fun syncProbeCardAt(index: Int) {
         val state = _settings.value
         if (index !in state.manageDrafts.indices) return
@@ -1361,6 +1371,27 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }?.id
     }
 
+    private fun logProbeLinkChangeIfNeeded(
+        probeId: String,
+        change: ProbeLinkRouter.RouteChange?,
+    ) {
+        if (change == null) return
+        val name = _savedProbes.value.firstOrNull { it.id == probeId }?.displayName
+            ?: probeId
+        fun label(link: ProbeCommandLink?): String = when (link) {
+            ProbeCommandLink.NETWORK -> "网口"
+            ProbeCommandLink.SERIAL -> "串口"
+            null -> "无"
+        }
+        val msg = if (change.previous == null) {
+            "[LINK] $name 实时0x23 → ${label(change.current)}"
+        } else {
+            "[LINK] $name 实时0x23 ${label(change.previous)} → ${label(change.current)}"
+        }
+        Log.i(ProbeConnectionManager.TAG, msg)
+        _settings.update { it.copy(statusHint = msg) }
+    }
+
     private fun applyTelemetryFromFrame(
         probeId: String,
         frame: com.raydose.netshield.net.ParsedFsyFrame,
@@ -1368,16 +1399,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     ) {
         if (!frame.crcOk) return
 
+        // 仅实时 0x23 决定/记录上报通道（五分钟包不参与选路与切换日志）
         if (rxLink != null &&
             frame.func == 0x23 &&
             frame.uploadValues != null &&
             frame.uploadValues.size >= 8 &&
             isPlausibleRealtimeDoseX100(frame.uploadValues[0])
         ) {
-            linkRouter.recordRx23(probeId, rxLink)
-        }
-        if (rxLink != null && frame.func == 0x23 && frame.fiveMinUpload != null) {
-            linkRouter.recordRx23(probeId, rxLink)
+            logProbeLinkChangeIfNeeded(probeId, linkRouter.recordRx23(probeId, rxLink))
         }
 
         frame.fiveMinUpload?.let { fiveMin ->
@@ -1496,7 +1525,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
         if (probe.id != updated.id) {
             val telemetry = _liveTelemetry.value[probe.id] ?: LiveProbeTelemetry()
-            linkRouter.routeFor(probe.id)?.let { linkRouter.recordRx23(updated.id, it) }
+            linkRouter.routeFor(probe.id)?.let { prevLink ->
+                linkRouter.recordRx23(updated.id, prevLink)
+            }
             linkRouter.clear(probe.id)
             _liveTelemetry.update { map ->
                 map.filterKeys { it != probe.id } + (updated.id to telemetry)

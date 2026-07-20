@@ -172,20 +172,7 @@ void StartDefaultTask(void *argument)
     Protocol_OnUart1Bytes();
     Protocol_OnUart2Bytes();
     Protocol_OnCanFrames();
-
-   // printf("hello world\r\n");
-
-//    n = USART1_Rx_GetCount();
-//    if (n > 0U)
-//    {
-//      if (n > sizeof(rx_tmp))
-//        n = sizeof(rx_tmp);
-//      n = USART1_Rx_Read(rx_tmp, n);
-//      printf("rx %u bytes: ", (unsigned)n);
-//      for (i = 0U; i < n; i++)
-//        printf("%02X ", (unsigned)rx_tmp[i]);
-//      printf("\r\n");
-//    }
+    Protocol_CanHeartbeatPoll();
 
     osDelay(20);
   }

@@ -11,9 +11,9 @@
  * RTU 整帧按 buf[0] 作为 StdId 分片发送（同 zjb protocol.c）。
  */
 
-/** 0=停用 CAN 业务（不初始化、不镜像、不收发）；1=启用 */
+/** 0=停用 CAN 业务（不初始化、不收发）；1=启用 */
 #ifndef CAN_DRIVER_ENABLE
-#define CAN_DRIVER_ENABLE  0
+#define CAN_DRIVER_ENABLE  1
 #endif
 
 #define CAN_RX_QUEUE_SIZE  64U

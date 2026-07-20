@@ -73,6 +73,7 @@ fun ProbeManageEditorPage(
     onDataDetailClick: () -> Unit,
     onDeleteClick: () -> Unit,
     onVolumeCommitted: () -> Unit,
+    onFirmwareUpdateClick: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val formFactor = rememberTabletFormFactor()
@@ -122,6 +123,34 @@ fun ProbeManageEditorPage(
             },
             right = {
                 ProbeInfoLabelCell(label = "设备 ID", value = draft.protoAddr)
+            },
+        )
+
+        Spacer(modifier = Modifier.height(rowSpacing))
+
+        ProbeFormGridRow(
+            gap = columnGap,
+            left = {
+                ProbeInfoLabelCell(
+                    label = "软件版本",
+                    value = draft.softwareVersion.ifBlank { "—" },
+                )
+            },
+            right = {
+                // 与上一行「设备 ID」label 左对齐（右半列起始）
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = FormSwitchRowMinHeight),
+                    contentAlignment = Alignment.CenterStart,
+                ) {
+                    SettingsInlineActionButton(
+                        text = "更新",
+                        onClick = onFirmwareUpdateClick,
+                        filled = true,
+                        enabled = draft.isTcpOnline,
+                    )
+                }
             },
         )
 

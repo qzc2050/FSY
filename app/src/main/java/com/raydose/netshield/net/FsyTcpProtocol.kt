@@ -381,12 +381,12 @@ private fun parseReadResp13(frame: ByteArray, addr: Int, crcOk: Boolean): Parsed
     val payloadStart = 5
     val payloadEnd = frame.size - 2
 
-    // 固件版本：startReg=0x0062，payload 为 ASCII 字符串
-    if (startReg == 0x0062 && byteCount >= 10) {
+    // 软件/固件版本：Neiji/ZJB reg98(0x0062)，payload 为 UTF-8/ASCII
+    if (startReg == NeijiProbeRegs.SOFTWARE_VERSION && byteCount >= 2) {
         val end = minOf(payloadStart + byteCount, payloadEnd)
         val strBytes = frame.copyOfRange(payloadStart, end)
         val version = String(strBytes, Charsets.UTF_8).trimEnd('\u0000').trim()
-        return ParsedFsyFrame(addr, 0x13, crcOk, "0x13 固件版本: $version", deviceVersion = version)
+        return ParsedFsyFrame(addr, 0x13, crcOk, "0x13 软件版本: $version", deviceVersion = version)
     }
 
     // 序列号：startReg=0x0056，payload 为 16 字节 ASCII
