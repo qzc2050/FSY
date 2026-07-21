@@ -173,6 +173,8 @@ void StartDefaultTask(void *argument)
     Protocol_OnUart2Bytes();
     Protocol_OnCanFrames();
     Protocol_CanHeartbeatPoll();
+    /* DONE 后异步 Finish/复位放这里，避免只靠 sensorTask 的 200ms 周期 */
+    OTA_Service();
 
     osDelay(20);
   }
@@ -264,7 +266,6 @@ void StartSensorTask(void *argument)
 
   for(;;)
   {
-    OTA_Service();
     USART1_HealthService();
 
     PM25_GetData(&pm25_data);

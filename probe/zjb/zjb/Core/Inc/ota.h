@@ -97,11 +97,17 @@ void         OTA_Service(void);
 /* 开始一次 OTA 会话：擦除 Download 区，准备接收 */
 int          OTA_StartSession(uint32_t total_size);
 
-/* 追加写入一块固件数据（顺序调用）, 返回 0 成功 */
+/* 追加并落盘一块固件；返回 0 后协议层才能回 0x20 */
 int          OTA_WriteChunk(const uint8_t *data, uint16_t len);
 
-/* 结束 OTA：校验 CRC，写 OTA Flag，准备重启；返回 0 成功 */
+/* 兼容旧调用；当前为无待提交数据时的空操作 */
+int          OTA_CommitPending(void);
+
+/* 结束 OTA：校验 CRC 并写 OTA Flag；返回 0 后协议层才能回 0x20 */
 int          OTA_Finish(uint32_t expected_crc32);
+
+/* DONE 应答发出后请求延迟复位，由 OTA_Service 执行 */
+void         OTA_RequestReset(void);
 
 /* 放弃当前 OTA 会话，回到 IDLE */
 void         OTA_Abort(void);

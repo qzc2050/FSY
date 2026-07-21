@@ -30,12 +30,24 @@ class HostEnvSerialRepository(
     private var pollThread: Thread? = null
     @Volatile
     private var running = false
+    /** OTA 期间禁 0x03 轮询，避免与固件包交织导致无 ACK */
+    @Volatile
+    private var pollPaused = false
     @Volatile
     private var adapterResponseListener: ((ParsedFsyFrame) -> Unit)? = null
 
     /** OTA / 读版本等：订阅转接板地址 0xEF 的非环境上传应答帧。 */
     fun setAdapterResponseListener(listener: ((ParsedFsyFrame) -> Unit)?) {
         adapterResponseListener = listener
+    }
+
+    fun setPollPaused(paused: Boolean) {
+        pollPaused = paused
+        if (paused) {
+            Log.i(TAG, "HostEnv 轮询已暂停（OTA）")
+        } else {
+            Log.i(TAG, "HostEnv 轮询已恢复")
+        }
     }
 
     fun start() {
@@ -68,7 +80,7 @@ class HostEnvSerialRepository(
 
     /** 0x03 读实时环境 reg 0x0001，count=0x0016（11×uint32） */
     fun requestRealtimeRead() {
-        if (client == null) return
+        if (client == null || pollPaused) return
         val frame = buildReadRegsFrame(
             startReg = REG_REALTIME_START,
             count = REG_REALTIME_COUNT,
@@ -79,6 +91,10 @@ class HostEnvSerialRepository(
 
     /** 向 zjb 串口发送原始 Modbus 帧（非 0xEF 地址由转接板转发至 CAN/探头）。 */
     fun sendRaw(data: ByteArray) {
+        /* OTA 期间只放行本机 0xEF，避免探头发现/轮询插帧撞 ACK */
+        if (pollPaused && data.isNotEmpty() && (data[0].toInt() and 0xFF) != HOST_ADAPTER_ADDR) {
+            return
+        }
         client?.send(data)
     }
 
@@ -90,7 +106,7 @@ class HostEnvSerialRepository(
                 } catch (_: InterruptedException) {
                     break
                 }
-                if (!running) break
+                if (!running || pollPaused) continue
                 val last = _snapshot.value.lastUpdateMillis
                 if (last <= 0L || System.currentTimeMillis() - last >= STALE_MS) {
                     requestRealtimeRead()

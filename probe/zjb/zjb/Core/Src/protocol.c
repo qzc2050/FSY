@@ -2,11 +2,6 @@
 #include "usart.h"
 #include "can.h"
 #include "can_heartbeat.h"
-#include "config.h"
-
-#include "usart.h"
-#include "can.h"
-#include "can_heartbeat.h"
 #include "config_flash.h"
 #include "protec_protocol.h"
 #include "ota.h"
@@ -291,6 +286,9 @@ static void Protocol_LoraParseStream(void)
 #define CAN_RX_MAX_SLAVES       5U
 #define CAN_RX_CACHE_SIZE       256U
 #define CAN_RX_STALE_TIMEOUT_MS 200U
+/* 该 addr 近期有过 CAN 协议上行 → App 下行只走 CAN，不再双发 LoRa */
+#define CAN_PROTO_ALIVE_MS      6000U
+#define CAN_PROTO_ALIVE_SLOTS   8U
 
 typedef struct
 {
@@ -312,6 +310,77 @@ static volatile uint16_t s_can_rx_head = 0U;
 static volatile uint16_t s_can_rx_tail = 0U;
 static CanRxItem s_can_rx_q[CAN_RX_QUEUE_SIZE];
 static CanSlaveCache s_can_cache[CAN_RX_MAX_SLAVES];
+
+typedef struct
+{
+  uint8_t addr; /* 0=空 */
+  uint32_t last_ms;
+} CanProtoAliveSlot;
+
+static CanProtoAliveSlot s_can_proto_alive[CAN_PROTO_ALIVE_SLOTS];
+
+static void CanProtoAlive_Touch(uint8_t addr)
+{
+  uint8_t i;
+  uint8_t free_i = 0xFFU;
+  uint8_t oldest = 0U;
+  uint32_t oldest_ms;
+  uint32_t now;
+
+  if (addr == 0U)
+  {
+    return;
+  }
+
+  now = HAL_GetTick();
+  oldest_ms = s_can_proto_alive[0].last_ms;
+
+  for (i = 0U; i < CAN_PROTO_ALIVE_SLOTS; i++)
+  {
+    if (s_can_proto_alive[i].addr == addr)
+    {
+      s_can_proto_alive[i].last_ms = now;
+      return;
+    }
+    if ((s_can_proto_alive[i].addr == 0U) && (free_i == 0xFFU))
+    {
+      free_i = i;
+    }
+    if (s_can_proto_alive[i].last_ms < oldest_ms)
+    {
+      oldest_ms = s_can_proto_alive[i].last_ms;
+      oldest = i;
+    }
+  }
+
+  if (free_i == 0xFFU)
+  {
+    free_i = oldest;
+  }
+  s_can_proto_alive[free_i].addr = addr;
+  s_can_proto_alive[free_i].last_ms = now;
+}
+
+static uint8_t CanProtoAlive_IsRecent(uint8_t addr)
+{
+  uint8_t i;
+  uint32_t now;
+
+  if (addr == 0U)
+  {
+    return 0U;
+  }
+
+  now = HAL_GetTick();
+  for (i = 0U; i < CAN_PROTO_ALIVE_SLOTS; i++)
+  {
+    if (s_can_proto_alive[i].addr == addr)
+    {
+      return ((now - s_can_proto_alive[i].last_ms) <= CAN_PROTO_ALIVE_MS) ? 1U : 0U;
+    }
+  }
+  return 0U;
+}
 
 static uint8_t CanRxQ_Pop(CanRxItem *out)
 {
@@ -438,8 +507,14 @@ static void CanCache_TryParseAndForward(CanSlaveCache *c)
       continue;
     }
 
-    /* CAN 上行只回 App，不再横向镜像到 LoRa。 */
-    (void)USART1_Tx(c->buf, frame_len, 100U);
+    /* 任意 CRC 通过的 CAN 协议帧（含 0x23 / 应答 / OTA）计入在线 */
+    CanProtoAlive_Touch(c->buf[0]);
+
+    /* OTA 期间禁止抢 USART1，避免冲掉 0xEF 的 0x20 ACK */
+    if (OTA_IsRealtimeMuted() == 0U)
+    {
+      (void)USART1_Tx(c->buf, frame_len, 100U);
+    }
 
     if (c->len > frame_len)
     {
@@ -583,10 +658,13 @@ static void Protocol_ForwardToCan(const uint8_t *buf, uint16_t len)
   }
 }
 
-/* App 下行 → LoRa + CAN */
+/* App 下行：该 addr 近期有 CAN 协议上行则只走 CAN，否则 LoRa+CAN */
 static void Protocol_ForwardFromApp(const uint8_t *buf, uint16_t len)
 {
-  if (Config_LoraEnabled())
+  uint8_t addr = (len >= 1U) ? buf[0] : 0U;
+  uint8_t can_only = CanProtoAlive_IsRecent(addr);
+
+  if ((can_only == 0U) && Config_LoraEnabled())
   {
     (void)Lora_Usart2Tx(buf, len, 100U);
   }
@@ -597,6 +675,12 @@ static void Protocol_ForwardFromApp(const uint8_t *buf, uint16_t len)
 static void Protocol_ForwardFromLora(const uint8_t *buf, uint16_t len)
 {
   if (!Config_LoraEnabled())
+  {
+    return;
+  }
+
+  /* OTA 期间禁止抢 USART1 */
+  if (OTA_IsRealtimeMuted() != 0U)
   {
     return;
   }
@@ -694,28 +778,21 @@ static void Protocol_HandleWriteMultiple(const uint8_t *frame, uint16_t len)
 
     uint8_t resp[8];
     uint16_t crc;
-    uint8_t result_byte;
 
     if (OTA_StartSession(total) == 0)
     {
-      result_byte = 0x00U;  /* 成功 */
+      /* START 预擦除完成后才 ACK；失败时 App 读 204 可见 ERROR。 */
+      resp[0] = PROTOCOL_ADDR;
+      resp[1] = 0x20U;
+      resp[2] = reg_lo;
+      resp[3] = reg_hi;
+      resp[4] = qty_lo;
+      resp[5] = qty_hi;
+      crc = Protocol_CalcCrc(resp, 6U);
+      resp[6] = (uint8_t)(crc & 0xFFU);
+      resp[7] = (uint8_t)((crc >> 8) & 0xFFU);
+      Protocol_Send(resp, 8U);
     }
-    else
-    {
-      result_byte = 0x01U;  /* 失败 */
-    }
-
-    resp[0] = PROTOCOL_ADDR;
-    resp[1] = 0x20U;
-    resp[2] = reg_lo;
-    resp[3] = reg_hi;
-    resp[4] = qty_lo;
-    resp[5] = qty_hi;
-    crc = Protocol_CalcCrc(resp, 6U);
-    resp[6] = (uint8_t)(crc & 0xFFU);
-    resp[7] = (uint8_t)((crc >> 8) & 0xFFU);
-    (void)result_byte;
-    Protocol_Send(resp, 8U);
   }
   /* ---- OTA: 结束升级 (REG_OTA_DONE=202, qty=2, byte_cnt=4, data=crc32) ---- */
   else if ((reg_lo == (uint8_t)(REG_OTA_DONE & 0xFFU)) &&
@@ -730,24 +807,24 @@ static void Protocol_HandleWriteMultiple(const uint8_t *frame, uint16_t len)
     uint8_t resp[8];
     uint16_t crc;
 
-    resp[0] = PROTOCOL_ADDR;
-    resp[1] = 0x20U;
-    resp[2] = reg_lo;
-    resp[3] = reg_hi;
-    resp[4] = qty_lo;
-    resp[5] = qty_hi;
-    crc = Protocol_CalcCrc(resp, 6U);
-    resp[6] = (uint8_t)(crc & 0xFFU);
-    resp[7] = (uint8_t)((crc >> 8) & 0xFFU);
-    Protocol_Send(resp, 8U);
-
-    if (OTA_Finish(crc32) == 0)
+    /*
+     * CRC 与 Flag 均成功后才 ACK。
+     * 若上一次 DONE 已成功但 ACK 丢失，重复 DONE 直接再次 ACK，保证幂等。
+     */
+    if ((OTA_GetState() == OTA_STATE_DONE) || (OTA_Finish(crc32) == 0))
     {
-      /* 校验通过，OTA Flag 已写入，延迟后重启进入 Bootloader */
-      HAL_Delay(50U);
-      NVIC_SystemReset();
+      resp[0] = PROTOCOL_ADDR;
+      resp[1] = 0x20U;
+      resp[2] = reg_lo;
+      resp[3] = reg_hi;
+      resp[4] = qty_lo;
+      resp[5] = qty_hi;
+      crc = Protocol_CalcCrc(resp, 6U);
+      resp[6] = (uint8_t)(crc & 0xFFU);
+      resp[7] = (uint8_t)((crc >> 8) & 0xFFU);
+      Protocol_Send(resp, 8U);
+      OTA_RequestReset();
     }
-    /* 校验失败：状态机变 ERROR，上位机下次读 REG_OTA_STATUS 可得知 */
   }
   /* ---- OTA: 数据包 (REG_OTA_DATA=208, qty=1~64, byte_cnt=2~128) ---- */
   else if ((reg_lo == (uint8_t)(REG_OTA_DATA & 0xFFU)) &&
@@ -758,18 +835,20 @@ static void Protocol_HandleWriteMultiple(const uint8_t *frame, uint16_t len)
     uint8_t resp[8];
     uint16_t crc;
 
-    (void)OTA_WriteChunk(&frame[7], (uint16_t)byte_cnt);
-
-    resp[0] = PROTOCOL_ADDR;
-    resp[1] = 0x20U;
-    resp[2] = reg_lo;
-    resp[3] = reg_hi;
-    resp[4] = qty_lo;
-    resp[5] = qty_hi;
-    crc = Protocol_CalcCrc(resp, 6U);
-    resp[6] = (uint8_t)(crc & 0xFFU);
-    resp[7] = (uint8_t)((crc >> 8) & 0xFFU);
-    Protocol_Send(resp, 8U);
+    /* 本包完整落盘后才 ACK；ACK 即代表 written_bytes 已推进。 */
+    if (OTA_WriteChunk(&frame[7], (uint16_t)byte_cnt) == 0)
+    {
+      resp[0] = PROTOCOL_ADDR;
+      resp[1] = 0x20U;
+      resp[2] = reg_lo;
+      resp[3] = reg_hi;
+      resp[4] = qty_lo;
+      resp[5] = qty_hi;
+      crc = Protocol_CalcCrc(resp, 6U);
+      resp[6] = (uint8_t)(crc & 0xFFU);
+      resp[7] = (uint8_t)((crc >> 8) & 0xFFU);
+      Protocol_Send(resp, 8U);
+    }
   }
 }
 
