@@ -154,14 +154,20 @@ static void UartTask(void *argument)
 
         Fsy_Link_OnUartBytes(rb, Fsy_Link_WriteUart);
 
-        /* OTA 传包期间专供串口，避免 LoRa/CAN 抢占拖死 DATA 应答 */
-        if (OTA_IsRealtimeMuted() == 0U) {
+        /*
+         * CAN 可能就是当前 OTA 数据通道，mute 只能抑制主动上报/非必要业务，
+         * 不能停止 CAN 收包，否则 START 后的 DATA/DONE 永远无法处理。
+         */
 #if CAN_DRIVER_ENABLE
-            CanDriver_Poll();
+        CanDriver_Poll();
 #endif
-            if (LORA_IsEnabled()) {
-                LORA_Poll();
-            }
+
+        /*
+         * LoRa 也可能是当前 OTA 数据通道；与 CAN 一样，mute 期间仍须收包，
+         * 否则 START 进入 mute 后 DATA/DONE 将永远无法处理。
+         */
+        if (LORA_IsEnabled()) {
+            LORA_Poll();
         }
 
         OTA_Service();
