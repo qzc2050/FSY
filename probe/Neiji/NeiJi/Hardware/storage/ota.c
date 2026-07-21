@@ -11,8 +11,8 @@
 #define OTA_FLASH_WORD_SIZE           32U
 #define OTA_FLASH_SECTOR_SIZE         0x00020000U
 #define OTA_FLASH_SECTOR_COUNT        7U
-/* 分包间隙可能较长，勿过早 Abort */
-#define OTA_REALTIME_MUTE_TIMEOUT_MS  120000U
+/* LoRa OTA 超时恢复会查询状态并重试，给链路抖动保留 5 分钟恢复窗口 */
+#define OTA_REALTIME_MUTE_TIMEOUT_MS  300000U
 
 static OtaState_e s_state = OTA_STATE_IDLE;
 static uint32_t   s_total_size;

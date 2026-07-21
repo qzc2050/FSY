@@ -18,6 +18,7 @@ import com.raydose.netshield.net.ParsedFsyFrame
 import com.raydose.netshield.net.buildOtaDataFrame
 import com.raydose.netshield.net.buildOtaDoneFrame
 import com.raydose.netshield.net.buildOtaStartFrame
+import com.raydose.netshield.net.buildReadOtaStatusFrame
 import com.raydose.netshield.net.buildReadRegsFrame
 import com.raydose.netshield.net.matchesManageConfigRead
 import com.raydose.netshield.net.matchesWriteAck
@@ -397,7 +398,8 @@ class ProbeConnectionManager(
 
     /**
      * 探头固件 OTA：START → DATA(≤128B) → DONE。
-     * DATA/DONE 禁止重试；START 可短重试。OTA 期间暂停 0x23 僵死断线。
+     * DATA 超时后读取 reg204，按 written_bytes 区分“DATA 丢失”和“ACK 丢失”，
+     * 只有设备仍停在本包起点时才重发。OTA 期间暂停 0x23 僵死断线。
      */
     suspend fun upgradeFirmware(
         probe: SavedProbe,
@@ -422,16 +424,13 @@ class ProbeConnectionManager(
         configReadSessionProbeId = probe.id
         drainConfigReadChannel()
         try {
+            /* DONE 的 ACK 若丢失，可用重启后的版本变化确认升级确已生效。 */
+            val previousVersion = readProbeFirmwareVersion(probe, route, addr)
+            if (route == ProbeCommandLink.SERIAL && previousVersion == null) {
+                error("无法读取探头版本，尚未确认 CAN/LoRa 路由，请稍后重试")
+            }
             onProgress(ZjbOtaProgress("发送 OTA_START", 0f))
-            sendOtaWrite(
-                probe = probe,
-                route = route,
-                frame = buildOtaStartFrame(fileBytes.size, addr),
-                reg = REG_OTA_START,
-                timeoutMs = OTA_START_TIMEOUT_MS,
-                maxAttempts = OTA_START_MAX_ATTEMPTS,
-                label = "OTA_START",
-            )
+            sendProbeOtaStart(probe, route, fileBytes.size, addr)
 
             var offset = 0
             var chunkIndex = 0
@@ -449,31 +448,34 @@ class ProbeConnectionManager(
                         deviceWritten = offset.toLong(),
                     ),
                 )
-                sendOtaWrite(
+                sendProbeOtaDataChunk(
                     probe = probe,
                     route = route,
-                    frame = buildOtaDataFrame(chunk, addr),
-                    reg = REG_OTA_DATA,
-                    timeoutMs = OTA_DATA_TIMEOUT_MS,
-                    maxAttempts = 1,
-                    label = "OTA_DATA#$chunkIndex",
+                    chunk = chunk,
+                    addr = addr,
+                    expectedStart = offset.toLong(),
+                    expectedEnd = end.toLong(),
+                    chunkIndex = chunkIndex,
                 )
                 /* 给内机写 Flash / 轮询 W5500 留间隙，降低 TCP 会话被拆风险 */
                 if (route == ProbeCommandLink.NETWORK) {
                     delay(OTA_TCP_INTER_CHUNK_GAP_MS)
                 }
                 offset = end
+                if ((chunkIndex % OTA_STATUS_CHECK_EVERY_CHUNKS) == 0) {
+                    verifyProbeOtaProgress(probe, route, addr, offset.toLong(), chunkIndex)
+                }
             }
 
+            verifyProbeOtaProgress(probe, route, addr, fileBytes.size.toLong(), chunkIndex)
             onProgress(ZjbOtaProgress("发送 OTA_DONE", 1f, deviceWritten = fileBytes.size.toLong()))
-            sendOtaWrite(
+            sendProbeOtaDone(
                 probe = probe,
                 route = route,
-                frame = buildOtaDoneFrame(crc32, addr),
-                reg = REG_OTA_DONE,
-                timeoutMs = OTA_DONE_TIMEOUT_MS,
-                maxAttempts = 1,
-                label = "OTA_DONE",
+                crc32 = crc32,
+                addr = addr,
+                totalSize = fileBytes.size.toLong(),
+                previousVersion = previousVersion,
             )
 
             onProgress(
@@ -493,43 +495,268 @@ class ProbeConnectionManager(
         }
     }
 
-    private suspend fun sendOtaWrite(
+    private suspend fun sendProbeOtaStart(
         probe: SavedProbe,
         route: ProbeCommandLink,
-        frame: ByteArray,
-        reg: Int,
-        timeoutMs: Long,
-        maxAttempts: Int,
-        label: String,
+        totalSize: Int,
+        addr: Byte,
     ) {
-        val expect = parseWriteAckExpectation(frame)
-            ?: error("$label 帧格式错误")
-        var lastError: String? = null
-        for (attempt in 1..maxAttempts) {
-            if (!isProbeReadyForOta(probe, route)) {
-                error("探头连接中断（$label）")
+        val frame = buildOtaStartFrame(totalSize, addr)
+        repeat(OTA_START_MAX_ATTEMPTS) { attempt ->
+            drainConfigReadChannel()
+            sendProbeOtaFrame(probe, route, frame, "OTA_START")
+            if (awaitProbeOtaWriteAck(probe, frame, OTA_START_TIMEOUT_MS)) {
+                return
             }
-            if (!sendConfigReadFrame(probe, route, frame)) {
-                error("发送失败（$label）")
+
+            val status = readProbeOtaStatus(probe, route, addr)
+            if (status?.otaState == OTA_STATE_STARTED && status.otaWrittenBytes == 0L) {
+                return
             }
-            val ack = withTimeoutOrNull(timeoutMs) {
+            if (status?.otaState == OTA_STATE_ERROR) {
+                error("OTA_START 失败：探头进入 ERROR")
+            }
+            if (status?.otaState == OTA_STATE_STARTED && status.otaWrittenBytes != 0L) {
+                error("OTA_START 状态异常：探头已有 ${status.otaWrittenBytes} 字节")
+            }
+            if (attempt + 1 < OTA_START_MAX_ATTEMPTS) {
+                delay(OTA_RETRY_GAP_MS)
+            }
+        }
+        error("OTA_START 无应答，且无法确认探头已开始升级")
+    }
+
+    private suspend fun sendProbeOtaDataChunk(
+        probe: SavedProbe,
+        route: ProbeCommandLink,
+        chunk: ByteArray,
+        addr: Byte,
+        expectedStart: Long,
+        expectedEnd: Long,
+        chunkIndex: Int,
+    ) {
+        val frame = buildOtaDataFrame(chunk, addr)
+        repeat(OTA_DATA_MAX_ATTEMPTS) { attempt ->
+            drainConfigReadChannel()
+            sendProbeOtaFrame(probe, route, frame, "OTA_DATA#$chunkIndex")
+            if (awaitProbeOtaWriteAck(probe, frame, OTA_DATA_TIMEOUT_MS)) {
+                return
+            }
+
+            /*
+             * 禁止盲目重发：ACK 可能丢失，但 DATA 已经写入。
+             * reg204 只有仍停在 expectedStart 时才允许重发。
+             */
+            val status = readProbeOtaStatus(probe, route, addr)
+                ?: error(
+                    "OTA 数据包 $chunkIndex 无应答，且无法读取探头进度；" +
+                        "为避免重复写入，已停止升级",
+                )
+            if (status.otaState == OTA_STATE_ERROR) {
+                error("OTA 数据包 $chunkIndex 写入失败：探头进入 ERROR")
+            }
+            if (status.otaState != OTA_STATE_STARTED) {
+                error(
+                    "OTA 数据包 $chunkIndex 状态异常：" +
+                        "state=${status.otaState} written=${status.otaWrittenBytes}",
+                )
+            }
+            when (status.otaWrittenBytes) {
+                expectedEnd -> return
+                expectedStart -> Unit
+                else -> error(
+                    "OTA 数据包 $chunkIndex 偏移异常：" +
+                        "探头=${status.otaWrittenBytes}，期望=$expectedStart 或 $expectedEnd",
+                )
+            }
+            if (attempt + 1 < OTA_DATA_MAX_ATTEMPTS) {
+                delay(OTA_RETRY_GAP_MS)
+            }
+        }
+        error("OTA 数据包 $chunkIndex 无应答，且无法确认探头写入进度")
+    }
+
+    private suspend fun verifyProbeOtaProgress(
+        probe: SavedProbe,
+        route: ProbeCommandLink,
+        addr: Byte,
+        expectedWritten: Long,
+        chunkIndex: Int,
+    ) {
+        val status = readProbeOtaStatus(probe, route, addr)
+            ?: error("OTA 进度检查无应答（第 $chunkIndex 包）")
+        if (status.otaState == OTA_STATE_ERROR) {
+            error("OTA 写入失败：探头进入 ERROR（第 $chunkIndex 包）")
+        }
+        if (status.otaState != OTA_STATE_STARTED || status.otaWrittenBytes != expectedWritten) {
+            error(
+                "OTA 进度异常（第 $chunkIndex 包）：" +
+                    "state=${status.otaState} written=${status.otaWrittenBytes}，" +
+                    "期望=$expectedWritten",
+            )
+        }
+    }
+
+    private suspend fun sendProbeOtaDone(
+        probe: SavedProbe,
+        route: ProbeCommandLink,
+        crc32: Long,
+        addr: Byte,
+        totalSize: Long,
+        previousVersion: String?,
+    ) {
+        val frame = buildOtaDoneFrame(crc32, addr)
+        repeat(OTA_DONE_MAX_ATTEMPTS) { attempt ->
+            drainConfigReadChannel()
+            sendProbeOtaFrame(probe, route, frame, "OTA_DONE")
+            if (awaitProbeOtaWriteAck(probe, frame, OTA_DONE_TIMEOUT_MS)) {
+                return
+            }
+
+            val status = readProbeOtaStatus(probe, route, addr)
+            when (status?.otaState) {
+                OTA_STATE_DONE -> return
+                OTA_STATE_ERROR -> error("OTA_DONE 失败：CRC 或升级标记写入失败")
+                OTA_STATE_STARTED -> {
+                    if (status.otaWrittenBytes != totalSize) {
+                        error(
+                            "OTA_DONE 前偏移异常：探头=${status.otaWrittenBytes}，" +
+                                "期望=$totalSize",
+                        )
+                    }
+                    /* 仍为 STARTED 说明上次 DONE 未执行，可以安全重发。 */
+                }
+                null -> {
+                    /*
+                     * DONE 成功后探头会立即复位，此时状态读取可能无响应。
+                     * 通过重启后的版本变化确认成功；不盲目重发。
+                     */
+                    if (previousVersion != null &&
+                        awaitProbeFirmwareVersionChange(probe, route, addr, previousVersion)
+                    ) {
+                        return
+                    }
+                    error("OTA_DONE 无应答，且无法通过重启后的软件版本确认升级结果")
+                }
+                else -> error(
+                    "OTA_DONE 状态异常：state=${status.otaState} " +
+                        "written=${status.otaWrittenBytes}",
+                )
+            }
+            if (attempt + 1 < OTA_DONE_MAX_ATTEMPTS) {
+                delay(OTA_RETRY_GAP_MS)
+            }
+        }
+        error("OTA_DONE 多次无应答，且无法确认探头已完成校验")
+    }
+
+    private suspend fun readProbeOtaStatus(
+        probe: SavedProbe,
+        route: ProbeCommandLink,
+        addr: Byte,
+    ): ParsedFsyFrame? {
+        repeat(OTA_STATUS_MAX_ATTEMPTS) { attempt ->
+            drainConfigReadChannel()
+            if (!isProbeReadyForOta(probe, route)) return null
+            if (!sendConfigReadFrame(probe, route, buildReadOtaStatusFrame(addr))) return null
+            val status = withTimeoutOrNull(OTA_STATUS_TIMEOUT_MS) {
                 while (true) {
                     val event = configReadChannel.receive()
                     if (event.probeId != probe.id) continue
-                    if (event.frame.matchesWriteAck(expect)) {
+                    if (event.frame.func == 0x13 &&
+                        event.frame.otaState != null &&
+                        event.frame.otaWrittenBytes != null
+                    ) {
                         return@withTimeoutOrNull event.frame
                     }
                 }
                 @Suppress("UNREACHABLE_CODE")
                 null
             }
-            if (ack != null) return
-            lastError = "$label 无应答"
-            if (attempt < maxAttempts) {
+            if (status != null) return status
+            if (attempt + 1 < OTA_STATUS_MAX_ATTEMPTS) {
                 delay(OTA_RETRY_GAP_MS)
             }
         }
-        error(lastError ?: "$label 失败")
+        return null
+    }
+
+    private suspend fun readProbeFirmwareVersion(
+        probe: SavedProbe,
+        route: ProbeCommandLink,
+        addr: Byte,
+        timeoutMs: Long = OTA_VERSION_READ_TIMEOUT_MS,
+    ): String? {
+        drainConfigReadChannel()
+        if (!isProbeReadyForOta(probe, route)) return null
+        val frame = buildReadRegsFrame(
+            startReg = NeijiProbeRegs.SOFTWARE_VERSION,
+            count = NeijiProbeRegs.SOFTWARE_VERSION_REGS,
+            deviceAddr = addr,
+        )
+        if (!sendConfigReadFrame(probe, route, frame)) return null
+        return withTimeoutOrNull(timeoutMs) {
+            while (true) {
+                val event = configReadChannel.receive()
+                if (event.probeId != probe.id) continue
+                if (event.frame.func == 0x13 && event.frame.deviceVersion != null) {
+                    return@withTimeoutOrNull event.frame.deviceVersion
+                }
+            }
+            @Suppress("UNREACHABLE_CODE")
+            null
+        }
+    }
+
+    private suspend fun awaitProbeFirmwareVersionChange(
+        probe: SavedProbe,
+        route: ProbeCommandLink,
+        addr: Byte,
+        previousVersion: String,
+    ): Boolean {
+        val deadline = System.currentTimeMillis() + OTA_REBOOT_CONFIRM_TIMEOUT_MS
+        while (System.currentTimeMillis() < deadline) {
+            val version = readProbeFirmwareVersion(probe, route, addr)
+            if (!version.isNullOrBlank() && version != previousVersion) {
+                Log.i(TAG, "OTA_DONE ACK 丢失，但版本已由 $previousVersion 更新为 $version")
+                return true
+            }
+            delay(OTA_REBOOT_CONFIRM_POLL_MS)
+        }
+        return false
+    }
+
+    private fun sendProbeOtaFrame(
+        probe: SavedProbe,
+        route: ProbeCommandLink,
+        frame: ByteArray,
+        label: String,
+    ) {
+        if (!isProbeReadyForOta(probe, route)) {
+            error("探头连接中断（$label）")
+        }
+        if (!sendConfigReadFrame(probe, route, frame)) {
+            error("发送失败（$label）")
+        }
+    }
+
+    private suspend fun awaitProbeOtaWriteAck(
+        probe: SavedProbe,
+        frame: ByteArray,
+        timeoutMs: Long,
+    ): Boolean {
+        val expect = parseWriteAckExpectation(frame) ?: return false
+        return withTimeoutOrNull(timeoutMs) {
+            while (true) {
+                val event = configReadChannel.receive()
+                if (event.probeId != probe.id) continue
+                if (event.frame.matchesWriteAck(expect)) {
+                    return@withTimeoutOrNull true
+                }
+            }
+            @Suppress("UNREACHABLE_CODE")
+            false
+        } == true
     }
 
     private fun isProbeReadyForOta(probe: SavedProbe, route: ProbeCommandLink): Boolean {
@@ -1041,10 +1268,21 @@ class ProbeConnectionManager(
         private const val REG_OTA_DATA = 0x00D0
         /** START 预擦 Download 扇区可能十余秒 */
         private const val OTA_START_TIMEOUT_MS = 45_000L
-        private const val OTA_START_MAX_ATTEMPTS = 2
-        private const val OTA_DATA_TIMEOUT_MS = 10_000L
-        private const val OTA_DONE_TIMEOUT_MS = 20_000L
+        private const val OTA_START_MAX_ATTEMPTS = 3
+        private const val OTA_DATA_TIMEOUT_MS = 15_000L
+        private const val OTA_DATA_MAX_ATTEMPTS = 3
+        private const val OTA_DONE_TIMEOUT_MS = 30_000L
+        private const val OTA_DONE_MAX_ATTEMPTS = 3
+        private const val OTA_STATUS_TIMEOUT_MS = 10_000L
+        private const val OTA_STATUS_MAX_ATTEMPTS = 3
+        private const val OTA_STATUS_CHECK_EVERY_CHUNKS = 64
+        private const val OTA_VERSION_READ_TIMEOUT_MS = 5_000L
+        private const val OTA_REBOOT_CONFIRM_TIMEOUT_MS = 90_000L
+        private const val OTA_REBOOT_CONFIRM_POLL_MS = 3_000L
         private const val OTA_RETRY_GAP_MS = 200L
         private const val OTA_TCP_INTER_CHUNK_GAP_MS = 15L
+        private const val OTA_STATE_STARTED = 1L
+        private const val OTA_STATE_ERROR = 3L
+        private const val OTA_STATE_DONE = 4L
     }
 }

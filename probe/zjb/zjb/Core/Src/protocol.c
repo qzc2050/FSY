@@ -202,6 +202,15 @@ static void Protocol_HandleWriteMultiple(const uint8_t *frame, uint16_t len);
 static void Protocol_HandleWriteSingle(const uint8_t *frame, uint16_t len);
 static void Protocol_HandleReadMultiple(const uint8_t *frame, uint16_t len);
 
+typedef enum
+{
+  PROBE_ROUTE_NONE = 0,
+  PROBE_ROUTE_CAN,
+  PROBE_ROUTE_LORA
+} ProbeRoute_e;
+
+static void ProbeRoute_OnUplink(const uint8_t *buf, uint16_t len, ProbeRoute_e route);
+
 static void Protocol_LoraParseStream(void)
 {
   for (;;)
@@ -286,9 +295,9 @@ static void Protocol_LoraParseStream(void)
 #define CAN_RX_MAX_SLAVES       5U
 #define CAN_RX_CACHE_SIZE       256U
 #define CAN_RX_STALE_TIMEOUT_MS 200U
-/* 该 addr 近期有过 CAN 协议上行 → App 下行只走 CAN，不再双发 LoRa */
-#define CAN_PROTO_ALIVE_MS      6000U
-#define CAN_PROTO_ALIVE_SLOTS   8U
+#define PROBE_ROUTE_RECENT_MS   6000U
+#define PROBE_ROUTE_SLOTS       8U
+#define OTA_ROUTE_LOCK_MS       300000U
 
 typedef struct
 {
@@ -314,12 +323,27 @@ static CanSlaveCache s_can_cache[CAN_RX_MAX_SLAVES];
 typedef struct
 {
   uint8_t addr; /* 0=空 */
+  ProbeRoute_e route;
   uint32_t last_ms;
-} CanProtoAliveSlot;
+} ProbeRouteEntry;
 
-static CanProtoAliveSlot s_can_proto_alive[CAN_PROTO_ALIVE_SLOTS];
+typedef struct
+{
+  uint8_t active;
+  uint8_t addr;
+  ProbeRoute_e route;
+  uint32_t last_ms;
+} OtaRouteLock;
 
-static void CanProtoAlive_Touch(uint8_t addr)
+static ProbeRouteEntry s_probe_routes[PROBE_ROUTE_SLOTS];
+static OtaRouteLock s_ota_route_lock;
+
+static uint8_t ProbeRoute_IsValidAddr(uint8_t addr)
+{
+  return ((addr != 0U) && (addr != (uint8_t)PROTOCOL_ADDR)) ? 1U : 0U;
+}
+
+static void ProbeRoute_Touch(uint8_t addr, ProbeRoute_e route)
 {
   uint8_t i;
   uint8_t free_i = 0xFFU;
@@ -327,28 +351,29 @@ static void CanProtoAlive_Touch(uint8_t addr)
   uint32_t oldest_ms;
   uint32_t now;
 
-  if (addr == 0U)
+  if ((ProbeRoute_IsValidAddr(addr) == 0U) || (route == PROBE_ROUTE_NONE))
   {
     return;
   }
 
   now = HAL_GetTick();
-  oldest_ms = s_can_proto_alive[0].last_ms;
+  oldest_ms = s_probe_routes[0].last_ms;
 
-  for (i = 0U; i < CAN_PROTO_ALIVE_SLOTS; i++)
+  for (i = 0U; i < PROBE_ROUTE_SLOTS; i++)
   {
-    if (s_can_proto_alive[i].addr == addr)
+    if (s_probe_routes[i].addr == addr)
     {
-      s_can_proto_alive[i].last_ms = now;
+      s_probe_routes[i].route = route;
+      s_probe_routes[i].last_ms = now;
       return;
     }
-    if ((s_can_proto_alive[i].addr == 0U) && (free_i == 0xFFU))
+    if ((s_probe_routes[i].addr == 0U) && (free_i == 0xFFU))
     {
       free_i = i;
     }
-    if (s_can_proto_alive[i].last_ms < oldest_ms)
+    if (s_probe_routes[i].last_ms < oldest_ms)
     {
-      oldest_ms = s_can_proto_alive[i].last_ms;
+      oldest_ms = s_probe_routes[i].last_ms;
       oldest = i;
     }
   }
@@ -357,29 +382,108 @@ static void CanProtoAlive_Touch(uint8_t addr)
   {
     free_i = oldest;
   }
-  s_can_proto_alive[free_i].addr = addr;
-  s_can_proto_alive[free_i].last_ms = now;
+  s_probe_routes[free_i].addr = addr;
+  s_probe_routes[free_i].route = route;
+  s_probe_routes[free_i].last_ms = now;
 }
 
-static uint8_t CanProtoAlive_IsRecent(uint8_t addr)
+static ProbeRoute_e ProbeRoute_GetRecent(uint8_t addr)
 {
   uint8_t i;
   uint32_t now;
 
-  if (addr == 0U)
+  if (ProbeRoute_IsValidAddr(addr) == 0U)
   {
-    return 0U;
+    return PROBE_ROUTE_NONE;
   }
 
   now = HAL_GetTick();
-  for (i = 0U; i < CAN_PROTO_ALIVE_SLOTS; i++)
+  for (i = 0U; i < PROBE_ROUTE_SLOTS; i++)
   {
-    if (s_can_proto_alive[i].addr == addr)
+    if (s_probe_routes[i].addr == addr)
     {
-      return ((now - s_can_proto_alive[i].last_ms) <= CAN_PROTO_ALIVE_MS) ? 1U : 0U;
+      if ((now - s_probe_routes[i].last_ms) <= PROBE_ROUTE_RECENT_MS)
+      {
+        return s_probe_routes[i].route;
+      }
+      return PROBE_ROUTE_NONE;
     }
   }
-  return 0U;
+  return PROBE_ROUTE_NONE;
+}
+
+static void OtaRouteLock_Expire(void)
+{
+  if ((s_ota_route_lock.active != 0U) &&
+      ((HAL_GetTick() - s_ota_route_lock.last_ms) > OTA_ROUTE_LOCK_MS))
+  {
+    memset(&s_ota_route_lock, 0, sizeof(s_ota_route_lock));
+  }
+}
+
+static ProbeRoute_e OtaRouteLock_Get(uint8_t addr)
+{
+  OtaRouteLock_Expire();
+  if ((s_ota_route_lock.active != 0U) && (s_ota_route_lock.addr == addr))
+  {
+    return s_ota_route_lock.route;
+  }
+  return PROBE_ROUTE_NONE;
+}
+
+static uint8_t OtaRouteLock_Set(uint8_t addr, ProbeRoute_e route)
+{
+  OtaRouteLock_Expire();
+  if ((ProbeRoute_IsValidAddr(addr) == 0U) || (route == PROBE_ROUTE_NONE))
+  {
+    return 0U;
+  }
+  if ((s_ota_route_lock.active != 0U) && (s_ota_route_lock.addr != addr))
+  {
+    return 0U;
+  }
+  s_ota_route_lock.active = 1U;
+  s_ota_route_lock.addr = addr;
+  s_ota_route_lock.route = route;
+  s_ota_route_lock.last_ms = HAL_GetTick();
+  return 1U;
+}
+
+static void OtaRouteLock_Touch(uint8_t addr)
+{
+  if ((s_ota_route_lock.active != 0U) && (s_ota_route_lock.addr == addr))
+  {
+    s_ota_route_lock.last_ms = HAL_GetTick();
+  }
+}
+
+static void OtaRouteLock_ReleaseDoneAck(const uint8_t *buf, uint16_t len,
+                                        ProbeRoute_e route)
+{
+  uint16_t reg;
+
+  if ((buf == NULL) || (len < 8U) || (buf[1] != 0x20U))
+  {
+    return;
+  }
+  reg = (uint16_t)buf[2] | ((uint16_t)buf[3] << 8);
+  if ((reg == REG_OTA_DONE) &&
+      (s_ota_route_lock.active != 0U) &&
+      (s_ota_route_lock.addr == buf[0]) &&
+      (s_ota_route_lock.route == route))
+  {
+    memset(&s_ota_route_lock, 0, sizeof(s_ota_route_lock));
+  }
+}
+
+static void ProbeRoute_OnUplink(const uint8_t *buf, uint16_t len, ProbeRoute_e route)
+{
+  if ((buf == NULL) || (len < 4U))
+  {
+    return;
+  }
+  ProbeRoute_Touch(buf[0], route);
+  OtaRouteLock_ReleaseDoneAck(buf, len, route);
 }
 
 static uint8_t CanRxQ_Pop(CanRxItem *out)
@@ -507,8 +611,8 @@ static void CanCache_TryParseAndForward(CanSlaveCache *c)
       continue;
     }
 
-    /* 任意 CRC 通过的 CAN 协议帧（含 0x23 / 应答 / OTA）计入在线 */
-    CanProtoAlive_Touch(c->buf[0]);
+    /* 完整且 CRC 通过后，按该协议地址记录最近有效上行链路。 */
+    ProbeRoute_OnUplink(c->buf, frame_len, PROBE_ROUTE_CAN);
 
     /* OTA 期间禁止抢 USART1，避免冲掉 0xEF 的 0x20 ACK */
     if (OTA_IsRealtimeMuted() == 0U)
@@ -658,13 +762,107 @@ static void Protocol_ForwardToCan(const uint8_t *buf, uint16_t len)
   }
 }
 
-/* App 下行：该 addr 近期有 CAN 协议上行则只走 CAN，否则 LoRa+CAN */
+static uint8_t Protocol_GetOtaRequestReg(const uint8_t *buf, uint16_t len,
+                                         uint16_t *reg_out)
+{
+  uint16_t reg;
+
+  if ((buf == NULL) || (reg_out == NULL) || (len < 8U))
+  {
+    return 0U;
+  }
+  if ((buf[1] != 0x10U) && (buf[1] != 0x03U))
+  {
+    return 0U;
+  }
+
+  reg = (uint16_t)buf[2] | ((uint16_t)buf[3] << 8);
+  if (((buf[1] == 0x10U) &&
+       ((reg == REG_OTA_START) || (reg == REG_OTA_DATA) || (reg == REG_OTA_DONE))) ||
+      ((buf[1] == 0x03U) && (reg == REG_OTA_STATUS)))
+  {
+    *reg_out = reg;
+    return 1U;
+  }
+  return 0U;
+}
+
+static void Protocol_ForwardByRoute(ProbeRoute_e route,
+                                    const uint8_t *buf, uint16_t len)
+{
+  if (route == PROBE_ROUTE_CAN)
+  {
+    Protocol_ForwardToCan(buf, len);
+  }
+  else if ((route == PROBE_ROUTE_LORA) && Config_LoraEnabled())
+  {
+    (void)Lora_Usart2Tx(buf, len, 100U);
+  }
+}
+
+/*
+ * App 下行按协议地址原路返回：
+ * - 最近 CAN 上行 → 只发 CAN
+ * - 最近 LoRa 上行 → 只发 LoRa
+ * - 普通命令路由未知 → 双发一次以学习路由
+ * - OTA 路由未知 → 禁止双发，避免同一 DATA 被重复写入
+ */
 static void Protocol_ForwardFromApp(const uint8_t *buf, uint16_t len)
 {
-  uint8_t addr = (len >= 1U) ? buf[0] : 0U;
-  uint8_t can_only = CanProtoAlive_IsRecent(addr);
+  uint8_t addr;
+  uint16_t ota_reg = 0U;
+  uint8_t is_ota;
+  ProbeRoute_e route;
+  ProbeRoute_e locked_route;
 
-  if ((can_only == 0U) && Config_LoraEnabled())
+  if ((buf == NULL) || (len < 1U))
+  {
+    return;
+  }
+
+  addr = buf[0];
+  if (ProbeRoute_IsValidAddr(addr) == 0U)
+  {
+    return;
+  }
+
+  route = ProbeRoute_GetRecent(addr);
+  is_ota = Protocol_GetOtaRequestReg(buf, len, &ota_reg);
+
+  if (is_ota != 0U)
+  {
+    locked_route = OtaRouteLock_Get(addr);
+
+    if (ota_reg == REG_OTA_START)
+    {
+      if (locked_route == PROBE_ROUTE_NONE)
+      {
+        if ((route == PROBE_ROUTE_NONE) || (OtaRouteLock_Set(addr, route) == 0U))
+        {
+          return;
+        }
+        locked_route = route;
+      }
+    }
+    else if (locked_route == PROBE_ROUTE_NONE)
+    {
+      /* DATA / STATUS / DONE 必须属于一个已锁定的 OTA 会话。 */
+      return;
+    }
+
+    OtaRouteLock_Touch(addr);
+    Protocol_ForwardByRoute(locked_route, buf, len);
+    return;
+  }
+
+  if (route != PROBE_ROUTE_NONE)
+  {
+    Protocol_ForwardByRoute(route, buf, len);
+    return;
+  }
+
+  /* 未知路由仅允许普通命令双发，待有效应答学习该地址的真实链路。 */
+  if (Config_LoraEnabled())
   {
     (void)Lora_Usart2Tx(buf, len, 100U);
   }
@@ -678,6 +876,8 @@ static void Protocol_ForwardFromLora(const uint8_t *buf, uint16_t len)
   {
     return;
   }
+
+  ProbeRoute_OnUplink(buf, len, PROBE_ROUTE_LORA);
 
   /* OTA 期间禁止抢 USART1 */
   if (OTA_IsRealtimeMuted() != 0U)
