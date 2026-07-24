@@ -228,6 +228,7 @@ static int neiji_datetime_rtc_from_rollers(Pcf85063_DateTime_t *dt)
 static void neiji_restore_alarm_group(void);
 static void neiji_restore_display_group(void);
 static void neiji_show_only_panel(lv_obj_t *panel);
+static void neiji_adjust_about_ui_layout(void);
 
 static void neiji_bind_about_info(void)
 {
@@ -235,11 +236,8 @@ static void neiji_bind_about_info(void)
         return;
     }
     if (ui_product_name) {
-        if (language_get_current() == LANG_ENGLISH) {
-            lv_label_set_text(ui_product_name, language_get_string(LANG_VALUE_PRODUCT_NAME));
-        } else {
-            lv_label_set_text(ui_product_name, DeviceConfig_GetProductName());
-        }
+        /* 中/英全称均走语言表（Flash 产品名字段仅 16 字节存简称） */
+        lv_label_set_text(ui_product_name, language_get_string(LANG_VALUE_PRODUCT_NAME));
     }
     if (ui_product_model) {
         lv_label_set_text(ui_product_model, DeviceConfig_GetProductModel());
@@ -250,6 +248,7 @@ static void neiji_bind_about_info(void)
     if (ui_software_version) {
         lv_label_set_text(ui_software_version, DEVICE_SOFTWARE_VERSION);
     }
+    neiji_adjust_about_ui_layout();
 }
 
 static void neiji_enter_about_viewing(void)
@@ -2715,21 +2714,23 @@ void ui_Main_Interface_screen_init(void)
     lv_obj_set_style_text_font(ui_SysAbout, &ui_font_hansanbold28, LV_PART_MAIN | LV_STATE_DEFAULT);
 
     ui_product_name = lv_label_create(ui_SysAbout);
-    lv_obj_set_width(ui_product_name, LV_SIZE_CONTENT);   /// 1
-    lv_obj_set_height(ui_product_name, LV_SIZE_CONTENT);    /// 1
-    lv_obj_set_x(ui_product_name, 135);
+    lv_obj_set_width(ui_product_name, 380);
+    lv_obj_set_height(ui_product_name, LV_SIZE_CONTENT);
+    lv_obj_set_x(ui_product_name, 164);
     lv_obj_set_y(ui_product_name, 0);
-    lv_label_set_text(ui_product_name, "\xE9\x9B\xB7\xE6\xB2\x83-\xE6\x8E\xA2\xE6\xB5\x8B\xE5\x99\xA8");
+    lv_label_set_long_mode(ui_product_name, LV_LABEL_LONG_WRAP);
+    lv_label_set_text(ui_product_name, "\xE7\x91\x9E\xE8\x81\x94\xE5\x8C\xBA\xE5\x9F\x9F\xE8\xBE\x90\xE5\xB0\x84\xE7\x9B\x91\xE6\xB5\x8B\xE7\xB3\xBB\xE7\xBB\x9F"); /* 瑞联区域辐射监测系统 */
     lv_obj_set_style_text_color(ui_product_name, lv_color_hex(0xC6E1FF), LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_text_opa(ui_product_name, 255, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_text_font(ui_product_name, &ui_font_hansanbold28, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_text_line_space(ui_product_name, 2, LV_PART_MAIN | LV_STATE_DEFAULT);
 
     ui_product_model = lv_label_create(ui_SysAbout);
     lv_obj_set_width(ui_product_model, LV_SIZE_CONTENT);   /// 1
     lv_obj_set_height(ui_product_model, LV_SIZE_CONTENT);    /// 1
     lv_obj_set_x(ui_product_model, 135);
     lv_obj_set_y(ui_product_model, 36);
-    lv_label_set_text(ui_product_model, "RWD-I");
+    lv_label_set_text(ui_product_model, "RK100P");
     lv_obj_set_style_text_color(ui_product_model, lv_color_hex(0xC6E1FF), LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_text_opa(ui_product_model, 255, LV_PART_MAIN | LV_STATE_DEFAULT);
 
@@ -3000,20 +3001,122 @@ void ui_Main_Interface_screen_destroy(void)
 }
 
 
-/* ---- 多语言文本刷新 ---- */
+/* ---- 关于本机：产品名换行 + 标签/数值列对齐 ---- */
 static void neiji_adjust_about_ui_layout(void)
 {
-    if (language_get_current() == LANG_ENGLISH) {
-        lv_obj_set_x(ui_product_name, 210);
-        lv_obj_set_x(ui_product_model, 214);
-        lv_obj_set_x(ui_product_SN, 214);
-        lv_obj_set_x(ui_software_version, 250);
-    } else {
-        lv_obj_set_x(ui_product_name, 164);
-        lv_obj_set_x(ui_product_model, 164);
-        lv_obj_set_x(ui_product_SN, 164);
-        lv_obj_set_x(ui_software_version, 164);
+    /* ui_font_hansanbold28.line_height == 30 */
+    const lv_coord_t line_h = 30;
+    const int gap_rows = 1; /* 名称与型号之间空一行，三项整体略下移 */
+    lv_coord_t value_x;
+    lv_coord_t name_w;
+    lv_coord_t name_h;
+    lv_coord_t y_model;
+    lv_coord_t y_sn;
+    lv_coord_t y_ver;
+    lv_coord_t y_contact;
+    int name_rows;
+    int pad_rows;
+    int i;
+    char left_text[160];
+
+    if (ui_product_name == NULL || ui_product_model == NULL ||
+        ui_product_SN == NULL || ui_software_version == NULL ||
+        ui_SysAbout == NULL) {
+        return;
     }
+
+    if (language_get_current() == LANG_ENGLISH) {
+        /* 右列统一对齐到最长标签 Software Version: 之后 */
+        value_x = 250;
+        name_w = 300;
+    } else {
+        value_x = 164;
+        name_w = 380;
+    }
+
+    /* 左右同一行高，保证标签与数值竖直对齐 */
+    lv_obj_set_style_text_line_space(ui_SysAbout, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_text_line_space(ui_product_name, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
+
+    lv_obj_set_width(ui_product_name, name_w);
+    lv_label_set_long_mode(ui_product_name, LV_LABEL_LONG_WRAP);
+    lv_obj_set_x(ui_product_name, value_x);
+    lv_obj_set_y(ui_product_name, 0);
+    lv_obj_update_layout(ui_product_name);
+    name_h = lv_obj_get_height(ui_product_name);
+
+    name_rows = (int)((name_h + line_h - 1) / line_h);
+    if (name_rows < 1) {
+        name_rows = 1;
+    }
+    if (name_rows > 4) {
+        name_rows = 4;
+    }
+
+    /* 型号/序列号/版本：名称占位后空一行再排 */
+    y_model = (lv_coord_t)((name_rows + gap_rows) * line_h);
+    y_sn = y_model + line_h;
+    y_ver = y_sn + line_h;
+    y_contact = y_ver + line_h + 10;
+    /* 联系我们 → 电话 → 邮箱 → 地址，行距与初始布局一致 */
+    {
+        lv_coord_t y_phone = y_contact + line_h + 4;
+        lv_coord_t y_mail  = y_phone + line_h + 6;
+        lv_coord_t y_addr  = y_mail + line_h + 10;
+
+        lv_obj_set_x(ui_product_model, value_x);
+        lv_obj_set_y(ui_product_model, y_model);
+        lv_obj_set_x(ui_product_SN, value_x);
+        lv_obj_set_y(ui_product_SN, y_sn);
+        lv_obj_set_x(ui_software_version, value_x);
+        lv_obj_set_y(ui_software_version, y_ver);
+
+        if (ui_contact_up) {
+            lv_obj_set_y(ui_contact_up, y_contact);
+        }
+        if (ui_img_phone_number) {
+            lv_obj_set_y(ui_img_phone_number, y_phone);
+        }
+        if (ui_phone_number) {
+            lv_obj_set_y(ui_phone_number, y_phone);
+        }
+        if (ui_img_mailbox) {
+            lv_obj_set_y(ui_img_mailbox, y_mail);
+        }
+        if (ui_mailbox) {
+            lv_obj_set_y(ui_mailbox, y_mail);
+        }
+        if (ui_img_address) {
+            lv_obj_set_y(ui_img_address, y_addr);
+        }
+        if (ui_address) {
+            lv_obj_set_y(ui_address, y_addr);
+        }
+    }
+
+    /* 左栏：名称换行空行 + 与型号之间的间隔空行，与右列 Y 对齐 */
+    pad_rows = name_rows - 1 + gap_rows;
+    if (pad_rows < 0) {
+        pad_rows = 0;
+    }
+
+    if (language_get_current() == LANG_ENGLISH) {
+        strcpy(left_text, "Product Name:");
+        for (i = 0; i < pad_rows; i++) {
+            strcat(left_text, "\n");
+        }
+        strcat(left_text, "\nProduct Model:\nSerial No:\nSoftware Version:");
+    } else {
+        strcpy(left_text, "\xE4\xBA\xA7\xE5\x93\x81\xE5\x90\x8D\xE7\xA7\xB0\xEF\xBC\x9A"); /* 产品名称： */
+        for (i = 0; i < pad_rows; i++) {
+            strcat(left_text, "\n");
+        }
+        strcat(left_text,
+               "\n\xE4\xBA\xA7\xE5\x93\x81\xE5\x9E\x8B\xE5\x8F\xB7\xEF\xBC\x9A\n" /* 产品型号： */
+               "\xE4\xBA\xA7\xE5\x93\x81\xE5\xBA\x8F\xE5\x88\x97\xE5\x8F\xB7\xEF\xBC\x9A\n" /* 产品序列号： */
+               "\xE8\xBD\xAF\xE4\xBB\xB6\xE7\x89\x88\xE6\x9C\xAC\xEF\xBC\x9A"); /* 软件版本： */
+    }
+    lv_label_set_text(ui_SysAbout, left_text);
 }
 
 void update_all_ui_texts(void)
@@ -3077,11 +3180,9 @@ void update_all_ui_texts(void)
 
     /* 关于本机面板 */
     lv_label_set_text(ui_Label20,    language_get_string(LANG_TITLE_ABOUT));
-    lv_label_set_text(ui_SysAbout,   language_get_string(LANG_LABEL_PRODUCT_INFO));
     lv_label_set_text(ui_contact_up, language_get_string(LANG_LABEL_CONTACT_US));
     lv_label_set_text(ui_address,    language_get_string(LANG_VALUE_ADDRESS));
-    neiji_bind_about_info();
-    neiji_adjust_about_ui_layout();
+    neiji_bind_about_info(); /* 内含产品名换行布局与左栏标签对齐 */
     Ui_AlarmStatus_Refresh();
 }
 

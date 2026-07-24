@@ -3,8 +3,11 @@ plugins {
     alias(libs.plugins.kotlin.compose)
 }
 
+/* Android Studio 同步会请求该任务；仅 compose 插件时 :app 未注册，补空任务避免 Sync 失败 */
+tasks.register("prepareKotlinBuildScriptModel")
+
 android {
-    namespace = "com.raydose.netshield"
+    namespace = "com.raydose.raylink"
     compileSdk {
         version = release(36) {
             minorApiLevel = 1
@@ -12,11 +15,11 @@ android {
     }
 
     defaultConfig {
-        applicationId = "com.raydose.netshield"
+        applicationId = "com.raydose.raylink"
         minSdk = 30
         targetSdk = 36
-        versionCode = 11
-        versionName = "1.0.10"
+        versionCode = 13
+        versionName = "V1.1.2.20260723R"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }

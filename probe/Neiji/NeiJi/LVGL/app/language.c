@@ -36,7 +36,8 @@ static const Lang_String_t lang_strings[LANG_MAX_COUNT] = {
     [LANG_LABEL_PRODUCT_INFO]      = {"产品名称：\n产品型号：\n产品序列号：\n软件版本：",
                                        "Product Name:\nProduct Model:\nSerial No:\nSoftware Version:"},
     [LANG_LABEL_CONTACT_US]        = {"联系我们：",         "Contact Us:"},
-    [LANG_VALUE_PRODUCT_NAME]      = {"雷沃 探测从机",      "RayWatch Detector"},
+    [LANG_VALUE_PRODUCT_NAME]      = {"瑞联区域辐射监测系统",
+                                       "Raylink Area Radiation Monitoring System"},
     [LANG_VALUE_ADDRESS]           = {"广东省广州市黄埔区\n南翔三路19号B座",
                                        "Block B, No.19 Nanxiang 3rd Road\nHuangpu District, Guangzhou, China"},
 };

@@ -650,6 +650,7 @@ void Fsy_Regmap_UpdateEnv(const AHT20_Data_t *aht, const BMP280_Data_t *bmp,
                           const ENS160_Data_t *ens, const PM25_Data_t *pm25)
 {
     uint32_t alarm = 0U;
+    const char *model;
 
     if ((aht == NULL) || (bmp == NULL) || (ens == NULL) || (pm25 == NULL)) {
         return;
@@ -661,18 +662,22 @@ void Fsy_Regmap_UpdateEnv(const AHT20_Data_t *aht, const BMP280_Data_t *bmp,
     s_rt_regs[4] = (uint32_t)ens->eco2;
     s_rt_regs[5] = (uint32_t)pm25->pm2_5 * 10U;
 
-    if (aht->online == 0U) {
-        alarm |= (1UL << 6);
-        alarm |= (1UL << 14);
-    }
-    if (bmp->online == 0U) {
-        alarm |= (1UL << 10);
-    }
-    if (ens->online == 0U) {
-        alarm |= (1UL << 18);
-    }
-    if (pm25->online == 0U) {
-        alarm |= (1UL << 22);
+    /* RK100N：无空气成分传感器，不置环境离线报警位 */
+    model = DeviceConfig_GetProductModel();
+    if ((model == NULL) || (strncmp(model, "RK100N", 6) != 0)) {
+        if (aht->online == 0U) {
+            alarm |= (1UL << 6);
+            alarm |= (1UL << 14);
+        }
+        if (bmp->online == 0U) {
+            alarm |= (1UL << 10);
+        }
+        if (ens->online == 0U) {
+            alarm |= (1UL << 18);
+        }
+        if (pm25->online == 0U) {
+            alarm |= (1UL << 22);
+        }
     }
 
     s_alarm_status = (s_alarm_status & ~FSY_ALARM_ENV_MASK) | alarm;

@@ -1,6 +1,14 @@
-# NetShield
+# Raylink
 
-联盾环境辐射监测系统控制主机（Android 11 / RK3568 工控平板）
+瑞联区域辐射监测系统控制主机（Android 11 / RK3568 工控平板）
+
+## 产品型号
+
+| 类别 | 型号 | 说明 |
+|------|------|------|
+| 主机 | RKM10 / RKM13 | 十寸 / 十三寸 |
+| 内机 | RK100P / RK100D / RK100N | 全功能有屏 / 无屏有空气成分 / 仅网络链路 |
+| 物联网盒子 | RK-N | 仅网络 |
 
 ## 打开工程
 
@@ -11,14 +19,14 @@
 ## 工程结构
 
 ```
-app/src/main/java/com/raydose/netshield/
+app/src/main/java/com/raydose/raylink/
 ├── MainActivity.kt          # 入口
 ├── model/                   # UI 状态模型
 ├── net/                     # 协议层（自 testuart 迁移）
 └── ui/
     ├── components/          # 共用 Composable
     ├── home/HomeScreen.kt   # 主页骨架
-    └── theme/               # NetShield 主题
+    └── theme/               # Raylink 主题
 ```
 
 ## 文档

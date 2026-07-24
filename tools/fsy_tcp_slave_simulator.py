@@ -28,7 +28,7 @@ from typing import Callable, List, Optional
 MCAST_GRP = "236.2.3.6"
 MCAST_PORT = 2468
 
-MODEL = "FSY-I"
+MODEL = "RK100P"
 SN = "1905FSY0103"
 DEFAULT_TCP_PORT = 5001
 PROTO_ADDR = "3"

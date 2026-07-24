@@ -5,9 +5,11 @@
 #include "dose_rate.h"
 #include "fsy_regmap.h"
 #include "sys_cfg_defaults.h"
+#include "device_config.h"
 
 #include "main.h"
 #include "stm32h7xx_hal.h"
+#include <string.h>
 
 #define GEIGER_ZERO_FAULT_SEC   120U
 #define FSY_ALARM_ENV_MASK      ((1UL << 6) | (1UL << 10) | (1UL << 14) | \
@@ -52,8 +54,14 @@ static Alarm_Visual_State_t alarm_eval_visual(void)
     if ((st & (1UL << RATE_LOW_ALARM_BIT)) != 0U) {
         return ALARM_VIS_LO;
     }
-    if ((st & FSY_ALARM_ENV_MASK) != 0U) {
-        return ALARM_VIS_FAULT;
+    /* RK100N 无空气成分：忽略环境传感器离线故障态 */
+    {
+        const char *model = DeviceConfig_GetProductModel();
+        if ((model == NULL) || (strncmp(model, "RK100N", 6) != 0)) {
+            if ((st & FSY_ALARM_ENV_MASK) != 0U) {
+                return ALARM_VIS_FAULT;
+            }
+        }
     }
     return ALARM_VIS_NORMAL;
 }

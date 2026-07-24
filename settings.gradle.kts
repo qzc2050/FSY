@@ -22,5 +22,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "NetShield"
+rootProject.name = "Raylink"
 include(":app")

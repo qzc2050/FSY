@@ -1,0 +1,96 @@
+package com.raydose.raylink.ui.components
+
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.wrapContentWidth
+import androidx.compose.foundation.pager.VerticalPager
+import androidx.compose.foundation.pager.rememberPagerState
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import com.raydose.raylink.ui.theme.RaylinkTextPrimary
+import com.raydose.raylink.ui.theme.RaylinkTextSecondary
+import com.raydose.raylink.ui.theme.ScreenSpec
+import kotlinx.coroutines.delay
+
+/**
+ * 本机环境参数（转接板 0xEF）。
+ *
+ * 实现：`VerticalPager` 垂直分页列表，类似 Qt 的 QListWidget 上下滑动；
+ * 每页固定显示 [ScreenSpec.HOME_HOST_ENV_ITEMS_PER_PAGE] 条（如 温度+湿度）。
+ */
+@Composable
+fun HostEnvScrollPanel(
+    readings: List<Pair<String, String>>,
+    autoScroll: Boolean = false,
+    modifier: Modifier = Modifier,
+    fontSizeSp: Int = ScreenSpec.HOME_HOST_ENV_SP,
+    panelHeight: Dp = ScreenSpec.homeHostEnvPanelHeight,
+) {
+    if (readings.isEmpty()) return
+
+    val envFontSize = fontSizeSp.sp
+    val lineHeight = (fontSizeSp + 10).sp
+    val pages = readings.chunked(ScreenSpec.HOME_HOST_ENV_ITEMS_PER_PAGE)
+    val pagerState = rememberPagerState(pageCount = { pages.size.coerceAtLeast(1) })
+
+    LaunchedEffect(autoScroll, pages.size) {
+        if (!autoScroll || pages.size <= 1) return@LaunchedEffect
+        while (true) {
+            delay(3_000L)
+            pagerState.animateScrollToPage((pagerState.currentPage + 1) % pages.size)
+        }
+    }
+
+    VerticalPager(
+        state = pagerState,
+        modifier = modifier
+            .wrapContentWidth(Alignment.End)
+            .widthIn(min = 260.dp)
+            .height(panelHeight),
+        userScrollEnabled = pages.size > 1,
+    ) { page ->
+        Column(
+            modifier = Modifier.fillMaxSize(),
+            horizontalAlignment = Alignment.End,
+            verticalArrangement = Arrangement.spacedBy(10.dp, Alignment.CenterVertically),
+        ) {
+            pages.getOrElse(page) { emptyList() }.forEach { (label, value) ->
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = "$label:",
+                        color = RaylinkTextSecondary,
+                        fontSize = envFontSize,
+                        lineHeight = lineHeight,
+                        fontWeight = FontWeight.Light,
+                        maxLines = 1,
+                        overflow = TextOverflow.Clip,
+                    )
+                    Text(
+                        text = value,
+                        color = RaylinkTextPrimary,
+                        fontSize = envFontSize,
+                        lineHeight = lineHeight,
+                        fontWeight = FontWeight.Light,
+                        maxLines = 1,
+                        overflow = TextOverflow.Clip,
+                    )
+                }
+            }
+        }
+    }
+}
