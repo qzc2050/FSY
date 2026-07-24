@@ -92,6 +92,9 @@ fun LiveProbeTelemetry.applyParsedFrame(frame: ParsedFsyFrame): LiveProbeTelemet
     frame.deviceVersion?.trim()?.takeIf { it.isNotEmpty() }?.let { ver ->
         next = next.copy(isOnline = true, softwareVersion = ver)
     }
+    frame.deviceModel?.trim()?.takeIf { it.isNotEmpty() }?.let { model ->
+        next = next.copy(isOnline = true, productModel = model)
+    }
     frame.statusBitValue?.let { status ->
         val doorOpen = (status and 1L) != 0L
         next = next.copy(
@@ -103,7 +106,7 @@ fun LiveProbeTelemetry.applyParsedFrame(frame: ParsedFsyFrame): LiveProbeTelemet
         frame.doseHiX100 == null && frame.doseLoX100 == null &&
         frame.alarmEnableValue == null && frame.controlBit1Volume == null &&
         frame.controlBit2Value == null && frame.statusBitValue == null &&
-        frame.deviceVersion == null
+        frame.deviceVersion == null && frame.deviceModel == null
     ) {
         // 写应答 0x16/0x20 等不表示实时在线，避免离线后又被“拉活”
         if (frame.func != 0x16 && frame.func != 0x20) {

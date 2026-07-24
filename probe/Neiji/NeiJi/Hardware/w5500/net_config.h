@@ -17,7 +17,7 @@
  */
 #define NEIJI_DEVICE_SN                 "2026FSYI0101"
 #define NEIJI_PRODUCT_NAME              "\xE7\x91\x9E\xE8\x81\x94" /* 瑞联 */
-#define DEVICE_SOFTWARE_VERSION         "V1.1.1.20260721E"
+#define DEVICE_SOFTWARE_VERSION         "V1.1.1.20260724R"
 #define DEVICE_PROTOCOL_TYPE_CODE       (2U)
 #define DEVICE_UDP_DISCOVER_RESERVED    (0U)
 

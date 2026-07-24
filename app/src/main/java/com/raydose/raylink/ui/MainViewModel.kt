@@ -1463,6 +1463,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val next = prev.applyParsedFrame(frame)
             map + (probeId to next)
         }
+        frame.deviceModel?.trim()?.takeIf { it.isNotEmpty() }?.let { model ->
+            syncSavedProbeModelFromDevice(probeId, model)
+        }
         if (_showSettings.value) {
             patchProbeRealtimeSummaryOnDraft(probeId)
         }
@@ -1804,6 +1807,39 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             seedLastCommittedThresholds(probeId, merged)
             s.copy(manageDrafts = drafts)
         }
+    }
+
+    /** 读到 reg130 产品型号后写回本地探头列表（供 RK100N 传感器日志等判断） */
+    private fun syncSavedProbeModelFromDevice(probeId: String, model: String) {
+        val normalized = model.trim()
+        if (normalized.isEmpty()) return
+        val current = _savedProbes.value.firstOrNull { it.id == probeId } ?: return
+        if (current.model.equals(normalized, ignoreCase = true)) return
+
+        val list = _savedProbes.value.map {
+            if (it.id == probeId) it.copy(model = normalized) else it
+        }
+        repository.save(list)
+        _savedProbes.value = list
+        connectionManager.setSavedProbes(list)
+        _settings.update { state ->
+            state.copy(
+                draftProbes = state.draftProbes.map {
+                    if (it.id == probeId) it.copy(model = normalized) else it
+                },
+                manageDrafts = state.manageDrafts.map { draft ->
+                    if (draft.id != probeId) {
+                        draft
+                    } else {
+                        draft.copy(savedProbe = draft.savedProbe.copy(model = normalized))
+                    }
+                },
+            )
+        }
+        Log.i(
+            ProbeConnectionManager.TAG,
+            "探头型号已同步 probe=$probeId ${current.model.ifBlank { "(空)" }} → $normalized",
+        )
     }
 
     /**

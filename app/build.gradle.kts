@@ -18,8 +18,8 @@ android {
         applicationId = "com.raydose.raylink"
         minSdk = 30
         targetSdk = 36
-        versionCode = 13
-        versionName = "V1.1.2.20260723R"
+        versionCode = 14
+        versionName = "V1.1.3.20260724R"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }

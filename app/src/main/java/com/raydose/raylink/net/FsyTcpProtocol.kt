@@ -64,6 +64,8 @@ data class ParsedFsyFrame(
     val fiveMinUpload: FiveMinUpload? = null,
     val deviceVersion: String? = null,
     val deviceSerial: String? = null,
+    /** Neiji reg130 产品型号 ASCII（如 RK100P / RK100N） */
+    val deviceModel: String? = null,
     val deviceTime: DeviceTimeInfo? = null,
     val thresholdValues: List<Long>? = null,  // 12项，顺序：辐射上/下、温度上/下、气压上/下、湿度上/下、CO2上/下、PM2.5上/下
     /** Neiji reg 50 / 52 单次读回应（×100 μSv/h） */
@@ -387,6 +389,14 @@ private fun parseReadResp13(frame: ByteArray, addr: Int, crcOk: Boolean): Parsed
         val strBytes = frame.copyOfRange(payloadStart, end)
         val version = String(strBytes, Charsets.UTF_8).trimEnd('\u0000').trim()
         return ParsedFsyFrame(addr, 0x13, crcOk, "0x13 软件版本: $version", deviceVersion = version)
+    }
+
+    // 产品型号：Neiji reg130(0x0082)，8 reg / 16B ASCII（RK100P/D/N）
+    if (startReg == NeijiProbeRegs.PRODUCT_MODEL && byteCount >= 2) {
+        val end = minOf(payloadStart + byteCount, payloadEnd)
+        val strBytes = frame.copyOfRange(payloadStart, end)
+        val model = String(strBytes, Charsets.US_ASCII).trimEnd('\u0000').trim()
+        return ParsedFsyFrame(addr, 0x13, crcOk, "0x13 产品型号: $model", deviceModel = model)
     }
 
     // 序列号：startReg=0x0056，payload 为 16 字节 ASCII

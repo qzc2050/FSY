@@ -283,7 +283,7 @@ class ProbeConnectionManager(
 
         val routeLabel = if (route == ProbeCommandLink.SERIAL) "串口" else "TCP"
         if (missingRegs.isEmpty()) {
-            Log.i(TAG, "读配置完成($routeLabel) ${probe.displayName} reg50/52/82/98/122/123")
+            Log.i(TAG, "读配置完成($routeLabel) ${probe.displayName} reg50/52/82/98/130/122/123")
             onLog("已读取 ${probe.displayName} 配置")
         } else {
             val miss = missingRegs.joinToString { "0x${it.toString(16).uppercase()}" }
@@ -802,6 +802,7 @@ class ProbeConnectionManager(
         NeijiProbeRegs.DOSE_LO_TH,
         NeijiProbeRegs.ALARM_ENABLE,
         NeijiProbeRegs.SOFTWARE_VERSION,
+        NeijiProbeRegs.PRODUCT_MODEL,
         NeijiProbeRegs.ALARM_VOLUME,
         NeijiProbeRegs.CONTROL_BIT2,
     )
@@ -812,6 +813,7 @@ class ProbeConnectionManager(
             val count = when (reg) {
                 NeijiProbeRegs.ALARM_VOLUME -> 1
                 NeijiProbeRegs.SOFTWARE_VERSION -> NeijiProbeRegs.SOFTWARE_VERSION_REGS
+                NeijiProbeRegs.PRODUCT_MODEL -> NeijiProbeRegs.PRODUCT_MODEL_REGS
                 else -> NeijiProbeRegs.U32_REG_COUNT
             }
             ManageConfigReadSpec(reg, buildReadRegsFrame(reg, count, addr))

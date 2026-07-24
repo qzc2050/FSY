@@ -12,6 +12,7 @@ fun ParsedFsyFrame.matchesManageConfigRead(expectedReg: Int, deviceAddr: Int): B
         NeijiProbeRegs.ALARM_VOLUME -> controlBit1Volume != null
         NeijiProbeRegs.CONTROL_BIT2 -> controlBit2Value != null
         NeijiProbeRegs.SOFTWARE_VERSION -> !deviceVersion.isNullOrBlank()
+        NeijiProbeRegs.PRODUCT_MODEL -> !deviceModel.isNullOrBlank()
         else -> false
     }
 }

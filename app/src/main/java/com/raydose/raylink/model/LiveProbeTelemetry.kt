@@ -28,6 +28,8 @@ data class LiveProbeTelemetry(
     val controlBit2Value: Long? = null,
     /** reg98 软件版本字符串 */
     val softwareVersion: String? = null,
+    /** reg130 产品型号（如 RK100P / RK100N） */
+    val productModel: String? = null,
 ) {
     /** 离线时清空实时读数，避免主页仍显示最后一帧剂量 */
     fun asOffline(): LiveProbeTelemetry = copy(

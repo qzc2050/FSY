@@ -29,4 +29,8 @@ object NeijiProbeRegs {
     /** reg98：软件版本 ASCII，10 reg / 20B（与 fsy_regmap.h / ZJB 0x62 同址） */
     const val SOFTWARE_VERSION = 0x0062
     const val SOFTWARE_VERSION_REGS = 10
+
+    /** reg130：产品型号 ASCII，8 reg / 16B（与 fsy_regmap.h FSY_REG_PRODUCT_MODEL 一致） */
+    const val PRODUCT_MODEL = 0x0082
+    const val PRODUCT_MODEL_REGS = 8
 }
