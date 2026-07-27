@@ -54,12 +54,21 @@ object NetworkWifiDefaults {
 /** 设置 · 网络信息（主机） */
 data class HostNetworkSettings(
     val hostDeviceId: Int = 0x20,
-    val hostDisplayName: String = "Raylink 主机",
+    /** 空或出厂默认名：UI 按当前语言显示「Raylink 主机 / Raylink Host」 */
+    val hostDisplayName: String = "",
     val ipAddress: String = "",
     val wifiName: String = NetworkWifiDefaults.HOST_WIFI_NAME,
     val wifiPassword: String = NetworkWifiDefaults.HOST_WIFI_PASSWORD,
     val bluetoothName: String = NetworkWifiDefaults.HOST_BLUETOOTH_NAME,
 )
+
+/** 是否仍为出厂设备名（含历史中文默认「Raylink 主机」），展示时走本地化字符串。 */
+fun isFactoryHostDisplayName(name: String): Boolean {
+    val n = name.trim()
+    return n.isEmpty() ||
+        n == "Raylink 主机" ||
+        n.equals("Raylink Host", ignoreCase = true)
+}
 
 /** 从机网络展示/编辑（ID 与名称来自探头列表；从机无蓝牙名称） */
 data class SlaveNetworkCard(

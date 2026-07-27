@@ -42,6 +42,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
@@ -415,7 +416,7 @@ fun PullDownHint(
     ) {
         Icon(
             painter = painterResource(R.drawable.ic_home_hint_chevron_down),
-            contentDescription = "展开状态栏",
+            contentDescription = stringResource(R.string.cd_expand_status_bar),
             tint = RaylinkTextSecondary,
             modifier = Modifier
                 .size(
@@ -456,7 +457,7 @@ fun SideSwipeHint(
     ) {
         Icon(
             painter = painterResource(R.drawable.ic_home_hint_chevron_left),
-            contentDescription = "打开侧栏",
+            contentDescription = stringResource(R.string.cd_open_sidebar),
             tint = RaylinkTextSecondary,
             modifier = Modifier
                 .size(

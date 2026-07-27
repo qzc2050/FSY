@@ -7,7 +7,6 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -21,6 +20,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.raydose.raylink.ui.labelText
 import com.raydose.raylink.ui.theme.RaylinkAccentBlue
 import com.raydose.raylink.ui.theme.RaylinkTextPrimary
 import com.raydose.raylink.ui.theme.RaylinkTextSecondary
@@ -67,6 +67,7 @@ private fun SettingsNavItem(
     onClick: () -> Unit,
 ) {
     val contentColor = if (selected) RaylinkTextPrimary else RaylinkTextSecondary
+    val tabLabel = tab.labelText()
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -85,13 +86,13 @@ private fun SettingsNavItem(
     ) {
         Icon(
             imageVector = tab.icon,
-            contentDescription = tab.label,
+            contentDescription = tabLabel,
             tint = contentColor,
             modifier = Modifier.size(SettingsLayout.navIconSize),
         )
         Spacer(modifier = Modifier.size(SettingsLayout.navIconTextGap))
         Text(
-            text = tab.label,
+            text = tabLabel,
             color = contentColor,
             fontSize = if (selected) 22.sp else 20.sp,
         )

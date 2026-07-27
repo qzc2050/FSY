@@ -32,7 +32,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
+import com.raydose.raylink.R
+import com.raydose.raylink.ui.labelText
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -57,9 +60,18 @@ fun ZjbFirmwareUpdateDialog(
     onDismiss: () -> Unit,
     onRequestUsbAccess: () -> Unit,
     onUpgrade: (FileStorageLocation, FileListItem) -> Unit,
-    title: String = "转接板固件更新",
-    subtitle: String = "请选择转接板固件文件。升级完成后转接板将自动重启。",
+    title: String? = null,
+    subtitle: String? = null,
 ) {
+    val resolvedTitle = title ?: stringResource(R.string.zjb_fw_dialog_title)
+    val resolvedSubtitle = subtitle ?: stringResource(R.string.zjb_fw_dialog_subtitle)
+    val storageUsbNotFound = stringResource(R.string.storage_usb_not_found)
+    val storageNotAvailable = stringResource(R.string.storage_not_available)
+    val readDirFailed = stringResource(R.string.storage_read_dir_failed)
+    val firmwareFallbackName = stringResource(R.string.zjb_fw_selected_fallback)
+    val upgradingLabel = stringResource(R.string.zjb_fw_upgrading)
+    val startUpgradeLabel = stringResource(R.string.zjb_fw_start_upgrade)
+
     var storage by remember { mutableStateOf(FileStorageLocation.Usb) }
     var entries by remember { mutableStateOf<List<FileListItem>>(emptyList()) }
     var isLoading by remember { mutableStateOf(true) }
@@ -83,9 +95,9 @@ fun ZjbFirmwareUpdateDialog(
                 entries = emptyList()
                 requiresUsbAccess = storage == FileStorageLocation.Usb
                 message = if (storage == FileStorageLocation.Usb) {
-                    "未检测到 U 盘，请插入后重试"
+                    storageUsbNotFound
                 } else {
-                    "未检测到可用存储"
+                    storageNotAvailable
                 }
                 return@runCatching
             }
@@ -99,7 +111,7 @@ fun ZjbFirmwareUpdateDialog(
                 repository.listItems(storage, activePath, "")
             }
         }.onFailure { error ->
-            message = error.message ?: "读取目录失败"
+            message = error.message ?: readDirFailed
             entries = emptyList()
         }
         isLoading = false
@@ -114,13 +126,13 @@ fun ZjbFirmwareUpdateDialog(
                 .padding(20.dp),
         ) {
             Text(
-                text = title,
+                text = resolvedTitle,
                 color = RaylinkTextPrimary,
                 fontSize = 24.sp,
                 fontWeight = FontWeight.SemiBold,
             )
             Text(
-                text = subtitle,
+                text = resolvedSubtitle,
                 color = RaylinkTextSecondary,
                 fontSize = 16.sp,
                 modifier = Modifier.padding(top = 8.dp),
@@ -148,7 +160,7 @@ fun ZjbFirmwareUpdateDialog(
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 ZjbStorageTab(
-                    text = FileStorageLocation.Local.label,
+                    text = FileStorageLocation.Local.labelText(),
                     selected = storage == FileStorageLocation.Local,
                     onClick = {
                         if (!isUpgrading && storage != FileStorageLocation.Local) {
@@ -159,7 +171,7 @@ fun ZjbFirmwareUpdateDialog(
                     },
                 )
                 ZjbStorageTab(
-                    text = FileStorageLocation.Usb.label,
+                    text = FileStorageLocation.Usb.labelText(),
                     selected = storage == FileStorageLocation.Usb,
                     onClick = {
                         if (!isUpgrading && storage != FileStorageLocation.Usb) {
@@ -172,7 +184,11 @@ fun ZjbFirmwareUpdateDialog(
             }
 
             Text(
-                text = if (currentPathLabel.isBlank()) "当前路径：-" else "当前路径：$currentPathLabel",
+                text = if (currentPathLabel.isBlank()) {
+                    stringResource(R.string.label_current_path_empty)
+                } else {
+                    stringResource(R.string.label_current_path, currentPathLabel)
+                },
                 color = RaylinkTextSecondary,
                 fontSize = 16.sp,
                 maxLines = 2,
@@ -182,7 +198,10 @@ fun ZjbFirmwareUpdateDialog(
 
             selectedPath?.let {
                 Text(
-                    text = "已选：${entries.firstOrNull { item -> item.path == it }?.name ?: "固件.bin"}",
+                    text = stringResource(
+                        R.string.label_selected,
+                        entries.firstOrNull { item -> item.path == it }?.name ?: firmwareFallbackName,
+                    ),
                     color = RaylinkAccentBlue,
                     fontSize = 16.sp,
                     modifier = Modifier.padding(top = 6.dp),
@@ -196,7 +215,7 @@ fun ZjbFirmwareUpdateDialog(
             if (!isUpgrading) {
                 if (requiresUsbAccess) {
                     TextButton(onClick = onRequestUsbAccess) {
-                        Text("授权 U 盘目录", color = RaylinkTextPrimary, fontSize = 18.sp)
+                        Text(stringResource(R.string.storage_grant_usb), color = RaylinkTextPrimary, fontSize = 18.sp)
                     }
                 } else {
                     Row(
@@ -216,7 +235,7 @@ fun ZjbFirmwareUpdateDialog(
                     ) {
                         Icon(Icons.Default.KeyboardArrowUp, contentDescription = null, tint = RaylinkTextPrimary)
                         Text(
-                            text = "返回上一级",
+                            text = stringResource(R.string.action_back_parent),
                             color = RaylinkTextPrimary,
                             fontSize = 18.sp,
                             modifier = Modifier.padding(start = 6.dp),
@@ -290,7 +309,7 @@ fun ZjbFirmwareUpdateDialog(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 TextButton(onClick = onDismiss, enabled = !isUpgrading) {
-                    Text("取消", color = RaylinkTextPrimary, fontSize = 18.sp)
+                    Text(stringResource(R.string.action_cancel), color = RaylinkTextPrimary, fontSize = 18.sp)
                 }
                 TextButton(
                     onClick = {
@@ -301,7 +320,7 @@ fun ZjbFirmwareUpdateDialog(
                     enabled = !isUpgrading && !selectedPath.isNullOrBlank(),
                 ) {
                     Text(
-                        text = if (isUpgrading) "升级中…" else "开始升级",
+                        text = if (isUpgrading) upgradingLabel else startUpgradeLabel,
                         color = RaylinkAccentBlue,
                         fontSize = 18.sp,
                     )

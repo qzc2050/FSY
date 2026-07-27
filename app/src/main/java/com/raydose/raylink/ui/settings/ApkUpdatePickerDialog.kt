@@ -31,7 +31,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
+import com.raydose.raylink.R
+import com.raydose.raylink.ui.labelText
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -58,6 +61,12 @@ fun ApkUpdatePickerDialog(
     onRequestUsbAccess: () -> Unit,
     onInstall: (FileStorageLocation, String) -> Unit,
 ) {
+    val storageUsbNotFound = stringResource(R.string.storage_usb_not_found)
+    val storageNotAvailable = stringResource(R.string.storage_not_available)
+    val readDirFailed = stringResource(R.string.storage_read_dir_failed)
+    val apkFallbackName = stringResource(R.string.apk_selected_fallback)
+    val preparingLabel = stringResource(R.string.apk_preparing)
+
     var storage by remember { mutableStateOf(FileStorageLocation.Usb) }
     var entries by remember { mutableStateOf<List<FileListItem>>(emptyList()) }
     var isLoading by remember { mutableStateOf(true) }
@@ -81,9 +90,9 @@ fun ApkUpdatePickerDialog(
                 entries = emptyList()
                 requiresUsbAccess = storage == FileStorageLocation.Usb
                 message = if (storage == FileStorageLocation.Usb) {
-                    "未检测到 U 盘，请插入后重试"
+                    storageUsbNotFound
                 } else {
-                    "未检测到可用存储"
+                    storageNotAvailable
                 }
                 return@runCatching
             }
@@ -101,7 +110,7 @@ fun ApkUpdatePickerDialog(
                     }
             }
         }.onFailure { error ->
-            message = error.message ?: "读取目录失败"
+            message = error.message ?: readDirFailed
             entries = emptyList()
         }
         isLoading = false
@@ -116,13 +125,13 @@ fun ApkUpdatePickerDialog(
                 .padding(20.dp),
         ) {
             Text(
-                text = "选择安装包",
+                text = stringResource(R.string.apk_picker_title),
                 color = RaylinkTextPrimary,
                 fontSize = 24.sp,
                 fontWeight = FontWeight.SemiBold,
             )
             Text(
-                text = "请选择 APK 文件完成本机应用更新，安装完成后将自动重启本应用。",
+                text = stringResource(R.string.apk_picker_subtitle),
                 color = RaylinkTextSecondary,
                 fontSize = 16.sp,
                 modifier = Modifier.padding(top = 8.dp),
@@ -135,7 +144,7 @@ fun ApkUpdatePickerDialog(
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 StorageTab(
-                    text = FileStorageLocation.Local.label,
+                    text = FileStorageLocation.Local.labelText(),
                     selected = storage == FileStorageLocation.Local,
                     onClick = {
                         if (storage != FileStorageLocation.Local) {
@@ -146,7 +155,7 @@ fun ApkUpdatePickerDialog(
                     },
                 )
                 StorageTab(
-                    text = FileStorageLocation.Usb.label,
+                    text = FileStorageLocation.Usb.labelText(),
                     selected = storage == FileStorageLocation.Usb,
                     onClick = {
                         if (storage != FileStorageLocation.Usb) {
@@ -159,7 +168,11 @@ fun ApkUpdatePickerDialog(
             }
 
             Text(
-                text = if (currentPathLabel.isBlank()) "当前路径：-" else "当前路径：$currentPathLabel",
+                text = if (currentPathLabel.isBlank()) {
+                    stringResource(R.string.label_current_path_empty)
+                } else {
+                    stringResource(R.string.label_current_path, currentPathLabel)
+                },
                 color = RaylinkTextSecondary,
                 fontSize = 16.sp,
                 maxLines = 2,
@@ -169,7 +182,10 @@ fun ApkUpdatePickerDialog(
 
             selectedPath?.let {
                 Text(
-                    text = "已选：${entries.firstOrNull { item -> item.path == it }?.name ?: "APK"}",
+                    text = stringResource(
+                        R.string.label_selected,
+                        entries.firstOrNull { item -> item.path == it }?.name ?: apkFallbackName,
+                    ),
                     color = RaylinkAccentBlue,
                     fontSize = 16.sp,
                     modifier = Modifier.padding(top = 6.dp),
@@ -182,7 +198,7 @@ fun ApkUpdatePickerDialog(
 
             if (requiresUsbAccess) {
                 TextButton(onClick = onRequestUsbAccess, enabled = !isInstalling) {
-                    Text("授权 U 盘目录", color = RaylinkTextPrimary, fontSize = 18.sp)
+                    Text(stringResource(R.string.storage_grant_usb), color = RaylinkTextPrimary, fontSize = 18.sp)
                 }
             } else {
                 Row(
@@ -202,7 +218,7 @@ fun ApkUpdatePickerDialog(
                 ) {
                     Icon(Icons.Default.KeyboardArrowUp, contentDescription = null, tint = RaylinkTextPrimary)
                     Text(
-                        text = "返回上一级",
+                        text = stringResource(R.string.action_back_parent),
                         color = RaylinkTextPrimary,
                         fontSize = 18.sp,
                         modifier = Modifier.padding(start = 6.dp),
@@ -275,7 +291,7 @@ fun ApkUpdatePickerDialog(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 TextButton(onClick = onDismiss, enabled = !isInstalling) {
-                    Text("取消", color = RaylinkTextPrimary, fontSize = 18.sp)
+                    Text(stringResource(R.string.action_cancel), color = RaylinkTextPrimary, fontSize = 18.sp)
                 }
                 TextButton(
                     onClick = {
@@ -285,7 +301,7 @@ fun ApkUpdatePickerDialog(
                     enabled = !isInstalling && !selectedPath.isNullOrBlank(),
                 ) {
                     Text(
-                        text = if (isInstalling) "准备中…" else "安装",
+                        text = if (isInstalling) preparingLabel else stringResource(R.string.action_install),
                         color = RaylinkAccentBlue,
                         fontSize = 18.sp,
                     )

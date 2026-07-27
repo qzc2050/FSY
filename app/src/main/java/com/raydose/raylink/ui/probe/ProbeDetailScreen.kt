@@ -47,6 +47,7 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -54,6 +55,7 @@ import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.raydose.raylink.R
 import com.raydose.raylink.data.FileManagerRepository
 import com.raydose.raylink.model.DailyDoseSummary
 import com.raydose.raylink.model.FileStorageLocation
@@ -90,7 +92,7 @@ fun ProbeDetailScreen(
                 .background(RaylinkAtmosphereBackgroundBrush),
             contentAlignment = Alignment.Center,
         ) {
-            Text(text = "暂无探头数据", color = RaylinkTextSecondary, fontSize = 30.sp)
+            Text(text = stringResource(R.string.probe_detail_no_data), color = RaylinkTextSecondary, fontSize = 30.sp)
         }
         return
     }
@@ -114,6 +116,8 @@ fun ProbeDetailScreen(
     var orgEditBuffer by remember { mutableStateOf(organizationName) }
     var orgEditing by remember { mutableStateOf(false) }
     var pageHint by remember { mutableStateOf<String?>(null) }
+    val orgSavedHint = stringResource(R.string.probe_detail_org_saved)
+    val savedHint = stringResource(R.string.msg_saved)
 
     LaunchedEffect(organizationName) {
         if (!orgEditing) {
@@ -173,7 +177,7 @@ fun ProbeDetailScreen(
                     orgNameDraft = orgEditBuffer
                     onSaveOrganizationName(orgEditBuffer)
                     orgEditing = false
-                    pageHint = "机构名称已保存"
+                    pageHint = orgSavedHint
                 },
                 onCancel = {
                     orgEditBuffer = orgNameDraft
@@ -220,7 +224,7 @@ fun ProbeDetailScreen(
                                         nameDrafts[probe.id].orEmpty(),
                                         locationDrafts[probe.id].orEmpty(),
                                     )
-                                    columnHints[probe.id] = "已保存"
+                                    columnHints[probe.id] = savedHint
                                 },
                                 fileManagerRepository = fileManagerRepository,
                                 usbGrantEpoch = usbGrantEpoch,
@@ -308,10 +312,10 @@ private fun OrgNameBar(
                         onClick = onSave,
                         colors = ButtonDefaults.buttonColors(containerColor = RaylinkAccentBlue),
                     ) {
-                        Text("保存", color = RaylinkTextPrimary, fontSize = 20.sp)
+                        Text(stringResource(R.string.action_save), color = RaylinkTextPrimary, fontSize = 20.sp)
                     }
                     TextButton(onClick = onCancel) {
-                        Text("取消", color = RaylinkTextSecondary, fontSize = 20.sp)
+                        Text(stringResource(R.string.action_cancel), color = RaylinkTextSecondary, fontSize = 20.sp)
                     }
                 } else {
                     Text(
@@ -321,7 +325,7 @@ private fun OrgNameBar(
                     )
                     Icon(
                         imageVector = Icons.Outlined.Edit,
-                        contentDescription = "编辑机构名称",
+                        contentDescription = stringResource(R.string.cd_edit_org_name),
                         tint = RaylinkTextPrimary,
                         modifier = Modifier
                             .clickable(onClick = onEditClick)
@@ -364,6 +368,8 @@ private fun ProbeDataColumn(
     val nameWeight = if (compact) 1.55f else 1.2f
     val locationWeight = if (compact) 0.95f else 1.1f
     val editWeight = if (compact) 0.35f else 0.4f
+    val onlineText = stringResource(R.string.status_online)
+    val offlineText = stringResource(R.string.status_offline)
 
     Column(
         modifier = modifier
@@ -392,13 +398,13 @@ private fun ProbeDataColumn(
                     overflow = TextOverflow.Ellipsis,
                 )
                 Text(
-                    text = if (probe.isOnline) "在线" else "离线",
+                    text = if (probe.isOnline) onlineText else offlineText,
                     color = if (probe.isOnline) RaylinkAccentBlue else RaylinkTextSecondary,
                     fontSize = statusSp,
                 )
             }
             Text(
-                text = location.ifBlank { "大门口" },
+                text = location.ifBlank { stringResource(R.string.probe_default_location) },
                 color = RaylinkTextPrimary,
                 fontSize = locationSp,
                 maxLines = 1,
@@ -414,7 +420,7 @@ private fun ProbeDataColumn(
             ) {
                 Icon(
                     imageVector = Icons.Outlined.Edit,
-                    contentDescription = "编辑探头信息",
+                    contentDescription = stringResource(R.string.cd_edit_probe_info),
                     tint = RaylinkTextPrimary,
                     modifier = Modifier
                         .size(if (compact) 24.dp else 28.dp)
@@ -431,7 +437,7 @@ private fun ProbeDataColumn(
 
         Spacer(modifier = Modifier.height(8.dp))
         Text(
-            text = "每日累积剂量",
+            text = stringResource(R.string.probe_daily_dose_title),
             color = RaylinkTextSecondary,
             fontSize = 19.sp,
         )
@@ -468,7 +474,7 @@ private fun ProbeDataColumn(
             colors = ButtonDefaults.buttonColors(containerColor = RaylinkAccentBlue),
             modifier = Modifier.fillMaxWidth(),
         ) {
-            Text("导出", color = RaylinkTextPrimary, fontSize = 20.sp)
+            Text(stringResource(R.string.action_export), color = RaylinkTextPrimary, fontSize = 20.sp)
         }
     }
 
@@ -542,7 +548,7 @@ private fun ProbeIdentityEditDialog(
         onDismissRequest = onDismiss,
         title = {
             Text(
-                text = "编辑探头信息",
+                text = stringResource(R.string.probe_edit_title),
                 color = RaylinkTextPrimary,
                 fontSize = 30.sp,
                 fontWeight = FontWeight.SemiBold,
@@ -553,7 +559,7 @@ private fun ProbeIdentityEditDialog(
                 OutlinedTextField(
                     value = nameDraft,
                     onValueChange = { nameDraft = it },
-                    label = { Text("探头名", fontSize = 22.sp) },
+                    label = { Text(stringResource(R.string.probe_field_name), fontSize = 22.sp) },
                     singleLine = true,
                     textStyle = TextStyle(color = RaylinkTextPrimary, fontSize = 24.sp),
                     colors = fieldColors,
@@ -562,7 +568,7 @@ private fun ProbeIdentityEditDialog(
                 OutlinedTextField(
                     value = locationDraft,
                     onValueChange = { locationDraft = it },
-                    label = { Text("位置", fontSize = 22.sp) },
+                    label = { Text(stringResource(R.string.probe_field_location), fontSize = 22.sp) },
                     singleLine = true,
                     textStyle = TextStyle(color = RaylinkTextPrimary, fontSize = 24.sp),
                     colors = fieldColors,
@@ -574,12 +580,12 @@ private fun ProbeIdentityEditDialog(
             TextButton(
                 onClick = { onConfirm(nameDraft.text, locationDraft.text) },
             ) {
-                Text("保存", color = RaylinkTextPrimary, fontSize = 24.sp)
+                Text(stringResource(R.string.action_save), color = RaylinkTextPrimary, fontSize = 24.sp)
             }
         },
         dismissButton = {
             TextButton(onClick = onDismiss) {
-                Text("取消", color = Color(0xFFD6DCFF), fontSize = 24.sp)
+                Text(stringResource(R.string.action_cancel), color = Color(0xFFD6DCFF), fontSize = 24.sp)
             }
         },
         containerColor = dialogBackground,

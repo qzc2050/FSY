@@ -1,5 +1,8 @@
 package com.raydose.raylink.model
 
+import android.content.Context
+import com.raydose.raylink.R
+import com.raydose.raylink.ui.tr
 import java.util.Calendar
 import java.util.concurrent.TimeUnit
 
@@ -39,8 +42,7 @@ fun isHostTimeValidForProbeSync(nowMillis: Long = System.currentTimeMillis()): B
     return true
 }
 
-fun hostTimeInvalidForProbeSyncHint(): String =
-    "主机时间无效（需不早于 2026-07-08），请先校正系统时间"
+fun Context.hostTimeInvalidForProbeSyncHint(): String = tr(R.string.time_sync_host_invalid)
 
 fun shouldAutoSyncProbeTime(
     lastAutoSyncMillis: Long,

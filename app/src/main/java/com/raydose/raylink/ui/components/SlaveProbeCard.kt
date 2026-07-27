@@ -28,6 +28,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -51,12 +52,15 @@ fun SlaveProbeCard(
     onDetailClick: () -> Unit,
     modifier: Modifier = Modifier,
     standbyFrosted: Boolean = false,
+    /** 待机且旁侧显示留言时卡宽约 2/3，需缩小环境标签 */
+    standbyWithMessages: Boolean = false,
     slotSize: ProbeCardSlotSize = ProbeCardSlotSize.Full,
 ) {
     BoxWithConstraints(modifier = modifier.fillMaxSize()) {
         val spec = probeCardSlotSpec(
             slotSize = slotSize,
             standbyFrosted = standbyFrosted,
+            standbyWithMessages = standbyWithMessages,
             cardWidthDp = maxWidth.value,
             cardHeightDp = maxHeight.value,
         )
@@ -130,7 +134,7 @@ private fun SlaveProbeCardContent(
                 if (probe.hasAlarm) {
                     Icon(
                         painter = painterResource(R.drawable.ic_log_alarm),
-                        contentDescription = "报警",
+                        contentDescription = stringResource(R.string.cd_alarm),
                         tint = RaylinkAlarmActive,
                         modifier = Modifier
                             .align(Alignment.TopEnd)
@@ -190,32 +194,45 @@ private fun SlaveProbeCardContent(
             }
 
             if (spec.showEnvBar) {
+                // 背景单独圆角裁剪；文字不随 shape clip，避免 μg/m³ 的 μ、g 下降部被切掉
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .weight(spec.envWeight)
-                        .clip(
-                            RoundedCornerShape(
-                                topStart = 0.dp,
-                                topEnd = 0.dp,
-                                bottomEnd = corner,
-                                bottomStart = corner,
-                            ),
-                        )
-                        .background(Color.Black.copy(alpha = envBarAlpha))
-                        .padding(
-                            horizontal = spec.envPaddingH.dp,
-                            vertical = spec.envPaddingV.dp,
-                        ),
-                    contentAlignment = Alignment.Center,
+                        .weight(spec.envWeight),
                 ) {
-                    if (probe.isOnline) {
-                        ProbeEnvBar(
-                            probe = probe,
-                            spec = spec,
-                        )
-                    } else {
-                        Text(text = "...", color = RaylinkTextSecondary, fontSize = spec.offlineSp.sp)
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .clip(
+                                RoundedCornerShape(
+                                    topStart = 0.dp,
+                                    topEnd = 0.dp,
+                                    bottomEnd = corner,
+                                    bottomStart = corner,
+                                ),
+                            )
+                            .background(Color.Black.copy(alpha = envBarAlpha)),
+                    )
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(
+                                start = spec.envPaddingH.dp,
+                                end = spec.envPaddingH.dp,
+                                // 底部多留一点给下降部（μ / g）
+                                top = spec.envPaddingV.dp,
+                                bottom = (spec.envPaddingV + 2).dp,
+                            ),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        if (probe.isOnline) {
+                            ProbeEnvBar(
+                                probe = probe,
+                                spec = spec,
+                            )
+                        } else {
+                            Text(text = "...", color = RaylinkTextSecondary, fontSize = spec.offlineSp.sp)
+                        }
                     }
                 }
             }
@@ -248,11 +265,16 @@ private fun ProbeEnvBar(
         EnvLayout.SingleRow -> {
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceEvenly,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 spec.envItems.forEach { (label, value) ->
-                    EnvChip(label, value(probe), spec.envSp)
+                    EnvChip(
+                        label = label,
+                        value = value(probe),
+                        valueSp = spec.envSp,
+                        labelSp = spec.envLabelSp,
+                        modifier = Modifier.weight(1f),
+                    )
                 }
             }
         }
@@ -265,11 +287,16 @@ private fun ProbeEnvBar(
                 spec.envItems.chunked(spec.envItemsPerRow.coerceAtLeast(1)).forEach { rowItems ->
                     Row(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceEvenly,
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         rowItems.forEach { (label, value) ->
-                            EnvChip(label, value(probe), spec.envSp)
+                            EnvChip(
+                                label = label,
+                                value = value(probe),
+                                valueSp = spec.envSp,
+                                labelSp = spec.envLabelSp,
+                                modifier = Modifier.weight(1f),
+                            )
                         }
                     }
                 }
@@ -279,20 +306,39 @@ private fun ProbeEnvBar(
 }
 
 @Composable
-private fun EnvChip(label: String, value: String, fontSp: Int) {
-    Row(verticalAlignment = Alignment.Bottom) {
+private fun EnvChip(
+    label: String,
+    value: String,
+    valueSp: Int,
+    labelSp: Int,
+    modifier: Modifier = Modifier,
+) {
+    // 行高略大于数值字号，避免 μ、g 下降部被裁
+    val lineSp = valueSp * 1.25f
+    Row(
+        modifier = modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.Center,
+    ) {
+        // 标签用较小字号、按固有宽度测量，避免被压成「P…」「Press…」
         Text(
             text = "$label:",
             color = RaylinkTextSecondary,
-            fontSize = fontSp.sp,
+            fontSize = labelSp.sp,
+            lineHeight = lineSp.sp,
             maxLines = 1,
+            softWrap = false,
         )
         Text(
             text = " $value",
             color = RaylinkTextPrimary,
-            fontSize = fontSp.sp,
+            fontSize = valueSp.sp,
+            lineHeight = lineSp.sp,
             fontWeight = FontWeight.Medium,
             maxLines = 1,
+            softWrap = false,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f, fill = false),
         )
     }
 }

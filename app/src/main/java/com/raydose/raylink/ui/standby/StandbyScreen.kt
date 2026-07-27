@@ -27,11 +27,15 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.raydose.raylink.R
+import com.raydose.raylink.ui.localizeHostEnvLabel
 import com.raydose.raylink.model.AlbumMessage
 import com.raydose.raylink.model.AlbumSettings
 import com.raydose.raylink.model.HomeUiState
@@ -78,14 +82,20 @@ fun StandbyScreen(
     val pagerState = rememberPagerState(pageCount = { pagerConfig.pageCount.coerceAtLeast(1) })
     val showStandbyMessages = albumSettings.showStandbyMessages
     val formFactor = rememberTabletFormFactor()
-    val envReadings = state.hostEnvReadings.map { it.label to it.value }
+    val envReadings = state.hostEnvReadings.map {
+        localizeHostEnvLabel(it.label) to it.value
+    }
+    val noProbeText = stringResource(R.string.home_no_probe)
+    val noMessagesText = stringResource(R.string.home_no_messages)
+    val resources = LocalContext.current.resources
     val latestMessages = remember(messages) {
         messages.sortedByDescending { it.createdAtMillis }.take(3)
     }
-    val clockLines = remember(state.dateText, state.timeText, timeSettings) {
+    val clockLines = remember(state.dateText, state.timeText, timeSettings, resources) {
         HomeClockFormatter.formatStandbyLines(
             now = Date(),
             prefs = timeSettings,
+            resources = resources,
             fallbackDateText = state.dateText,
             fallbackTimeText = state.timeText,
         )
@@ -195,9 +205,10 @@ fun StandbyScreen(
                         ) {
                             if (state.slaveProbes.isEmpty()) {
                                 SlaveProbeCard(
-                                    probe = SlaveProbeUi(id = "0", name = "暂无探头", isOnline = false),
+                                    probe = SlaveProbeUi(id = "0", name = noProbeText, isOnline = false),
                                     onDetailClick = {},
                                     standbyFrosted = true,
+                                    standbyWithMessages = showStandbyMessages,
                                     modifier = Modifier.fillMaxSize(),
                                 )
                             } else {
@@ -209,6 +220,7 @@ fun StandbyScreen(
                                         probe = displayProbes[page],
                                         onDetailClick = {},
                                         standbyFrosted = true,
+                                        standbyWithMessages = showStandbyMessages,
                                         modifier = Modifier.fillMaxSize(),
                                     )
                                 }
@@ -234,6 +246,7 @@ fun StandbyScreen(
                         ) {
                             StandbyMessageList(
                                 messages = latestMessages,
+                                noMessagesText = noMessagesText,
                                 modifier = Modifier
                                     .fillMaxWidth(0.92f)
                                     .fillMaxHeight()
@@ -282,6 +295,7 @@ private fun StandbyHostEnvRow(
 @Composable
 private fun StandbyMessageList(
     messages: List<AlbumMessage>,
+    noMessagesText: String,
     modifier: Modifier = Modifier,
 ) {
     val formFactor = rememberTabletFormFactor()
@@ -292,7 +306,7 @@ private fun StandbyMessageList(
         horizontalAlignment = Alignment.Start,
     ) {
         Text(
-            text = "留言",
+            text = stringResource(R.string.standby_messages_title),
             color = RaylinkTextSecondary,
             fontSize = titleSp.sp,
             fontWeight = FontWeight.Normal,
@@ -301,7 +315,7 @@ private fun StandbyMessageList(
         )
         Spacer(modifier = Modifier.height(20.dp))
         if (messages.isEmpty()) {
-            StandbyMessageItem(body = "暂无留言")
+            StandbyMessageItem(body = noMessagesText)
         } else {
             messages.forEachIndexed { index, message ->
                 if (index > 0) {

@@ -40,6 +40,7 @@ import com.raydose.raylink.model.AlbumSettings
 import com.raydose.raylink.model.MessageItem
 import com.raydose.raylink.model.SlaveProbeUi
 import com.raydose.raylink.ui.MainViewModel
+import android.content.Context
 import com.raydose.raylink.ui.album.AlbumScreen
 import com.raydose.raylink.ui.components.appBrightnessDim
 import com.raydose.raylink.ui.components.SideDrawerDestination
@@ -67,8 +68,14 @@ class MainActivity : ComponentActivity() {
     /** 由 [StandbyIdleWatcher] 注册；[onUserInteraction] 时回调以重置空闲计时。 */
     private var onStandbyIdleUserInteraction: (() -> Unit)? = null
 
+    override fun attachBaseContext(newBase: Context) {
+        val language = HostSettingsRepository(newBase).loadDisplaySound().language
+        super.attachBaseContext(AppLocale.wrap(newBase, language))
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        viewModel.setLanguageChangeListener { recreate() }
         // 尽早 restore 亮屏，缩短更新后黑屏；可能略闪桌面，可接受。
         // dim + bl_power 看门狗在 restoreIfNeeded 内 stop。
         ApkUpdateBrightnessCover.restoreIfNeeded(this)
@@ -235,7 +242,7 @@ class MainActivity : ComponentActivity() {
                         onExportToPath = { probeId, storage, directoryPath ->
                             val probe = homeState.slaveProbes.find { it.id == probeId }
                             if (probe == null) {
-                                "导出失败：未找到探头"
+                                getString(R.string.export_probe_not_found)
                             } else {
                                 exportProbeSnapshotCsv(probe, storage, directoryPath, fileManagerRepository)
                             }
@@ -423,6 +430,11 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    override fun onDestroy() {
+        viewModel.setLanguageChangeListener(null)
+        super.onDestroy()
+    }
+
     override fun onUserInteraction() {
         super.onUserInteraction()
         onStandbyIdleUserInteraction?.invoke()
@@ -468,12 +480,12 @@ class MainActivity : ComponentActivity() {
             val csv = buildProbeExportCsv(probe)
             val savedPath = repository.writeTextFile(storage, directoryPath, fileName, csv).getOrThrow()
             if (storage == FileStorageLocation.Usb) {
-                "导出成功：$savedPath（已刷盘，可拔出 U 盘）"
+                getString(R.string.export_success_usb, savedPath)
             } else {
-                "导出成功：$savedPath"
+                getString(R.string.export_success, savedPath)
             }
         }.getOrElse { e ->
-            "导出失败：${e.message ?: "未知错误"}"
+            getString(R.string.export_failed, e.message ?: getString(R.string.error_unknown))
         }
     }
 

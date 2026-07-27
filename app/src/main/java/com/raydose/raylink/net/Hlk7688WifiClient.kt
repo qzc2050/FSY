@@ -44,7 +44,17 @@ object Hlk7688WifiClient {
 
     sealed class FetchResult {
         data class Ok(val credentials: WifiCredentials) : FetchResult()
-        data class Err(val message: String) : FetchResult()
+        data class Err(val error: WifiFetchError) : FetchResult()
+    }
+
+    sealed class WifiFetchError {
+        data class HostIpInvalid(val hostIp: String) : WifiFetchError()
+        data class SlaveIdInvalid(val deviceId: Int) : WifiFetchError()
+        data class SubnetInvalid(val subnetIp: String) : WifiFetchError()
+        data class NoSsidParsed(val gatewayIp: String) : WifiFetchError()
+        data class EmptySsid(val gatewayIp: String) : WifiFetchError()
+        data class ConnectFailed(val gatewayIp: String) : WifiFetchError()
+        data class ReadFailed(val detail: String) : WifiFetchError()
     }
 
     /** `a.b.c.x` → `a.b.c.<lastOctet>` */
@@ -71,7 +81,7 @@ object Hlk7688WifiClient {
         password: String = DEFAULT_PASSWORD,
     ): FetchResult {
         val gateway = gatewayIpFromHostIp(hostIp)
-            ?: return FetchResult.Err("主机 IP 无效，无法推导网关：$hostIp")
+            ?: return FetchResult.Err(WifiFetchError.HostIpInvalid(hostIp))
         return fetchFromGateway(gateway, username, password)
     }
 
@@ -82,10 +92,10 @@ object Hlk7688WifiClient {
         password: String = DEFAULT_PASSWORD,
     ): FetchResult {
         if (deviceId !in 1..253) {
-            return FetchResult.Err("从机设备 ID 无效：$deviceId（应为 1～253）")
+            return FetchResult.Err(WifiFetchError.SlaveIdInvalid(deviceId))
         }
         val gateway = gatewayIpForSlave(subnetIp, deviceId)
-            ?: return FetchResult.Err("网段 IP 无效，无法推导从机网关：$subnetIp")
+            ?: return FetchResult.Err(WifiFetchError.SubnetInvalid(subnetIp))
         return fetchFromGateway(gateway, username, password)
     }
 
@@ -98,19 +108,19 @@ object Hlk7688WifiClient {
             val basicHtml = httpGet("http://$gatewayIp/wireless/basic.shtml", username, password)
             val securityHtml = httpGet("http://$gatewayIp/wireless/security.shtml", username, password)
             val ssid = parseSsid(basicHtml, securityHtml)
-                ?: return FetchResult.Err("已登录 $gatewayIp，但未解析到 WiFi 名称")
+                ?: return FetchResult.Err(WifiFetchError.NoSsidParsed(gatewayIp))
             val psk = parsePassword(securityHtml).orEmpty()
             if (ssid.isBlank()) {
-                return FetchResult.Err("网关 $gatewayIp 返回的 WiFi 名称为空")
+                return FetchResult.Err(WifiFetchError.EmptySsid(gatewayIp))
             }
             Log.i(TAG, "fetched wifi from $gatewayIp ssid=$ssid")
             FetchResult.Ok(WifiCredentials(ssid = ssid, password = psk, gatewayIp = gatewayIp))
         } catch (e: IOException) {
             Log.w(TAG, "fetch failed gateway=$gatewayIp: ${e.message}")
-            FetchResult.Err("无法连接网关 $gatewayIp（检查网线/7688）")
+            FetchResult.Err(WifiFetchError.ConnectFailed(gatewayIp))
         } catch (e: Exception) {
             Log.w(TAG, "fetch error gateway=$gatewayIp", e)
-            FetchResult.Err("读取 WiFi 失败：${e.message ?: e.javaClass.simpleName}")
+            FetchResult.Err(WifiFetchError.ReadFailed(e.message ?: e.javaClass.simpleName))
         }
     }
 

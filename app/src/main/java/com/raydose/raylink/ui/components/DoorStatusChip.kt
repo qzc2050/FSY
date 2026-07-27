@@ -11,6 +11,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.raydose.raylink.R
@@ -25,9 +26,9 @@ fun DoorStatusChip(
     modifier: Modifier = Modifier,
 ) {
     val (text, color, iconRes) = when (doorState) {
-        DoorState.Open -> Triple("已开门", RaylinkDoorOpen, R.drawable.ic_door_open)
-        DoorState.Closed -> Triple("已关门", RaylinkDoorClosed, R.drawable.ic_door_closed)
-        DoorState.Unknown -> Triple("门状态未知", RaylinkTextSecondary, R.drawable.ic_door_closed)
+        DoorState.Open -> Triple(stringResource(R.string.door_open), RaylinkDoorOpen, R.drawable.ic_door_open)
+        DoorState.Closed -> Triple(stringResource(R.string.door_closed), RaylinkDoorClosed, R.drawable.ic_door_closed)
+        DoorState.Unknown -> Triple(stringResource(R.string.door_unknown), RaylinkTextSecondary, R.drawable.ic_door_closed)
     }
     Row(modifier = modifier, verticalAlignment = Alignment.CenterVertically) {
         // 关门白线、开门红线，透明底 PNG 不可 tint

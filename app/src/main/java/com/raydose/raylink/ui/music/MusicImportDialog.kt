@@ -34,14 +34,19 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.DialogProperties
+import com.raydose.raylink.R
 import com.raydose.raylink.data.FileManagerRepository
 import com.raydose.raylink.model.FileListItem
 import com.raydose.raylink.model.FileStorageLocation
+import com.raydose.raylink.ui.labelText
+import com.raydose.raylink.ui.tr
 import com.raydose.raylink.ui.theme.RaylinkAccentBlue
 import com.raydose.raylink.ui.theme.RaylinkTextPrimary
 import com.raydose.raylink.ui.theme.RaylinkTextSecondary
@@ -72,6 +77,8 @@ fun MusicImportDialog(
     val currentPath = pathStack.lastOrNull()?.first.orEmpty()
     val currentPathLabel = pathStack.joinToString(" / ") { it.second }
 
+    val context = LocalContext.current
+
     LaunchedEffect(storage, usbGrantEpoch, reloadToken) {
         isLoading = true
         message = null
@@ -82,9 +89,9 @@ fun MusicImportDialog(
                 entries = emptyList()
                 requiresUsbAccess = storage == FileStorageLocation.Usb
                 message = if (storage == FileStorageLocation.Usb) {
-                    "未检测到 U 盘，请插入后重试"
+                    context.tr(R.string.storage_usb_not_found)
                 } else {
-                    "未检测到可用存储"
+                    context.tr(R.string.storage_not_available)
                 }
                 return@runCatching
             }
@@ -106,8 +113,9 @@ fun MusicImportDialog(
             entries = emptyList()
             requiresUsbAccess = storage == FileStorageLocation.Usb
             message = when {
-                storage == FileStorageLocation.Usb -> "U 盘不可用：${error.message ?: "请插入后重试"}"
-                else -> error.message ?: "读取目录失败"
+                storage == FileStorageLocation.Usb ->
+                    context.tr(R.string.storage_usb_unavailable, error.message ?: context.tr(R.string.storage_usb_not_found))
+                else -> error.message ?: context.tr(R.string.storage_read_dir_failed)
             }
         }
         isLoading = false
@@ -120,7 +128,7 @@ fun MusicImportDialog(
         onDismissRequest = { if (!isImporting) onDismiss() },
         title = {
             Text(
-                text = "导入音乐",
+                text = stringResource(R.string.music_import_title),
                 color = RaylinkTextPrimary,
                 fontSize = 28.sp,
                 fontWeight = FontWeight.SemiBold,
@@ -129,13 +137,13 @@ fun MusicImportDialog(
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text(
-                    text = "选择音频文件，将复制到内部 Music 文件夹",
+                    text = stringResource(R.string.music_import_subtitle),
                     color = RaylinkTextSecondary,
                     fontSize = 16.sp,
                 )
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     ImportStorageTab(
-                        text = FileStorageLocation.Local.label,
+                        text = FileStorageLocation.Local.labelText(),
                         selected = storage == FileStorageLocation.Local,
                         onClick = {
                             if (storage != FileStorageLocation.Local) {
@@ -147,7 +155,7 @@ fun MusicImportDialog(
                         },
                     )
                     ImportStorageTab(
-                        text = FileStorageLocation.Usb.label,
+                        text = FileStorageLocation.Usb.labelText(),
                         selected = storage == FileStorageLocation.Usb,
                         onClick = {
                             if (storage != FileStorageLocation.Usb) {
@@ -161,7 +169,11 @@ fun MusicImportDialog(
                 }
 
                 Text(
-                    text = if (currentPathLabel.isBlank()) "当前路径：-" else "当前路径：$currentPathLabel",
+                    text = if (currentPathLabel.isBlank()) {
+                        stringResource(R.string.label_current_path_empty)
+                    } else {
+                        stringResource(R.string.label_current_path, currentPathLabel)
+                    },
                     color = RaylinkTextSecondary,
                     fontSize = 16.sp,
                     maxLines = 2,
@@ -170,7 +182,7 @@ fun MusicImportDialog(
 
                 if (selectedPaths.isNotEmpty()) {
                     Text(
-                        text = "已选 ${selectedPaths.size} 个文件",
+                        text = stringResource(R.string.music_selected_count, selectedPaths.size),
                         color = RaylinkAccentBlue,
                         fontSize = 16.sp,
                     )
@@ -182,7 +194,7 @@ fun MusicImportDialog(
 
                 if (requiresUsbAccess) {
                     TextButton(onClick = onRequestUsbAccess) {
-                        Text("授权 U 盘目录", color = RaylinkTextPrimary, fontSize = 18.sp)
+                        Text(stringResource(R.string.storage_grant_usb), color = RaylinkTextPrimary, fontSize = 18.sp)
                     }
                 } else {
                     Row(
@@ -205,7 +217,7 @@ fun MusicImportDialog(
                             tint = RaylinkTextPrimary,
                         )
                         Text(
-                            text = "返回上一级",
+                            text = stringResource(R.string.action_back_parent),
                             color = RaylinkTextPrimary,
                             fontSize = 18.sp,
                             modifier = Modifier.padding(start = 6.dp),
@@ -295,12 +307,12 @@ fun MusicImportDialog(
                         modifier = Modifier.padding(end = 8.dp),
                     )
                 }
-                Text("导入", color = RaylinkTextPrimary, fontSize = 22.sp)
+                Text(stringResource(R.string.action_import), color = RaylinkTextPrimary, fontSize = 22.sp)
             }
         },
         dismissButton = {
             TextButton(enabled = !isImporting, onClick = onDismiss) {
-                Text("取消", color = Color(0xFFD6DCFF), fontSize = 22.sp)
+                Text(stringResource(R.string.action_cancel), color = Color(0xFFD6DCFF), fontSize = 22.sp)
             }
         },
         containerColor = dialogBackground,

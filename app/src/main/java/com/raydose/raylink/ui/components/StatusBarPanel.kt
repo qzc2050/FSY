@@ -28,6 +28,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.TextUnit
@@ -67,6 +68,13 @@ fun StatusBarPanelBody(
     val logIconSize = ScreenSpec.statusBarLogIconSize(formFactor)
     val passwordToggleSp = ScreenSpec.statusBarPasswordToggleSp(formFactor).sp
 
+    val hostWifiLabel = stringResource(R.string.statusbar_host_wifi_name)
+    val wifiPasswordLabel = stringResource(R.string.statusbar_wifi_password)
+    val bluetoothLabel = stringResource(R.string.statusbar_bluetooth_name)
+    val noOnlineDevicesText = stringResource(R.string.statusbar_no_online_devices)
+    val noLogsText = stringResource(R.string.statusbar_no_logs)
+    val clearLogsText = stringResource(R.string.action_clear)
+
     Column(
         modifier = modifier
             .fillMaxSize()
@@ -77,6 +85,9 @@ fun StatusBarPanelBody(
             wifiName = wifiName,
             wifiPassword = wifiPassword,
             bluetoothName = bluetoothName,
+            hostWifiLabel = hostWifiLabel,
+            wifiPasswordLabel = wifiPasswordLabel,
+            bluetoothLabel = bluetoothLabel,
             labelFontSize = infoLabelSp,
             valueFontSize = infoValueSp,
             passwordToggleFontSize = passwordToggleSp,
@@ -87,6 +98,7 @@ fun StatusBarPanelBody(
             nameFontSize = deviceNameSp,
             ipFontSize = deviceIpSp,
             placeholderFontSize = placeholderSp,
+            emptyText = noOnlineDevicesText,
             modifier = Modifier
                 .fillMaxWidth()
                 .weight(0.22f),
@@ -97,6 +109,8 @@ fun StatusBarPanelBody(
             messageFontSize = logMessageSp,
             placeholderFontSize = placeholderSp,
             logIconSize = logIconSize,
+            emptyText = noLogsText,
+            clearText = clearLogsText,
             onClearClick = onClearAlertLogs,
             modifier = Modifier
                 .fillMaxWidth()
@@ -111,6 +125,9 @@ private fun WifiInfoRow(
     wifiName: String,
     wifiPassword: String,
     bluetoothName: String,
+    hostWifiLabel: String,
+    wifiPasswordLabel: String,
+    bluetoothLabel: String,
     labelFontSize: TextUnit,
     valueFontSize: TextUnit,
     passwordToggleFontSize: TextUnit,
@@ -124,13 +141,13 @@ private fun WifiInfoRow(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         WifiInfoItem(
-            label = "主机WIFI名称",
+            label = hostWifiLabel,
             value = wifiName,
             labelFontSize = labelFontSize,
             valueFontSize = valueFontSize,
         )
         WifiInfoItem(
-            label = "WIFI密码",
+            label = wifiPasswordLabel,
             value = if (passwordVisible) wifiPassword else "********",
             labelFontSize = labelFontSize,
             valueFontSize = valueFontSize,
@@ -147,7 +164,7 @@ private fun WifiInfoRow(
             modifier = Modifier.padding(horizontal = 20.dp),
         )
         WifiInfoItem(
-            label = "蓝牙名称",
+            label = bluetoothLabel,
             value = bluetoothName,
             labelFontSize = labelFontSize,
             valueFontSize = valueFontSize,
@@ -189,6 +206,7 @@ private fun ConnectedDevicesRow(
     nameFontSize: TextUnit,
     ipFontSize: TextUnit,
     placeholderFontSize: TextUnit,
+    emptyText: String,
     modifier: Modifier = Modifier,
 ) {
     Column(
@@ -201,7 +219,7 @@ private fun ConnectedDevicesRow(
                 contentAlignment = Alignment.Center,
             ) {
                 Text(
-                    text = "暂无在线设备",
+                    text = emptyText,
                     color = RaylinkTextSecondary,
                     fontSize = placeholderFontSize,
                 )
@@ -276,13 +294,15 @@ private fun AlertLogsSection(
     messageFontSize: TextUnit,
     placeholderFontSize: TextUnit,
     logIconSize: Dp,
+    emptyText: String,
+    clearText: String,
     onClearClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Box(modifier = modifier) {
         if (logs.isEmpty()) {
             Text(
-                text = "暂无日志",
+                text = emptyText,
                 color = RaylinkTextSecondary,
                 fontSize = placeholderFontSize,
                 modifier = Modifier.align(Alignment.TopStart),
@@ -305,7 +325,7 @@ private fun AlertLogsSection(
             }
         }
         Text(
-            text = "清空",
+            text = clearText,
             color = if (logs.isEmpty()) RaylinkTextSecondary.copy(alpha = 0.45f) else RaylinkTextPrimary,
             fontSize = 15.sp,
             modifier = Modifier

@@ -10,6 +10,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.raydose.raylink.R
@@ -41,18 +42,18 @@ fun ConnectivityStatusIconsRow(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         if (showPullIndicator) {
-            StatusIcon(R.drawable.ic_status_chevron_up, "展开状态栏", iconSize, tint)
+            StatusIcon(R.drawable.ic_status_chevron_up, stringResource(R.string.cd_expand_status_bar), iconSize, tint)
         }
         StatusIcon(
             R.drawable.ic_status_bluetooth,
-            "蓝牙",
+            stringResource(R.string.status_bluetooth),
             iconSize,
             if (bluetoothOnline) onlineTint else offlineTint,
         )
         StatusIcon(R.drawable.ic_status_wifi, "WiFi", iconSize, tint)
         StatusIcon(
             R.drawable.ic_status_ethernet,
-            "有线网络",
+            stringResource(R.string.status_ethernet),
             iconSize,
             if (ethernetOnline) onlineTint else offlineTint,
         )

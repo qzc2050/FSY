@@ -47,16 +47,21 @@ import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.DialogProperties
+import com.raydose.raylink.R
 import com.raydose.raylink.data.AlbumImageRepository
 import com.raydose.raylink.data.FileManagerRepository
 import com.raydose.raylink.data.isAlbumImageFile
 import com.raydose.raylink.model.FileListItem
 import com.raydose.raylink.model.FileStorageLocation
+import com.raydose.raylink.ui.labelText
+import com.raydose.raylink.ui.tr
 import com.raydose.raylink.ui.theme.RaylinkAccentBlue
 import com.raydose.raylink.ui.theme.RaylinkTextPrimary
 import com.raydose.raylink.ui.theme.RaylinkTextSecondary
@@ -87,6 +92,8 @@ fun AlbumImagePickerDialog(
 
     val currentPathLabel = pathStack.joinToString(" / ") { it.second }
 
+    val context = LocalContext.current
+
     LaunchedEffect(storage, usbGrantEpoch, reloadToken) {
         isLoading = true
         message = null
@@ -97,9 +104,9 @@ fun AlbumImagePickerDialog(
                 entries = emptyList()
                 requiresUsbAccess = storage == FileStorageLocation.Usb
                 message = if (storage == FileStorageLocation.Usb) {
-                    "未检测到 U 盘，请插入后重试"
+                    context.tr(R.string.storage_usb_not_found)
                 } else {
-                    "未检测到可用存储"
+                    context.tr(R.string.storage_not_available)
                 }
                 return@runCatching
             }
@@ -130,8 +137,9 @@ fun AlbumImagePickerDialog(
             entries = emptyList()
             requiresUsbAccess = storage == FileStorageLocation.Usb
             message = when {
-                storage == FileStorageLocation.Usb -> "U 盘不可用：${error.message ?: "请插入后重试"}"
-                else -> error.message ?: "读取目录失败"
+                storage == FileStorageLocation.Usb ->
+                    context.tr(R.string.storage_usb_unavailable, error.message ?: context.tr(R.string.storage_usb_not_found))
+                else -> error.message ?: context.tr(R.string.storage_read_dir_failed)
             }
         }
         isLoading = false
@@ -144,7 +152,7 @@ fun AlbumImagePickerDialog(
         onDismissRequest = { if (!isImporting) onDismiss() },
         title = {
             Text(
-                text = "选择图片",
+                text = stringResource(R.string.album_picker_title),
                 color = RaylinkTextPrimary,
                 fontSize = 28.sp,
                 fontWeight = FontWeight.SemiBold,
@@ -153,13 +161,13 @@ fun AlbumImagePickerDialog(
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text(
-                    text = "在本应用内浏览图片，不调用系统相册",
+                    text = stringResource(R.string.album_picker_hint),
                     color = RaylinkTextSecondary,
                     fontSize = 16.sp,
                 )
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     AlbumPickerStorageTab(
-                        text = FileStorageLocation.Local.label,
+                        text = FileStorageLocation.Local.labelText(),
                         selected = storage == FileStorageLocation.Local,
                         onClick = {
                             if (storage != FileStorageLocation.Local) {
@@ -171,7 +179,7 @@ fun AlbumImagePickerDialog(
                         },
                     )
                     AlbumPickerStorageTab(
-                        text = FileStorageLocation.Usb.label,
+                        text = FileStorageLocation.Usb.labelText(),
                         selected = storage == FileStorageLocation.Usb,
                         onClick = {
                             if (storage != FileStorageLocation.Usb) {
@@ -184,7 +192,11 @@ fun AlbumImagePickerDialog(
                     )
                 }
                 Text(
-                    text = if (currentPathLabel.isBlank()) "当前路径：-" else "当前路径：$currentPathLabel",
+                    text = if (currentPathLabel.isBlank()) {
+                        stringResource(R.string.label_current_path_empty)
+                    } else {
+                        stringResource(R.string.label_current_path, currentPathLabel)
+                    },
                     color = RaylinkTextSecondary,
                     fontSize = 16.sp,
                     maxLines = 2,
@@ -195,7 +207,7 @@ fun AlbumImagePickerDialog(
                 }
                 if (requiresUsbAccess) {
                     TextButton(onClick = onRequestUsbAccess) {
-                        Text("授权 U 盘目录", color = RaylinkTextPrimary, fontSize = 18.sp)
+                        Text(stringResource(R.string.storage_grant_usb), color = RaylinkTextPrimary, fontSize = 18.sp)
                     }
                 } else {
                     Row(
@@ -218,7 +230,7 @@ fun AlbumImagePickerDialog(
                             tint = RaylinkTextPrimary,
                         )
                         Text(
-                            text = "返回上一级",
+                            text = stringResource(R.string.action_back_parent),
                             color = RaylinkTextPrimary,
                             fontSize = 18.sp,
                             modifier = Modifier.padding(start = 6.dp),
@@ -235,7 +247,7 @@ fun AlbumImagePickerDialog(
                         }
                     } else if (entries.isEmpty()) {
                         Text(
-                            text = "当前目录没有图片",
+                            text = stringResource(R.string.album_no_images_in_dir),
                             color = RaylinkTextSecondary,
                             fontSize = 16.sp,
                             modifier = Modifier.padding(vertical = 24.dp),
@@ -278,7 +290,7 @@ fun AlbumImagePickerDialog(
         confirmButton = {},
         dismissButton = {
             TextButton(enabled = !isImporting, onClick = onDismiss) {
-                Text("取消", color = Color(0xFFD6DCFF), fontSize = 22.sp)
+                Text(stringResource(R.string.action_cancel), color = Color(0xFFD6DCFF), fontSize = 22.sp)
             }
         },
         containerColor = dialogBackground,

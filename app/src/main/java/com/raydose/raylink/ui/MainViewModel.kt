@@ -1,12 +1,15 @@
 package com.raydose.raylink.ui
 
 import android.app.Application
+import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Build
 import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.raydose.raylink.R
 import com.raydose.raylink.data.AlertLogRepository
+import com.raydose.raylink.AppLocale
 import com.raydose.raylink.data.DisplaySoundController
 import com.raydose.raylink.data.HostAlarmController
 import com.raydose.raylink.data.HostEnvSerialRepository
@@ -17,12 +20,14 @@ import com.raydose.raylink.data.ProbeConnectionManager
 import com.raydose.raylink.data.ProbeLinkRouter
 import com.raydose.raylink.data.ProbeDoseHistoryRepository
 import com.raydose.raylink.data.ProbeDoseAlarmLogAggregator
+import com.raydose.raylink.data.DoseAlarmLimit
 import com.raydose.raylink.data.ProbeSensorOfflineLogAggregator
 import com.raydose.raylink.data.ZjbOtaClient
 import com.raydose.raylink.data.ZjbOtaProgress
 import com.raydose.raylink.model.DisplaySoundSettings
 import com.raydose.raylink.model.PAUSE_ALARM_DURATION_MS
 import com.raydose.raylink.model.HostNetworkSettings
+import com.raydose.raylink.model.isFactoryHostDisplayName
 import com.raydose.raylink.model.isHostAlarmSuppressed
 import com.raydose.raylink.model.withExpiredPauseCleared
 import com.raydose.raylink.model.SlaveNetworkCard
@@ -75,6 +80,10 @@ import com.raydose.raylink.model.mergeControlBit2Enables
 import com.raydose.raylink.model.toManageDraft
 import com.raydose.raylink.model.toSlaveProbeUi
 import com.raydose.raylink.ui.settings.SettingsTab
+import com.raydose.raylink.ui.tr
+import com.raydose.raylink.ui.localizeWifiFetchError
+import com.raydose.raylink.ui.linkLabel
+import com.raydose.raylink.ui.labelText
 import com.raydose.raylink.net.parseFsyBroadcast
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -112,6 +121,14 @@ data class ProbeSettingsUiState(
 )
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
+    /**
+     * ViewModel 取字符串须走应用语言 Context：Application.resources 在 API 30–32
+     * 不会随 Activity locale wrap 更新，否则主页日期会一直是「yyyy年MM月dd日」。
+     */
+    private fun localizedApp(): Context =
+        AppLocale.wrap(getApplication(), _displaySoundSettings.value.language)
+
+    private val app get() = localizedApp()
     private val repository = ProbeConfigRepository(application)
     private val hostSettingsRepository = HostSettingsRepository(application)
     private val doseHistoryRepository = ProbeDoseHistoryRepository(application)
@@ -146,15 +163,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val sensorOfflineLogAggregator = ProbeSensorOfflineLogAggregator(
         onSensorsNormal = { ts, probeName ->
             appendAlertLog(
-                message = "$probeName 传感器正常",
+                message = app.tr(R.string.alert_sensor_normal, probeName),
                 kind = AlertLogKind.Info,
                 timestampMillis = ts,
             )
         },
         onSensorsOffline = { ts, probeName, sensors ->
-            val labels = sensors.sortedBy { it.ordinal }.joinToString("、") { it.label }
+            val labels = sensors.sortedBy { it.ordinal }.joinToString("、") { it.labelText(app) }
             appendAlertLog(
-                message = "$probeName ${labels}传感器离线",
+                message = app.tr(R.string.alert_sensor_offline, probeName, labels),
                 kind = AlertLogKind.Warning,
                 timestampMillis = ts,
             )
@@ -162,17 +179,24 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     )
 
     private val doseAlarmLogAggregator = ProbeDoseAlarmLogAggregator(
-        onAlarmStarted = { ts, probeName, labels ->
-            val ordered = listOf("上限", "下限").filter { it in labels }
+        onAlarmStarted = { ts, probeName, limits ->
+            val ordered = listOf(DoseAlarmLimit.Upper, DoseAlarmLimit.Lower)
+                .filter { it in limits }
+                .joinToString("、") { limit ->
+                    when (limit) {
+                        DoseAlarmLimit.Upper -> app.tr(R.string.alarm_limit_upper)
+                        DoseAlarmLimit.Lower -> app.tr(R.string.alarm_limit_lower)
+                    }
+                }
             appendAlertLog(
-                message = "$probeName 辐射${ordered.joinToString("、")}报警",
+                message = app.tr(R.string.alert_dose_alarm, probeName, ordered),
                 kind = AlertLogKind.Alarm,
                 timestampMillis = ts,
             )
         },
         onAlarmCleared = { ts, probeName ->
             appendAlertLog(
-                message = "$probeName 辐射报警解除",
+                message = app.tr(R.string.alert_dose_cleared, probeName),
                 kind = AlertLogKind.Info,
                 timestampMillis = ts,
             )
@@ -369,8 +393,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun updateDisplaySound(settings: DisplaySoundSettings) {
+        val previousLanguage = _displaySoundSettings.value.language
         _displaySoundSettings.value = settings
         _settings.update { it.copy(displaySound = settings, statusHint = null) }
+        if (previousLanguage != settings.language) {
+            /* 语言切换立即落盘并生效，无需点「保存」 */
+            hostSettingsRepository.saveDisplaySound(settings.withExpiredPauseCleared())
+            AppLocale.apply(getApplication(), settings.language)
+            languageChangeListener?.invoke()
+        }
     }
 
     /** 静音：立即保存并停止本机报警音。 */
@@ -386,10 +417,22 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun applyDisplaySound(settings: DisplaySoundSettings) {
+        val previousLanguage = _displaySoundSettings.value.language
         val normalized = settings.withExpiredPauseCleared()
         _displaySoundSettings.value = normalized
         _settings.update { it.copy(displaySound = normalized, statusHint = null) }
         hostSettingsRepository.saveDisplaySound(normalized)
+        if (previousLanguage != normalized.language) {
+            AppLocale.apply(getApplication(), normalized.language)
+            languageChangeListener?.invoke()
+        }
+    }
+
+    /** API 30–32：LocaleManager 不可用时由 Activity recreate 刷新资源 */
+    private var languageChangeListener: (() -> Unit)? = null
+
+    fun setLanguageChangeListener(listener: (() -> Unit)?) {
+        languageChangeListener = listener
     }
 
     private fun schedulePauseAlarmExpiry(untilMillis: Long) {
@@ -434,7 +477,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 statusHint = if (systemOk) {
                     null
                 } else {
-                    "已调节当前应用亮度；全局系统亮度需在系统设置中授予「修改系统设置」权限"
+                    app.tr(R.string.hint_brightness_app_only)
                 },
             )
         }
@@ -446,7 +489,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val ok = displaySoundController.applySystemVolume(displaySound.systemVolume)
         persistDisplaySoundSettings()
         if (!ok) {
-            _settings.update { it.copy(statusHint = "系统音量调节失败") }
+            _settings.update { it.copy(statusHint = app.tr(R.string.hint_system_volume_failed)) }
         } else {
             _settings.update { it.copy(statusHint = null) }
             if (!displaySound.mute) {
@@ -528,10 +571,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         onDone: (success: Boolean, message: String, wifiName: String?, wifiPassword: String?) -> Unit,
     ) {
         viewModelScope.launch {
-            _settings.update { it.copy(statusHint = "正在从主机网关获取 WiFi…") }
+            _settings.update { it.copy(statusHint = app.tr(R.string.hint_fetch_host_wifi)) }
             val hostIp = mergeLiveHostIp(_hostNetwork.value).ipAddress
             if (hostIp.isBlank()) {
-                val msg = "主机 IP 未知，无法推导网关"
+                val msg = app.tr(R.string.hint_host_ip_unknown)
                 _settings.update { it.copy(statusHint = msg) }
                 onDone(false, msg, null, null)
                 return@launch
@@ -553,12 +596,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         onDone: (success: Boolean, message: String, wifiName: String?, wifiPassword: String?) -> Unit,
     ) {
         viewModelScope.launch {
-            _settings.update { it.copy(statusHint = "正在从从机网关获取 WiFi…") }
+            _settings.update { it.copy(statusHint = app.tr(R.string.hint_fetch_slave_wifi)) }
             val subnetIp = mergeLiveHostIp(_hostNetwork.value).ipAddress
                 .takeIf { it.isNotBlank() }
                 ?: slaveIp.trim().takeIf { it.isNotBlank() }
             if (subnetIp.isNullOrBlank()) {
-                val msg = "主机/从机 IP 未知，无法推导从机网关"
+                val msg = app.tr(R.string.hint_subnet_ip_unknown)
                 _settings.update { it.copy(statusHint = msg) }
                 onDone(false, msg, null, null)
                 return@launch
@@ -578,7 +621,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         when (result) {
             is Hlk7688WifiClient.FetchResult.Ok -> {
                 val cred = result.credentials
-                val msg = "已从 ${cred.gatewayIp} 获取 WiFi，请确认后保存"
+                val msg = app.tr(R.string.hint_wifi_fetched, cred.gatewayIp)
                 _settings.update { it.copy(statusHint = msg) }
                 Log.i(
                     ProbeConnectionManager.TAG,
@@ -587,17 +630,26 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 onDone(true, msg, cred.ssid, cred.password)
             }
             is Hlk7688WifiClient.FetchResult.Err -> {
-                _settings.update { it.copy(statusHint = result.message) }
-                onDone(false, result.message, null, null)
+                val msg = app.localizeWifiFetchError(result.error)
+                _settings.update { it.copy(statusHint = msg) }
+                onDone(false, msg, null, null)
             }
         }
     }
 
     fun commitHostNetwork(settings: HostNetworkSettings) {
         val merged = mergeLiveHostIp(settings)
-        _hostNetwork.value = merged
-        _settings.update { it.copy(hostNetwork = merged, statusHint = null) }
-        hostSettingsRepository.saveHostNetwork(merged)
+        val defaultName = app.tr(R.string.host_default_display_name)
+        val normalized = merged.copy(
+            hostDisplayName = when {
+                isFactoryHostDisplayName(merged.hostDisplayName) -> ""
+                merged.hostDisplayName.trim() == defaultName -> ""
+                else -> merged.hostDisplayName.trim()
+            },
+        )
+        _hostNetwork.value = normalized
+        _settings.update { it.copy(hostNetwork = normalized, statusHint = null) }
+        hostSettingsRepository.saveHostNetwork(normalized)
         showSettingsSaveSuccess()
         Log.i(ProbeConnectionManager.TAG, "主机网络信息已保存")
     }
@@ -668,7 +720,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     ): ProbeTimeSyncPushResult {
         val now = System.currentTimeMillis()
         if (!isHostTimeValidForProbeSync(now)) {
-            val hint = hostTimeInvalidForProbeSyncHint()
+            val hint = app.hostTimeInvalidForProbeSyncHint()
             if (manual) {
                 Log.w(ProbeConnectionManager.TAG, "手动时间同步跳过：$hint")
                 return ProbeTimeSyncPushResult(0, hint)
@@ -680,7 +732,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         if (probes.isEmpty()) {
             return ProbeTimeSyncPushResult(
                 0,
-                if (manual) "无已保存探头，无法同步时间" else null,
+                if (manual) app.tr(R.string.time_sync_no_probes) else null,
             )
         }
         val live = _liveTelemetry.value
@@ -693,7 +745,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         if (targets.isEmpty()) {
             return ProbeTimeSyncPushResult(
                 0,
-                if (manual) "无在线探头，无法同步时间" else null,
+                if (manual) app.tr(R.string.time_sync_no_online) else null,
             )
         }
         val syncedNames = mutableListOf<String>()
@@ -739,11 +791,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val hint = if (!manual) {
             null
         } else when {
-            sent == 0 && skippedNoRoute > 0 -> "时间同步失败：在线探头尚无通信路由"
-            sent == 0 -> "无符合条件的在线探头可同步时间"
-            skippedNoRoute > 0 -> "已向 $sent 个探头同步本机时间（$skippedNoRoute 个无路由已跳过）"
-            sent == 1 -> "已向 ${syncedNames.first()} 同步本机时间"
-            else -> "已向 $sent 个在线探头同步本机时间"
+            sent == 0 && skippedNoRoute > 0 -> app.tr(R.string.time_sync_no_route)
+            sent == 0 -> app.tr(R.string.time_sync_no_eligible)
+            skippedNoRoute > 0 -> app.tr(R.string.time_sync_partial_skip, sent, skippedNoRoute)
+            sent == 1 -> app.tr(R.string.time_sync_one, syncedNames.first())
+            else -> app.tr(R.string.time_sync_many, sent)
         }
         return ProbeTimeSyncPushResult(sent, hint)
     }
@@ -793,7 +845,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
             }.takeIf { it.isNotBlank() && it != Build.UNKNOWN } ?: "—"
         return AboutDeviceInfo(
-            productName = "瑞联区域辐射监测系统",
+            productName = app.tr(R.string.about_product_name),
             hostModel = model,
             serialNumber = serial,
             softwareVersion = version,
@@ -1121,7 +1173,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 showAddProbeDialog = true,
                 discoveredDevices = addable,
                 statusHint = if (addable.isEmpty()) {
-                    "正在搜索内机（组播 / 串口）…"
+                    app.tr(R.string.hint_searching_probes)
                 } else {
                     null
                 },
@@ -1136,11 +1188,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun addProbeFromDiscovery(device: DiscoveredDevice) {
         val state = _settings.value
         if (!ProductModels.isManageableProbeModel(device.model)) {
-            _settings.update { it.copy(statusHint = "该型号仅展示在线下拉，不可添加为探头") }
+            _settings.update { it.copy(statusHint = app.tr(R.string.hint_model_not_addable)) }
             return
         }
         if (state.draftProbes.any { matchesSaved(it, device) }) {
-            _settings.update { it.copy(statusHint = "该设备已在列表中") }
+            _settings.update { it.copy(statusHint = app.tr(R.string.hint_device_already_added)) }
             return
         }
         val added = device.toSavedProbe()
@@ -1205,9 +1257,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 draftProbes = list,
                 selectedProbeIndex = newIndex,
                 statusHint = if (list.isEmpty()) {
-                    "已删除 ${removed.displayName}，列表为空"
+                    app.tr(R.string.hint_probe_deleted_empty, removed.displayName)
                 } else {
-                    "已删除 ${removed.displayName}"
+                    app.tr(R.string.hint_probe_deleted, removed.displayName)
                 },
             )
         }
@@ -1425,15 +1477,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         if (change == null) return
         val name = _savedProbes.value.firstOrNull { it.id == probeId }?.displayName
             ?: probeId
-        fun label(link: ProbeCommandLink?): String = when (link) {
-            ProbeCommandLink.NETWORK -> "网口"
-            ProbeCommandLink.SERIAL -> "串口"
-            null -> "无"
-        }
+        fun label(link: ProbeCommandLink?): String = app.linkLabel(link)
         val msg = if (change.previous == null) {
-            "[LINK] $name 实时0x23 → ${label(change.current)}"
+            app.tr(R.string.hint_link_route_set, name, label(change.current))
         } else {
-            "[LINK] $name 实时0x23 ${label(change.previous)} → ${label(change.current)}"
+            app.tr(
+                R.string.hint_link_route_changed,
+                name,
+                label(change.previous),
+                label(change.current),
+            )
         }
         Log.i(ProbeConnectionManager.TAG, msg)
         _settings.update { it.copy(statusHint = msg) }
@@ -1683,7 +1736,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         if (!wasOnline) {
             val name = _savedProbes.value.find { it.id == probeId }?.displayName ?: probeId
             appendAlertLog(
-                message = "$name 已连接",
+                message = app.tr(R.string.alert_probe_connected, name),
                 kind = AlertLogKind.Connected,
             )
             sensorOfflineLogAggregator.onProbeConnected(probeId)
@@ -1703,7 +1756,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val probe = _savedProbes.value.find { it.id == probeId }
         val name = probe?.displayName ?: probeId
         appendAlertLog(
-            message = "$name 已断开",
+            message = app.tr(R.string.alert_probe_disconnected, name),
             kind = AlertLogKind.Warning,
         )
         sensorOfflineLogAggregator.onProbeDisconnected(probeId)
@@ -1765,7 +1818,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
         val name = probe?.displayName ?: probeId
         appendAlertLog(
-            message = if (online) "$name 已连接" else "$name 已断开",
+            message = if (online) {
+                app.tr(R.string.alert_probe_connected, name)
+            } else {
+                app.tr(R.string.alert_probe_disconnected, name)
+            },
             kind = if (online) AlertLogKind.Connected else AlertLogKind.Warning,
         )
         if (online) {
@@ -1942,7 +1999,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         homeSelectedProbeId: String? = null,
         discovered: List<DiscoveredDevice> = emptyList(),
     ): HomeUiState {
-        val clock = HomeClockFormatter.format(java.util.Date(nowMillis), timeDisplay)
+        val clock = HomeClockFormatter.format(
+            java.util.Date(nowMillis),
+            timeDisplay,
+            localizedApp().resources,
+        )
         val probes: List<SlaveProbeUi> = if (saved.isEmpty()) {
             listOf(
                 SlaveProbeUi(
@@ -1972,7 +2033,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             },
             slaveProbes = probes,
             selectedProbeIndex = selectedProbeIndex,
-            statusBarDevices = buildStatusBarConnectedDevices(saved, live, discovered),
+            statusBarDevices = buildStatusBarConnectedDevices(
+                saved = saved,
+                live = live,
+                discovered = discovered,
+                notAddedLabel = app.tr(R.string.status_not_added),
+                deviceFallback = app.tr(R.string.fallback_device),
+                probeFallback = app.tr(R.string.fallback_probe),
+            ),
             doorState = resolveDoorState(hostAdapter, live),
             alertLogs = logs,
             messages = emptyList(),

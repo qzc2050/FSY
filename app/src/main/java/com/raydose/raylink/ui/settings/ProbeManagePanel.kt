@@ -31,7 +31,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import com.raydose.raylink.R
+import com.raydose.raylink.ui.localizeOtaProgress
 import androidx.compose.ui.unit.sp
 import com.raydose.raylink.data.FileManagerRepository
 import com.raydose.raylink.data.NeijiFirmwareRules
@@ -92,11 +95,20 @@ fun ProbeManagePanel(
     )
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
+    val fwNotStarted = stringResource(R.string.probe_fw_status_not_started)
+    val fwReading = stringResource(R.string.probe_fw_reading)
+    val fwReadFailed = stringResource(R.string.probe_fw_read_failed)
+    val fwPushSuccess = stringResource(R.string.probe_fw_push_success)
+    val fwUpgradeFailed = stringResource(R.string.probe_fw_upgrade_failed)
+    val fwDialogTitle = stringResource(R.string.probe_fw_dialog_title)
+    val fwDialogSubtitle = stringResource(R.string.probe_fw_dialog_subtitle)
+    val fwConfirmTitle = stringResource(R.string.probe_fw_confirm_title)
+    val fwConfirmHint = stringResource(R.string.probe_fw_confirm_hint)
 
     var showUpdateDialog by remember { mutableStateOf(false) }
     var isUpgrading by remember { mutableStateOf(false) }
     var upgradeProgress by remember { mutableFloatStateOf(0f) }
-    var upgradeStatus by remember { mutableStateOf("未开始") }
+    var upgradeStatus by remember { mutableStateOf(fwNotStarted) }
     var pendingUpgrade by remember {
         mutableStateOf<Pair<FileStorageLocation, FileListItem>?>(null)
     }
@@ -112,28 +124,28 @@ fun ProbeManagePanel(
         scope.launch {
             isUpgrading = true
             upgradeProgress = 0f
-            upgradeStatus = "读取固件文件..."
+            upgradeStatus = fwReading
             upgradeHint = null
             val bytesResult = withContext(Dispatchers.IO) {
                 fileManagerRepository.readNeijiFirmwareBin(location, item.path)
             }
             bytesResult.onFailure { error ->
                 isUpgrading = false
-                showMessage(error.message ?: "读取固件失败")
+                showMessage(error.message ?: fwReadFailed)
                 return@launch
             }
             val bytes = bytesResult.getOrThrow()
             onUpgradeProbeFirmware(draft.id, bytes) { progress ->
-                upgradeStatus = progress.statusText
+                upgradeStatus = context.localizeOtaProgress(progress.statusText)
                 upgradeProgress = progress.progress
             }.fold(
                 onSuccess = {
                     showUpdateDialog = false
                     pendingUpgrade = null
-                    showMessage("探头固件已推送，设备将校验并重启。重启后请重新进入本页确认软件版本。")
+                    showMessage(fwPushSuccess)
                 },
                 onFailure = { error ->
-                    showMessage(error.message ?: "探头固件升级失败")
+                    showMessage(error.message ?: fwUpgradeFailed)
                 },
             )
             isUpgrading = false
@@ -228,8 +240,8 @@ fun ProbeManagePanel(
             isUpgrading = isUpgrading,
             upgradeProgress = upgradeProgress,
             upgradeStatus = upgradeStatus,
-            title = "探头固件更新",
-            subtitle = "请选择文件名含 neiji_V 的探头固件 .bin。升级完成后探头将自动重启。",
+            title = fwDialogTitle,
+            subtitle = fwDialogSubtitle,
             onDismiss = {
                 if (!isUpgrading) showUpdateDialog = false
             },
@@ -248,8 +260,8 @@ fun ProbeManagePanel(
         ZjbFirmwareConfirmDialog(
             fileName = item.name,
             sizeBytes = item.sizeBytes,
-            title = "确认升级探头固件？",
-            hint = "升级完成后探头将自动重启，请稍候再查看软件版本。",
+            title = fwConfirmTitle,
+            hint = fwConfirmHint,
             onDismiss = {
                 if (!isUpgrading) pendingUpgrade = null
             },
@@ -290,7 +302,7 @@ private fun ProbeManageCard(
                 contentAlignment = Alignment.Center,
             ) {
                 Text(
-                    text = "暂无探头，请点击左下角「添加探头」",
+                    text = stringResource(R.string.probe_manage_empty),
                     color = RaylinkTextSecondary,
                     fontSize = 18.sp,
                 )
@@ -360,13 +372,13 @@ private fun ProbeManageCard(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 OutlinedButton(onClick = onAddClick) {
-                    Text("+ 添加探头", fontSize = 19.sp)
+                    Text(stringResource(R.string.probe_manage_add), fontSize = 19.sp)
                 }
                 Button(
                     onClick = onSaveClick,
                     colors = ButtonDefaults.buttonColors(containerColor = RaylinkAccentBlue),
                 ) {
-                    Text("保存", fontSize = 19.sp, color = RaylinkTextPrimary)
+                    Text(stringResource(R.string.action_save), fontSize = 19.sp, color = RaylinkTextPrimary)
                 }
             }
         }

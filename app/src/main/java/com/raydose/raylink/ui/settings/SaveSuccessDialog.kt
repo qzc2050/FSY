@@ -10,9 +10,11 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.raydose.raylink.R
 import com.raydose.raylink.ui.theme.RaylinkSettingsContentBg
 import com.raydose.raylink.ui.theme.RaylinkTextPrimary
 import kotlinx.coroutines.delay
@@ -32,7 +34,7 @@ fun SaveSuccessToast(onDismiss: () -> Unit) {
         contentAlignment = Alignment.Center,
     ) {
         Text(
-            text = "保存成功",
+            text = stringResource(R.string.settings_save_success),
             color = RaylinkTextPrimary,
             fontSize = 16.sp,
             fontWeight = FontWeight.Medium,

@@ -46,6 +46,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -58,6 +59,7 @@ import com.raydose.raylink.model.MusicTrack
 import com.raydose.raylink.model.MusicUiState
 import com.raydose.raylink.model.SlaveProbeUi
 import com.raydose.raylink.ui.components.CompactRadiationHeader
+import com.raydose.raylink.ui.labelText
 import com.raydose.raylink.ui.theme.RaylinkAccentBlue
 import com.raydose.raylink.ui.theme.RaylinkAtmosphereBackgroundBrush
 import com.raydose.raylink.ui.theme.RaylinkAtmosphereListPanelBg
@@ -160,13 +162,13 @@ private fun PermissionPanel(
     ) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
             Text(
-                text = "需要音乐读取权限",
+                text = stringResource(R.string.music_permission_title),
                 color = RaylinkTextPrimary,
                 fontSize = 28.sp,
                 fontWeight = FontWeight.SemiBold,
             )
             Text(
-                text = "授权后可扫描内部 Music 目录和 U 盘 Music/music 目录",
+                text = stringResource(R.string.music_permission_desc),
                 color = RaylinkTextSecondary,
                 fontSize = 18.sp,
                 modifier = Modifier.padding(top = 12.dp, bottom = 24.dp),
@@ -175,7 +177,7 @@ private fun PermissionPanel(
                 onClick = onRequestPermission,
                 colors = ButtonDefaults.buttonColors(containerColor = RaylinkAccentBlue),
             ) {
-                Text("授权并扫描", color = RaylinkTextPrimary, fontSize = 18.sp)
+                Text(stringResource(R.string.music_grant_and_scan), color = RaylinkTextPrimary, fontSize = 18.sp)
             }
         }
     }
@@ -249,7 +251,7 @@ private fun MusicWindowBar(
             contentAlignment = Alignment.CenterStart,
         ) {
             Text(
-                text = "音乐",
+                text = stringResource(R.string.music_title),
                 color = RaylinkTextPrimary,
                 fontSize = 30.sp,
                 fontWeight = FontWeight.SemiBold,
@@ -296,13 +298,13 @@ private fun TrackListPanel(
             .padding(horizontal = 16.dp, vertical = 18.dp),
     ) {
         Text(
-            text = "歌曲列表",
+            text = stringResource(R.string.music_song_list),
             color = RaylinkTextPrimary,
             fontSize = 22.sp,
             fontWeight = FontWeight.SemiBold,
         )
         Text(
-            text = "路径：内部 /Music，U盘 /Music / music",
+            text = stringResource(R.string.music_path_hint),
             color = RaylinkTextSecondary,
             fontSize = 12.sp,
             modifier = Modifier.padding(top = 8.dp),
@@ -313,7 +315,7 @@ private fun TrackListPanel(
         OutlinedTextField(
             value = state.searchQuery,
             onValueChange = onSearchQueryChange,
-            placeholder = { Text("搜索歌曲", fontSize = 14.sp) },
+            placeholder = { Text(stringResource(R.string.music_search_placeholder), fontSize = 14.sp) },
             singleLine = true,
             colors = OutlinedTextFieldDefaults.colors(
                 focusedTextColor = RaylinkTextPrimary,
@@ -333,7 +335,11 @@ private fun TrackListPanel(
             modifier = Modifier.fillMaxWidth(),
         ) {
             Text(
-                text = if (state.isImporting) "导入中…" else "导入",
+                text = if (state.isImporting) {
+                    stringResource(R.string.music_importing)
+                } else {
+                    stringResource(R.string.action_import)
+                },
                 color = RaylinkTextPrimary,
                 fontSize = 16.sp,
             )
@@ -341,12 +347,12 @@ private fun TrackListPanel(
         Spacer(modifier = Modifier.height(12.dp))
         if (state.isLoading) {
             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Text(text = "扫描中…", color = RaylinkTextSecondary, fontSize = 16.sp)
+                Text(text = stringResource(R.string.music_scanning), color = RaylinkTextSecondary, fontSize = 16.sp)
             }
         } else if (displayTracks.isEmpty()) {
             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 Text(
-                    text = state.message ?: "未找到音乐文件",
+                    text = state.message ?: stringResource(R.string.music_no_files),
                     color = RaylinkTextSecondary,
                     fontSize = 16.sp,
                 )
@@ -396,7 +402,7 @@ private fun TrackRow(
                 overflow = TextOverflow.Ellipsis,
             )
             Text(
-                text = "${track.artist} · ${track.sourceLabel.ifBlank { "本地音乐" }}",
+                text = "${track.artist} · ${track.sourceLabel.ifBlank { stringResource(R.string.music_source_local_default) }}",
                 color = RaylinkTextSecondary,
                 fontSize = 12.sp,
                 maxLines = 1,
@@ -445,7 +451,7 @@ private fun PlayerPanel(
                 modifier = Modifier.size(30.dp),
             )
             Text(
-                text = current?.title ?: "未选择音乐",
+                text = current?.title ?: stringResource(R.string.music_not_selected),
                 color = RaylinkTextPrimary,
                 fontSize = 20.sp,
                 maxLines = 1,
@@ -462,7 +468,7 @@ private fun PlayerPanel(
             )
             Spacer(modifier = Modifier.width(58.dp))
             PlayerIconButton(onClick = onPrevious, enabled = state.tracks.isNotEmpty()) {
-                Icon(Icons.Filled.SkipPrevious, contentDescription = "上一首")
+                Icon(Icons.Filled.SkipPrevious, contentDescription = stringResource(R.string.cd_previous_track))
             }
             Spacer(modifier = Modifier.width(58.dp))
             IconButton(
@@ -475,14 +481,14 @@ private fun PlayerPanel(
             ) {
                 Icon(
                     imageVector = if (state.isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
-                    contentDescription = if (state.isPlaying) "暂停" else "播放",
+                    contentDescription = stringResource(R.string.cd_play_pause),
                     tint = RaylinkTextPrimary,
                     modifier = Modifier.size(56.dp),
                 )
             }
             Spacer(modifier = Modifier.width(58.dp))
             PlayerIconButton(onClick = onNext, enabled = state.tracks.isNotEmpty()) {
-                Icon(Icons.Filled.SkipNext, contentDescription = "下一首")
+                Icon(Icons.Filled.SkipNext, contentDescription = stringResource(R.string.cd_next_track))
             }
         }
         state.message?.let {
@@ -506,11 +512,11 @@ private fun PlayModeButton(
         PlayerIconButton(onClick = onClick, enabled = enabled) {
             Icon(
                 imageVector = playMode.icon(),
-                contentDescription = playMode.label,
+                contentDescription = playMode.labelText(),
             )
         }
         Text(
-            text = playMode.label,
+            text = playMode.labelText(),
             color = if (enabled) RaylinkTextSecondary else RaylinkTextSecondary.copy(alpha = 0.5f),
             fontSize = 12.sp,
             modifier = Modifier.padding(top = 4.dp),

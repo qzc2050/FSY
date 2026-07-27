@@ -10,22 +10,18 @@ import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.raydose.raylink.R
 import com.raydose.raylink.model.AppLanguage
 import com.raydose.raylink.model.DisplaySoundSettings
 import com.raydose.raylink.model.ProbeCardDisplayMode
 import com.raydose.raylink.model.isPauseAlarmActive
+import com.raydose.raylink.ui.labelText
 import kotlinx.coroutines.delay
 
-private val StandbyOptions = listOf(
-    3 to "3 分钟",
-    5 to "5 分钟",
-    10 to "10 分钟",
-    30 to "30 分钟",
-    60 to "1 小时",
-    -1 to "永不",
-)
+private val StandbyOptionMinutes = listOf(3, 5, 10, 30, 60, -1)
 
 private val CardCountOptions = listOf(1, 2, 4)
 
@@ -35,7 +31,17 @@ private val DisplaySoundMenuSp = 18.sp
 private val DisplaySoundPercentSp = 17.sp
 private val DisplaySoundButtonSp = 18.sp
 /** 20sp 标签需更宽列宽，控件整体右移，避免长标签换行 */
-private val DisplaySoundLabelWidth = 176.dp
+private val DisplaySoundLabelWidth = 220.dp
+
+@Composable
+private fun standbyMinuteLabel(minutes: Int): String = when (minutes) {
+    3 -> stringResource(R.string.settings_standby_3min)
+    5 -> stringResource(R.string.settings_standby_5min)
+    10 -> stringResource(R.string.settings_standby_10min)
+    30 -> stringResource(R.string.settings_standby_30min)
+    60 -> stringResource(R.string.settings_standby_1hour)
+    else -> stringResource(R.string.settings_standby_never)
+}
 
 @Composable
 fun DisplaySoundPanel(
@@ -60,19 +66,26 @@ fun DisplaySoundPanel(
         }
     }
 
+    val languageLabels = listOf(AppLanguage.Zh.labelText(), AppLanguage.En.labelText())
+    val probeDisplayLabels = listOf(
+        ProbeCardDisplayMode.Fixed.labelText(),
+        ProbeCardDisplayMode.Scroll.labelText(),
+    )
+    val standbyLabels = StandbyOptionMinutes.map { standbyMinuteLabel(it) }
+
     SettingsPanelScaffold(
         modifier = modifier.fillMaxSize(),
         onSaveClick = onSaveClick,
         extraActions = {
             OutlinedButton(onClick = onPreviewStandby) {
-                Text("显示待机画面", fontSize = DisplaySoundButtonSp)
+                Text(stringResource(R.string.settings_show_standby), fontSize = DisplaySoundButtonSp)
             }
         },
     ) {
         SettingsDropdownRow(
-            label = "系统语言",
-            value = settings.language.label,
-            options = AppLanguage.entries.map { it.label },
+            label = stringResource(R.string.settings_system_language),
+            value = settings.language.labelText(),
+            options = languageLabels,
             labelFontSize = DisplaySoundLabelSp,
             valueFontSize = DisplaySoundValueSp,
             menuFontSize = DisplaySoundMenuSp,
@@ -81,9 +94,9 @@ fun DisplaySoundPanel(
         ) { index -> onChange(settings.copy(language = AppLanguage.entries[index])) }
 
         SettingsDropdownRow(
-            label = "监测组件显示",
-            value = settings.probeCardMode.label,
-            options = ProbeCardDisplayMode.entries.map { it.label },
+            label = stringResource(R.string.settings_probe_display_mode),
+            value = settings.probeCardMode.labelText(),
+            options = probeDisplayLabels,
             labelFontSize = DisplaySoundLabelSp,
             valueFontSize = DisplaySoundValueSp,
             menuFontSize = DisplaySoundMenuSp,
@@ -91,21 +104,21 @@ fun DisplaySoundPanel(
             labelSingleLine = true,
         ) { index -> onChange(settings.copy(probeCardMode = ProbeCardDisplayMode.entries[index])) }
 
-        val standbyIndex = StandbyOptions.indexOfFirst { it.first == settings.standbyMinutes }.coerceAtLeast(0)
+        val standbyIndex = StandbyOptionMinutes.indexOfFirst { it == settings.standbyMinutes }.coerceAtLeast(0)
         SettingsDropdownRow(
-            label = "待机时间",
-            value = StandbyOptions[standbyIndex].second,
-            options = StandbyOptions.map { it.second },
+            label = stringResource(R.string.settings_standby_time),
+            value = standbyLabels[standbyIndex],
+            options = standbyLabels,
             labelFontSize = DisplaySoundLabelSp,
             valueFontSize = DisplaySoundValueSp,
             menuFontSize = DisplaySoundMenuSp,
             labelWidth = DisplaySoundLabelWidth,
             labelSingleLine = true,
-        ) { index -> onChange(settings.copy(standbyMinutes = StandbyOptions[index].first)) }
+        ) { index -> onChange(settings.copy(standbyMinutes = StandbyOptionMinutes[index])) }
 
         val sliderEndAtCenter = 0.618f
         SettingsSliderRow(
-            label = "系统亮度",
+            label = stringResource(R.string.settings_brightness),
             value = settings.brightness,
             sliderEndFraction = sliderEndAtCenter,
             labelFontSize = DisplaySoundLabelSp,
@@ -119,7 +132,7 @@ fun DisplaySoundPanel(
             onValueChangeFinished = onBrightnessCommitted,
         )
         SettingsSliderRow(
-            label = "系统音量",
+            label = stringResource(R.string.settings_system_volume),
             value = settings.systemVolume,
             sliderEndFraction = sliderEndAtCenter,
             labelFontSize = DisplaySoundLabelSp,
@@ -130,7 +143,7 @@ fun DisplaySoundPanel(
             onValueChangeFinished = onSystemVolumeCommitted,
         )
         SettingsSliderRow(
-            label = "本机报警音量",
+            label = stringResource(R.string.settings_host_alarm_volume),
             value = settings.hostAlarmVolume,
             sliderEndFraction = sliderEndAtCenter,
             labelFontSize = DisplaySoundLabelSp,
@@ -141,7 +154,7 @@ fun DisplaySoundPanel(
             onValueChangeFinished = onHostAlarmVolumeCommitted,
         )
         SettingsSliderRow(
-            label = "提示音量",
+            label = stringResource(R.string.settings_prompt_volume),
             value = settings.promptVolume,
             sliderEndFraction = sliderEndAtCenter,
             labelFontSize = DisplaySoundLabelSp,
@@ -154,7 +167,7 @@ fun DisplaySoundPanel(
 
         val countIndex = CardCountOptions.indexOf(settings.visibleProbeCards).coerceAtLeast(0)
         SettingsDropdownRow(
-            label = "同时显示探头数",
+            label = stringResource(R.string.settings_visible_probe_count),
             value = "${settings.visibleProbeCards}",
             options = CardCountOptions.map { "$it" },
             labelFontSize = DisplaySoundLabelSp,
@@ -165,7 +178,7 @@ fun DisplaySoundPanel(
         ) { index -> onChange(settings.copy(visibleProbeCards = CardCountOptions[index])) }
 
         SettingsSwitchRow(
-            label = "静音",
+            label = stringResource(R.string.settings_mute),
             checked = settings.mute,
             onCheckedChange = onMuteCommitted,
             labelFontSize = DisplaySoundLabelSp,
@@ -177,14 +190,16 @@ fun DisplaySoundPanel(
         val pauseActive = settings.isPauseAlarmActive(nowMillis)
         val remainingSec = ((settings.pauseAlarmUntilMillis - nowMillis) / 1000L).coerceAtLeast(0L)
         val pauseButtonText = if (pauseActive) {
-            val minutes = remainingSec / 60L
-            val seconds = remainingSec % 60L
-            "暂停中 ${minutes}:${"%02d".format(seconds)}"
+            stringResource(
+                R.string.settings_pause_alarm_active,
+                remainingSec / 60L,
+                remainingSec % 60L,
+            )
         } else {
-            "暂停 5 分钟"
+            stringResource(R.string.settings_pause_alarm_idle)
         }
         SettingsLabeledButtonRow(
-            label = "暂停报警5分钟",
+            label = stringResource(R.string.settings_pause_alarm_label),
             buttonText = pauseButtonText,
             onClick = onPauseAlarmClick,
             labelFontSize = DisplaySoundLabelSp,

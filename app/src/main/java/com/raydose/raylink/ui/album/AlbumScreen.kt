@@ -51,6 +51,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -69,6 +70,7 @@ import com.raydose.raylink.ui.theme.RaylinkAtmosphereBackgroundBrush
 import com.raydose.raylink.ui.theme.RaylinkAtmospherePlayerOverlay
 import com.raydose.raylink.ui.theme.RaylinkTextPrimary
 import com.raydose.raylink.ui.theme.RaylinkTextSecondary
+import com.raydose.raylink.ui.tr
 import com.raydose.raylink.ui.theme.ScreenSpec
 import java.io.File
 import java.text.SimpleDateFormat
@@ -145,7 +147,7 @@ private fun AlbumContent(
     var manageMode by remember { mutableStateOf(false) }
     var selectedMessageIds by remember { mutableStateOf<Set<Long>>(emptySet()) }
     var messagePendingDelete by remember { mutableStateOf<AlbumMessage?>(null) }
-    var cleanupRangePending by remember { mutableStateOf<String?>(null) }
+    var cleanupRangePending by remember { mutableStateOf<MessageCleanupRange?>(null) }
     var deleteSelectedPending by remember { mutableStateOf(false) }
     var scrollToLatestRequest by remember { mutableStateOf(0) }
 
@@ -257,11 +259,14 @@ private fun AlbumContent(
                                     sourcePath = path,
                                 ),
                             )
-                            imageImportMessage = "图片已复制到本机，拔出 U 盘不影响显示"
+                            imageImportMessage = context.tr(R.string.album_import_success)
                             showImagePicker = false
                         }
                         .onFailure {
-                            imageImportMessage = "图片导入失败：${it.message ?: "未知错误"}"
+                            imageImportMessage = context.tr(
+                                R.string.album_import_failed,
+                                it.message ?: context.tr(R.string.error_unknown),
+                            )
                         }
                     isImportingImage = false
                 }
@@ -301,8 +306,8 @@ private fun AlbumContent(
     }
     messagePendingDelete?.let { message ->
         ConfirmDeleteDialog(
-            title = "删除留言",
-            message = "确定删除这条留言吗？",
+            title = stringResource(R.string.album_delete_message_title),
+            message = stringResource(R.string.album_delete_message_confirm),
             onDismiss = { messagePendingDelete = null },
             onConfirm = {
                 onMessagesChange(messages.filterNot { it.id == message.id })
@@ -313,8 +318,14 @@ private fun AlbumContent(
     }
     cleanupRangePending?.let { range ->
         ConfirmDeleteDialog(
-            title = "清理留言",
-            message = "确定删除${range}的留言吗？",
+            title = stringResource(R.string.album_cleanup_title),
+            message = stringResource(
+                R.string.album_cleanup_confirm,
+                when (range) {
+                    MessageCleanupRange.Week -> stringResource(R.string.range_one_week_ago)
+                    MessageCleanupRange.Month -> stringResource(R.string.range_one_month_ago)
+                },
+            ),
             onDismiss = { cleanupRangePending = null },
             onConfirm = {
                 val updated = deleteMessagesByRange(messages, range)
@@ -326,8 +337,8 @@ private fun AlbumContent(
     }
     if (deleteSelectedPending) {
         ConfirmDeleteDialog(
-            title = "删除选中留言",
-            message = "确定删除选中的 ${selectedMessageIds.size} 条留言吗？",
+            title = stringResource(R.string.album_delete_selected_title),
+            message = stringResource(R.string.album_delete_selected_confirm, selectedMessageIds.size),
             onDismiss = { deleteSelectedPending = false },
             onConfirm = {
                 onMessagesChange(messages.filterNot { it.id in selectedMessageIds })
@@ -349,7 +360,7 @@ private fun AlbumWindowBar(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(
-            text = "电子相册",
+            text = stringResource(R.string.album_title),
             color = RaylinkTextPrimary,
             fontSize = 28.sp,
             fontWeight = FontWeight.SemiBold,
@@ -392,7 +403,7 @@ private fun AlbumPreviewPanel(
             modifier = Modifier.size(width = 88.dp, height = 58.dp),
         ) {
             Text(
-                text = if (isImportingImage) "…" else "选择",
+                text = if (isImportingImage) "…" else stringResource(R.string.action_select),
                 color = RaylinkTextPrimary,
                 fontSize = 18.sp,
             )
@@ -407,14 +418,14 @@ private fun AlbumPreviewPanel(
         }
         if (selectedImageUri.isNotBlank() && !imageAvailable) {
             Text(
-                text = "当前图片不可用（可能来自已拔出的 U 盘），请重新选择",
+                text = stringResource(R.string.album_image_unavailable),
                 color = Color(0xFFFFB4B4),
                 fontSize = 14.sp,
                 modifier = Modifier.padding(top = 8.dp),
             )
         }
         Spacer(modifier = Modifier.height(16.dp))
-        AlbumSwitchRow("应用于待机画面", applyStandby, onApplyStandbyChange)
+        AlbumSwitchRow(stringResource(R.string.album_apply_standby), applyStandby, onApplyStandbyChange)
     }
 }
 
@@ -472,7 +483,7 @@ private fun MessagePanel(
     onDeleteMessage: (AlbumMessage) -> Unit,
     onMessageSelectionChange: (AlbumMessage, Boolean) -> Unit,
     onDeleteSelected: () -> Unit,
-    onCleanupByRange: (String) -> Unit,
+    onCleanupByRange: (MessageCleanupRange) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val visibleMessages = messages
@@ -493,7 +504,7 @@ private fun MessagePanel(
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(
-                text = "留言（${messages.size}）",
+                text = stringResource(R.string.album_messages_count, messages.size),
                 color = RaylinkTextPrimary,
                 fontSize = 24.sp,
                 fontWeight = FontWeight.SemiBold,
@@ -501,7 +512,11 @@ private fun MessagePanel(
             Spacer(modifier = Modifier.weight(1f))
             TextButton(onClick = { onManageModeChange(!manageMode) }) {
                 Text(
-                    text = if (manageMode) "完成" else "管理",
+                    text = if (manageMode) {
+                        stringResource(R.string.action_done)
+                    } else {
+                        stringResource(R.string.action_manage)
+                    },
                     color = RaylinkTextPrimary,
                     fontSize = 18.sp,
                 )
@@ -520,7 +535,7 @@ private fun MessagePanel(
             value = searchQuery,
             onValueChange = onSearchQueryChange,
             singleLine = true,
-            label = { Text("搜索留言", color = RaylinkTextSecondary) },
+            label = { Text(stringResource(R.string.album_search_placeholder), color = RaylinkTextSecondary) },
             textStyle = androidx.compose.ui.text.TextStyle(
                 color = RaylinkTextPrimary,
                 fontSize = 18.sp,
@@ -565,7 +580,11 @@ private fun MessagePanel(
             if (visibleMessages.isEmpty()) {
                 item {
                     Text(
-                        text = if (searchQuery.isBlank()) "暂无留言" else "没有匹配的留言",
+                        text = if (searchQuery.isBlank()) {
+                            stringResource(R.string.home_no_messages)
+                        } else {
+                            stringResource(R.string.album_no_search_results)
+                        },
                         color = RaylinkTextSecondary,
                         fontSize = 18.sp,
                         modifier = Modifier.padding(top = 12.dp),
@@ -575,15 +594,15 @@ private fun MessagePanel(
         }
         Spacer(modifier = Modifier.height(14.dp))
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            AlbumSwitchRow("主页显示留言", showHomeMessages, onShowHomeMessagesChange)
-            AlbumSwitchRow("待机页显示留言", showStandbyMessages, onShowStandbyMessagesChange)
+            AlbumSwitchRow(stringResource(R.string.album_show_home_messages), showHomeMessages, onShowHomeMessagesChange)
+            AlbumSwitchRow(stringResource(R.string.album_show_standby_messages), showStandbyMessages, onShowStandbyMessagesChange)
         }
         Spacer(modifier = Modifier.height(12.dp))
         Row(verticalAlignment = Alignment.CenterVertically) {
             Spacer(modifier = Modifier.weight(1f))
             if (manageMode) {
                 Text(
-                    text = "已选 ${selectedMessageIds.size}",
+                    text = stringResource(R.string.files_selected_count, selectedMessageIds.size),
                     color = RaylinkTextPrimary,
                     fontSize = 15.sp,
                 )
@@ -595,25 +614,25 @@ private fun MessagePanel(
                     shape = RoundedCornerShape(18.dp),
                     modifier = Modifier.height(36.dp),
                 ) {
-                    Text("删除选中", color = RaylinkTextPrimary, fontSize = 14.sp)
+                    Text(stringResource(R.string.album_delete_selected), color = RaylinkTextPrimary, fontSize = 14.sp)
                 }
             } else {
                 Button(
-                    onClick = { onCleanupByRange("一周前") },
+                    onClick = { onCleanupByRange(MessageCleanupRange.Week) },
                     colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE84B5A)),
                     shape = RoundedCornerShape(18.dp),
                     modifier = Modifier.height(36.dp),
                 ) {
-                    Text("清理一周前", color = RaylinkTextPrimary, fontSize = 14.sp)
+                    Text(stringResource(R.string.album_cleanup_week), color = RaylinkTextPrimary, fontSize = 14.sp)
                 }
                 Spacer(modifier = Modifier.width(12.dp))
                 Button(
-                    onClick = { onCleanupByRange("一月前") },
+                    onClick = { onCleanupByRange(MessageCleanupRange.Month) },
                     colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE84B5A)),
                     shape = RoundedCornerShape(18.dp),
                     modifier = Modifier.height(36.dp),
                 ) {
-                    Text("清理一月前", color = RaylinkTextPrimary, fontSize = 14.sp)
+                    Text(stringResource(R.string.album_cleanup_month), color = RaylinkTextPrimary, fontSize = 14.sp)
                 }
             }
         }
@@ -721,12 +740,12 @@ private fun ConfirmDeleteDialog(
         },
         confirmButton = {
             TextButton(onClick = onConfirm) {
-                Text("确定删除", color = Color(0xFFFFD3D8), fontSize = 20.sp)
+                Text(stringResource(R.string.delete_probe_confirm), color = Color(0xFFFFD3D8), fontSize = 20.sp)
             }
         },
         dismissButton = {
             TextButton(onClick = onDismiss) {
-                Text("取消", color = Color(0xFFD6DCFF), fontSize = 20.sp)
+                Text(stringResource(R.string.action_cancel), color = Color(0xFFD6DCFF), fontSize = 20.sp)
             }
         },
         containerColor = Color(0xFF3946A1),
@@ -784,14 +803,16 @@ private fun decodeAlbumPreviewBitmap(context: android.content.Context, uriString
     }.getOrNull()
 }
 
+private enum class MessageCleanupRange { Week, Month }
+
 private fun deleteMessagesByRange(
     messages: List<AlbumMessage>,
-    selectedRange: String,
+    selectedRange: MessageCleanupRange,
 ): List<AlbumMessage> {
     val now = System.currentTimeMillis()
     val cutoff = when (selectedRange) {
-        "一月前" -> now - 30L * 24L * 60L * 60L * 1000L
-        else -> now - 7L * 24L * 60L * 60L * 1000L
+        MessageCleanupRange.Month -> now - 30L * 24L * 60L * 60L * 1000L
+        MessageCleanupRange.Week -> now - 7L * 24L * 60L * 60L * 1000L
     }
     return messages.filter { it.createdAtMillis >= cutoff }
 }

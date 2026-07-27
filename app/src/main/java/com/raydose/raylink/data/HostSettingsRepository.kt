@@ -60,7 +60,7 @@ class HostSettingsRepository(context: Context) {
             ?: return HostNetworkSettings()
         return HostNetworkSettings(
             hostDeviceId = o.optInt("hostDeviceId", 0x20),
-            hostDisplayName = o.optString("hostDisplayName", "Raylink 主机"),
+            hostDisplayName = o.optString("hostDisplayName", ""),
             ipAddress = o.optString("ipAddress", ""),
             wifiName = o.optString("wifiName").ifBlank { NetworkWifiDefaults.HOST_WIFI_NAME },
             wifiPassword = o.optString("wifiPassword").ifBlank { NetworkWifiDefaults.HOST_WIFI_PASSWORD },

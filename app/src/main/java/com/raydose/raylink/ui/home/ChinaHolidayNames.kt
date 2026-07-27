@@ -1,6 +1,9 @@
 package com.raydose.raylink.ui.home
 
+import android.content.res.Resources
 import android.icu.util.ChineseCalendar
+import androidx.annotation.StringRes
+import com.raydose.raylink.R
 import java.util.Calendar
 import java.util.Locale
 
@@ -11,11 +14,11 @@ import java.util.Locale
  * - 其余农历/公历固定节日按历法当日匹配
  */
 internal object ChinaHolidayNames {
-    fun nameFor(cal: Calendar): String? {
-        if (isLunarNewYearEve(cal)) return "除夕"
-        if (SolarTermCalculator.isQingmingDay(cal)) return "清明节"
-        lunarName(cal)?.let { return it }
-        return solarName(cal)
+    fun nameFor(cal: Calendar, resources: Resources): String? {
+        if (isLunarNewYearEve(cal)) return resources.getString(R.string.holiday_new_year_eve)
+        if (SolarTermCalculator.isQingmingDay(cal)) return resources.getString(R.string.holiday_qingming)
+        lunarName(cal)?.let { return resources.getString(it) }
+        return solarName(cal)?.let { resources.getString(it) }
     }
 
     /** 次日为正月初一 ⇒ 当日为除夕（含腊月小月廿九） */
@@ -33,7 +36,7 @@ internal object ChinaHolidayNames {
         }
     }
 
-    private fun solarName(cal: Calendar): String? {
+    private fun solarName(cal: Calendar): Int? {
         val key = String.format(
             Locale.US,
             "%02d-%02d",
@@ -43,7 +46,7 @@ internal object ChinaHolidayNames {
         return SOLAR[key]
     }
 
-    private fun lunarName(cal: Calendar): String? {
+    private fun lunarName(cal: Calendar): Int? {
         return try {
             val cc = ChineseCalendar(Locale.CHINA)
             cc.timeInMillis = cal.timeInMillis
@@ -57,34 +60,34 @@ internal object ChinaHolidayNames {
 
     /** 公历固定节日（不含清明） */
     private val SOLAR = mapOf(
-        "01-01" to "元旦",
-        "02-14" to "情人节",
-        "03-08" to "妇女节",
-        "03-12" to "植树节",
-        "04-01" to "愚人节",
-        "05-01" to "劳动节",
-        "05-04" to "青年节",
-        "06-01" to "儿童节",
-        "07-01" to "建党节",
-        "08-01" to "建军节",
-        "09-10" to "教师节",
-        "10-01" to "国庆节",
-        "12-24" to "平安夜",
-        "12-25" to "圣诞节",
+        "01-01" to R.string.holiday_new_year,
+        "02-14" to R.string.holiday_valentine,
+        "03-08" to R.string.holiday_womens_day,
+        "03-12" to R.string.holiday_arbor_day,
+        "04-01" to R.string.holiday_april_fools,
+        "05-01" to R.string.holiday_labor_day,
+        "05-04" to R.string.holiday_youth_day,
+        "06-01" to R.string.holiday_children_day,
+        "07-01" to R.string.holiday_party_day,
+        "08-01" to R.string.holiday_army_day,
+        "09-10" to R.string.holiday_teachers_day,
+        "10-01" to R.string.holiday_national_day,
+        "12-24" to R.string.holiday_christmas_eve,
+        "12-25" to R.string.holiday_christmas,
     )
 
     /** 农历节日（不含除夕） */
     private val LUNAR = mapOf(
-        "1-1" to "春节",
-        "1-15" to "元宵节",
-        "2-2" to "龙抬头",
-        "5-5" to "端午节",
-        "7-7" to "七夕节",
-        "7-15" to "中元节",
-        "8-15" to "中秋节",
-        "9-9" to "重阳节",
-        "12-8" to "腊八节",
-        "12-23" to "北方小年",
-        "12-24" to "南方小年",
+        "1-1" to R.string.holiday_spring_festival,
+        "1-15" to R.string.holiday_lantern,
+        "2-2" to R.string.holiday_dragon_head,
+        "5-5" to R.string.holiday_dragon_boat,
+        "7-7" to R.string.holiday_qixi,
+        "7-15" to R.string.holiday_ghost,
+        "8-15" to R.string.holiday_mid_autumn,
+        "9-9" to R.string.holiday_double_ninth,
+        "12-8" to R.string.holiday_laba,
+        "12-23" to R.string.holiday_north_minor_year,
+        "12-24" to R.string.holiday_south_minor_year,
     )
 }

@@ -6,12 +6,14 @@ package com.raydose.raylink.data
  * - 某阈值 正常→报警 →「辐射上限/下限报警」
  * - 全部报警解除 →「辐射报警解除」
  */
+enum class DoseAlarmLimit { Upper, Lower }
+
 class ProbeDoseAlarmLogAggregator(
-    private val onAlarmStarted: (timestampMillis: Long, probeName: String, labels: List<String>) -> Unit,
+    private val onAlarmStarted: (timestampMillis: Long, probeName: String, limits: List<DoseAlarmLimit>) -> Unit,
     private val onAlarmCleared: (timestampMillis: Long, probeName: String) -> Unit,
 ) {
     /** null = 尚未收到本连接周期内的 0x23 */
-    private val lastActive = mutableMapOf<String, Set<String>?>()
+    private val lastActive = mutableMapOf<String, Set<DoseAlarmLimit>?>()
 
     fun onProbeConnected(probeId: String) {
         lastActive[probeId] = null
@@ -30,7 +32,7 @@ class ProbeDoseAlarmLogAggregator(
     ) {
         if (alarmBit == null) return
 
-        val active = activeDoseAlarmLabels(alarmBit)
+        val active = activeDoseAlarmLimits(alarmBit)
         when (val prev = lastActive[probeId]) {
             null -> {
                 if (active.isNotEmpty()) {
@@ -50,8 +52,8 @@ class ProbeDoseAlarmLogAggregator(
         lastActive[probeId] = active
     }
 
-    private fun activeDoseAlarmLabels(alarmBit: Long): Set<String> = buildSet {
-        if ((alarmBit and 1L) != 0L) add("上限")
-        if ((alarmBit and 2L) != 0L) add("下限")
+    private fun activeDoseAlarmLimits(alarmBit: Long): Set<DoseAlarmLimit> = buildSet {
+        if ((alarmBit and 1L) != 0L) add(DoseAlarmLimit.Upper)
+        if ((alarmBit and 2L) != 0L) add(DoseAlarmLimit.Lower)
     }
 }

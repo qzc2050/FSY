@@ -14,10 +14,12 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.DialogProperties
+import com.raydose.raylink.R
 import com.raydose.raylink.ui.theme.RaylinkTextPrimary
 
 @Composable
@@ -35,7 +37,7 @@ fun MessageEditDialog(
         onDismissRequest = onDismiss,
         title = {
             Text(
-                text = if (isNew) "新增留言" else "编辑留言",
+                text = stringResource(if (isNew) R.string.message_add_title else R.string.message_edit_title),
                 color = RaylinkTextPrimary,
                 fontSize = 28.sp,
                 fontWeight = FontWeight.SemiBold,
@@ -47,7 +49,7 @@ fun MessageEditDialog(
                 onValueChange = { text = it },
                 minLines = 3,
                 maxLines = 5,
-                label = { Text("留言内容", fontSize = 20.sp) },
+                label = { Text(stringResource(R.string.message_content_label), fontSize = 20.sp) },
                 textStyle = androidx.compose.ui.text.TextStyle(
                     color = RaylinkTextPrimary,
                     fontSize = 22.sp,
@@ -70,12 +72,12 @@ fun MessageEditDialog(
         },
         confirmButton = {
             TextButton(onClick = { onConfirm(text) }) {
-                Text("保存", fontSize = 22.sp)
+                Text(stringResource(R.string.action_save), fontSize = 22.sp)
             }
         },
         dismissButton = {
             TextButton(onClick = onDismiss) {
-                Text("取消", color = Color(0xFFD6DCFF), fontSize = 22.sp)
+                Text(stringResource(R.string.action_cancel), color = Color(0xFFD6DCFF), fontSize = 22.sp)
             }
         },
         containerColor = dialogBackground,

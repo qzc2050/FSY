@@ -39,8 +39,10 @@ import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.raydose.raylink.R
 import com.raydose.raylink.model.AlertLogKind
 import com.raydose.raylink.model.DoorState
 import com.raydose.raylink.model.HomeUiState
@@ -53,6 +55,7 @@ import com.raydose.raylink.ui.components.DoorStatusChip
 import com.raydose.raylink.ui.components.GradientBackground
 import com.raydose.raylink.ui.components.HomeTopBar
 import com.raydose.raylink.ui.components.HostEnvScrollPanel
+import com.raydose.raylink.ui.localizeHostEnvLabel
 import com.raydose.raylink.ui.components.MessageTickerBar
 import com.raydose.raylink.ui.components.MessageEditDialog
 import com.raydose.raylink.ui.components.ProbePagerAutoScroll
@@ -177,6 +180,8 @@ fun HomeScreen(
     var tickerDisplayLine by remember { mutableStateOf("") }
     var showMessageList by remember { mutableStateOf(false) }
     var showAddMessageDialog by remember { mutableStateOf(false) }
+    val noMessagesText = stringResource(R.string.home_no_messages)
+    val noProbeText = stringResource(R.string.home_no_probe)
 
     LaunchedEffect(state.sideDrawerOpen) {
         drawerPanelState.isOpen = state.sideDrawerOpen
@@ -217,9 +222,9 @@ fun HomeScreen(
         paused = state.statusBarExpanded,
     )
 
-    LaunchedEffect(state.messages) {
+    LaunchedEffect(state.messages, noMessagesText) {
         tickerDisplayLine = state.messages.firstOrNull()?.text?.lineSequence()?.firstOrNull().orEmpty()
-            .ifBlank { if (state.messages.isEmpty()) "暂无留言" else "" }
+            .ifBlank { if (state.messages.isEmpty()) noMessagesText else "" }
     }
 
     LaunchedEffect(state.statusBarExpanded, state.messages) {
@@ -277,7 +282,9 @@ fun HomeScreen(
                             timeText = state.timeText,
                         )
                         HostEnvScrollPanel(
-                            readings = state.hostEnvReadings.map { it.label to it.value },
+                            readings = state.hostEnvReadings.map {
+                                localizeHostEnvLabel(it.label) to it.value
+                            },
                             autoScroll = autoScroll,
                         )
                     }
@@ -330,7 +337,7 @@ fun HomeScreen(
                         ) {
                             if (state.slaveProbes.isEmpty()) {
                                 SlaveProbeCard(
-                                    probe = SlaveProbeUi(id = "0", name = "暂无探头", isOnline = false),
+                                    probe = SlaveProbeUi(id = "0", name = noProbeText, isOnline = false),
                                     onDetailClick = {},
                                     modifier = Modifier.fillMaxSize(),
                                 )
@@ -380,7 +387,7 @@ fun HomeScreen(
                             )
                             MessageTickerBar(
                                 messageTextAt = { idx ->
-                                    state.messages.getOrNull(idx)?.text ?: "暂无留言"
+                                    state.messages.getOrNull(idx)?.text ?: noMessagesText
                                 },
                                 messageCount = state.messages.size,
                                 animateMessageChange = autoScroll && state.messages.size > 1,

@@ -3,10 +3,10 @@ package com.raydose.raylink.model
 import android.net.Uri
 import java.util.Locale
 
-enum class MusicPlayMode(val label: String) {
-    LIST_LOOP("列表循环"),
-    SINGLE_LOOP("单曲循环"),
-    SHUFFLE("随机播放");
+enum class MusicPlayMode {
+    LIST_LOOP,
+    SINGLE_LOOP,
+    SHUFFLE;
 
     fun next(): MusicPlayMode = entries[(ordinal + 1) % entries.size]
 }

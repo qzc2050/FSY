@@ -12,10 +12,12 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
+import com.raydose.raylink.R
 import com.raydose.raylink.ui.theme.RaylinkAccentBlue
 import com.raydose.raylink.ui.theme.RaylinkSettingsEditorPanel
 import com.raydose.raylink.ui.theme.RaylinkTextPrimary
@@ -27,9 +29,12 @@ fun ZjbFirmwareConfirmDialog(
     sizeBytes: Long,
     onDismiss: () -> Unit,
     onConfirm: () -> Unit,
-    title: String = "确认升级转接板固件？",
-    hint: String = "升级完成后转接板将自动重启，请稍候再查看硬件版本。",
+    title: String? = null,
+    hint: String? = null,
 ) {
+    val resolvedTitle = title ?: stringResource(R.string.zjb_fw_confirm_title)
+    val resolvedHint = hint ?: stringResource(R.string.zjb_fw_confirm_hint)
+
     Dialog(onDismissRequest = onDismiss) {
         Column(
             modifier = Modifier
@@ -39,25 +44,25 @@ fun ZjbFirmwareConfirmDialog(
                 .padding(24.dp),
         ) {
             Text(
-                text = title,
+                text = resolvedTitle,
                 color = RaylinkTextPrimary,
                 fontSize = 22.sp,
                 fontWeight = FontWeight.SemiBold,
             )
             Text(
-                text = "文件：$fileName",
+                text = stringResource(R.string.zjb_fw_file_label, fileName),
                 color = RaylinkTextSecondary,
                 fontSize = 17.sp,
                 modifier = Modifier.padding(top = 12.dp),
             )
             Text(
-                text = "大小：${formatFirmwareSize(sizeBytes)}",
+                text = stringResource(R.string.zjb_fw_size_label, formatFirmwareSize(sizeBytes)),
                 color = RaylinkTextSecondary,
                 fontSize = 17.sp,
                 modifier = Modifier.padding(top = 6.dp),
             )
             Text(
-                text = hint,
+                text = resolvedHint,
                 color = RaylinkTextSecondary,
                 fontSize = 16.sp,
                 modifier = Modifier.padding(top = 10.dp),
@@ -69,10 +74,10 @@ fun ZjbFirmwareConfirmDialog(
                 horizontalArrangement = Arrangement.End,
             ) {
                 TextButton(onClick = onDismiss) {
-                    Text("取消", color = RaylinkTextPrimary, fontSize = 17.sp)
+                    Text(stringResource(R.string.action_cancel), color = RaylinkTextPrimary, fontSize = 17.sp)
                 }
                 TextButton(onClick = onConfirm) {
-                    Text("确认升级", color = RaylinkAccentBlue, fontSize = 17.sp)
+                    Text(stringResource(R.string.zjb_fw_confirm_action), color = RaylinkAccentBlue, fontSize = 17.sp)
                 }
             }
         }

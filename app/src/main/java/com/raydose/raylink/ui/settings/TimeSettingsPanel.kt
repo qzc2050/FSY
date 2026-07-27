@@ -10,14 +10,16 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.raydose.raylink.R
 import com.raydose.raylink.model.TimeSettings
 import com.raydose.raylink.ui.theme.RaylinkTextPrimary
 
 private val TimeLabelSp = 20.sp
-private val TimeLabelWidth = 176.dp
+private val TimeLabelWidth = 220.dp
 /** 日期/时间数值字号（标签样式见 [TimeLabelSp]） */
 private val TimeValueFontSize = 26.sp
 
@@ -44,8 +46,14 @@ fun TimeSettingsPanel(
                     SettingsFormRowSpacing,
                 ),
             ) {
-                TimeDateValueRow(label = "日期", value = datePart)
-                TimeDateValueRow(label = "时间", value = timePart)
+                TimeDateValueRow(
+                    label = stringResource(R.string.time_label_date),
+                    value = datePart,
+                )
+                TimeDateValueRow(
+                    label = stringResource(R.string.time_label_time),
+                    value = timePart,
+                )
             }
             Box(modifier = Modifier.matchParentSize()) {
                 Box(
@@ -56,7 +64,7 @@ fun TimeSettingsPanel(
                     contentAlignment = Alignment.Center,
                 ) {
                     SettingsInlineActionButton(
-                        text = "同步到设备",
+                        text = stringResource(R.string.time_sync_to_device),
                         onClick = onSyncToDevice,
                         filled = true,
                     )
@@ -64,7 +72,7 @@ fun TimeSettingsPanel(
             }
         }
         SettingsSwitchRow(
-            label = "自动同步到探头",
+            label = stringResource(R.string.time_auto_sync_probe),
             checked = settings.autoSyncToProbe,
             onCheckedChange = { onChange(settings.copy(autoSyncToProbe = it)) },
             labelFontSize = TimeLabelSp,
@@ -73,7 +81,7 @@ fun TimeSettingsPanel(
             enlargedSwitch = true,
         )
         SettingsSwitchRow(
-            label = "24 小时制",
+            label = stringResource(R.string.time_24h_format),
             checked = settings.use24Hour,
             onCheckedChange = { onChange(settings.copy(use24Hour = it)) },
             labelFontSize = TimeLabelSp,
@@ -82,7 +90,7 @@ fun TimeSettingsPanel(
             enlargedSwitch = true,
         )
         SettingsSwitchRow(
-            label = "农历显示",
+            label = stringResource(R.string.time_show_lunar),
             checked = settings.showLunar,
             onCheckedChange = { onChange(settings.copy(showLunar = it)) },
             labelFontSize = TimeLabelSp,
@@ -91,7 +99,7 @@ fun TimeSettingsPanel(
             enlargedSwitch = true,
         )
         SettingsSwitchRow(
-            label = "公历显示",
+            label = stringResource(R.string.time_show_gregorian),
             checked = settings.showGregorian,
             onCheckedChange = { onChange(settings.copy(showGregorian = it)) },
             labelFontSize = TimeLabelSp,
@@ -100,7 +108,7 @@ fun TimeSettingsPanel(
             enlargedSwitch = true,
         )
         SettingsSwitchRow(
-            label = "节假日显示",
+            label = stringResource(R.string.time_show_holidays),
             checked = settings.showHoliday,
             onCheckedChange = { onChange(settings.copy(showHoliday = it)) },
             labelFontSize = TimeLabelSp,

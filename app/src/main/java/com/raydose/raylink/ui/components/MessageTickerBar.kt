@@ -30,6 +30,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.rememberTextMeasurer
@@ -37,6 +38,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.raydose.raylink.R
 import com.raydose.raylink.ui.theme.RaylinkMessageBar
 import com.raydose.raylink.ui.theme.RaylinkTextPrimary
 import com.raydose.raylink.ui.theme.RaylinkTextSecondary
@@ -76,7 +78,7 @@ fun MessageTickerBar(
     ) {
         Icon(
             imageVector = Icons.Outlined.Edit,
-            contentDescription = "添加留言",
+            contentDescription = stringResource(R.string.cd_add_message),
             tint = RaylinkTextPrimary,
             modifier = Modifier
                 .size(24.dp)

@@ -8,12 +8,14 @@ import android.media.MediaPlayer
 import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.raydose.raylink.R
 import com.raydose.raylink.data.FileManagerRepository
 import com.raydose.raylink.data.MusicRepository
 import com.raydose.raylink.model.FileStorageLocation
 import com.raydose.raylink.model.MusicPlayMode
 import com.raydose.raylink.model.MusicTrack
 import com.raydose.raylink.model.MusicUiState
+import com.raydose.raylink.ui.tr
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -24,6 +26,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 class MusicViewModel(application: Application) : AndroidViewModel(application) {
+    private val app get() = getApplication<Application>()
     private val repository = MusicRepository(application)
     private val audioManager = application.getSystemService(Context.AUDIO_SERVICE) as AudioManager
     private var player: MediaPlayer? = null
@@ -58,7 +61,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             _uiState.update {
                 it.copy(
                     isLoading = false,
-                    message = "需要授予音乐读取权限后才能扫描本机和 U 盘音乐",
+                    message = app.tr(R.string.music_need_permission),
                 )
             }
             return
@@ -79,7 +82,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                     tracks = tracks,
                     currentIndex = if (tracks.isEmpty()) -1 else restoredIndex,
                     isLoading = false,
-                    message = if (tracks.isEmpty()) "未找到音乐文件，请将音频放入 Music 目录或插入 U 盘" else null,
+                    message = if (tracks.isEmpty()) app.tr(R.string.music_scan_empty_hint) else null,
                     volume = readSystemVolume(),
                 )
             }
@@ -139,9 +142,10 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                     isImporting = false,
                     showImportDialog = false,
                     message = when {
-                        importResult.failedCount == 0 -> "已导入 ${importResult.successCount} 首歌曲到 Music 文件夹"
-                        importResult.successCount == 0 -> "导入失败，请检查文件是否可读"
-                        else -> "成功 ${importResult.successCount} 首，失败 ${importResult.failedCount} 首"
+                        importResult.failedCount == 0 ->
+                            app.tr(R.string.music_import_all_success, importResult.successCount)
+                        importResult.successCount == 0 -> app.tr(R.string.music_import_all_failed)
+                        else -> app.tr(R.string.music_import_partial, importResult.successCount, importResult.failedCount)
                     },
                 )
             }
@@ -211,7 +215,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, (safe * max).toInt().coerceIn(0, max), 0)
             _uiState.update { it.copy(volume = readSystemVolume()) }
         }.onFailure {
-            _uiState.update { it.copy(message = "系统音量调节失败") }
+            _uiState.update { it.copy(message = app.tr(R.string.hint_system_volume_failed)) }
             Log.w(TAG, "系统音量调节失败", it)
         }
     }
@@ -256,7 +260,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                 handleTrackCompletion()
             }
             setOnErrorListener { _, what, extra ->
-                _uiState.update { it.copy(isPlaying = false, message = "音乐播放失败：$what/$extra") }
+                _uiState.update { it.copy(isPlaying = false, message = app.tr(R.string.music_play_failed_code, what, extra)) }
                 true
             }
         }
@@ -271,7 +275,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         }.onFailure {
             releasePlayer()
             _uiState.update { state ->
-                state.copy(isPlaying = false, message = "无法播放：${track.title}")
+                state.copy(isPlaying = false, message = app.tr(R.string.music_cannot_play, track.title))
             }
             Log.w(TAG, "准备播放失败 uri=${track.uri}", it)
         }

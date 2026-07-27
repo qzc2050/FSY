@@ -35,6 +35,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
@@ -259,16 +260,16 @@ private fun SideDrawerPanelContent(
             verticalArrangement = Arrangement.spacedBy(if (compactDrawer) 4.dp else 8.dp, Alignment.CenterVertically),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            DrawerItem(R.drawable.ic_sidebar_music, "音乐播放", iconSize, labelSp, itemVPad) {
+            DrawerItem(R.drawable.ic_sidebar_music, stringResource(R.string.drawer_music), iconSize, labelSp, itemVPad) {
                 onDestinationClick(SideDrawerDestination.Music)
             }
-            DrawerItem(R.drawable.ic_sidebar_album, "电子相册", iconSize, labelSp, itemVPad) {
+            DrawerItem(R.drawable.ic_sidebar_album, stringResource(R.string.drawer_album), iconSize, labelSp, itemVPad) {
                 onDestinationClick(SideDrawerDestination.Album)
             }
-            DrawerItem(R.drawable.ic_sidebar_folder, "本地文件", iconSize, labelSp, itemVPad) {
+            DrawerItem(R.drawable.ic_sidebar_folder, stringResource(R.string.drawer_files), iconSize, labelSp, itemVPad) {
                 onDestinationClick(SideDrawerDestination.Files)
             }
-            DrawerItem(R.drawable.ic_sidebar_settings, "系统设置", iconSize, labelSp, itemVPad) {
+            DrawerItem(R.drawable.ic_sidebar_settings, stringResource(R.string.drawer_settings), iconSize, labelSp, itemVPad) {
                 onDestinationClick(SideDrawerDestination.Settings)
             }
         }

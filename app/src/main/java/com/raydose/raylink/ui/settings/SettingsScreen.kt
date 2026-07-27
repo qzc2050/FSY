@@ -15,7 +15,11 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import com.raydose.raylink.R
+import com.raydose.raylink.ui.tr
 import androidx.compose.ui.unit.sp
 import com.raydose.raylink.model.DiscoveredDevice
 import com.raydose.raylink.data.FileManagerRepository
@@ -67,11 +71,11 @@ fun SettingsScreen(
     onFetchHostWifi: (
         (success: Boolean, message: String, wifiName: String?, wifiPassword: String?) -> Unit
     ) -> Unit = {},
-    onFetchSlaveWifi: (
+    onFetchSlaveWifi: ((
         deviceId: Int,
         slaveIp: String,
         onDone: (success: Boolean, message: String, wifiName: String?, wifiPassword: String?) -> Unit,
-    ) -> Unit = { _, _, onDone -> onDone(false, "未实现从机获取", null, null) },
+    ) -> Unit)? = null,
     onTimeSettingsChange: (TimeSettings) -> Unit,
     onSyncTimeToDevice: () -> Unit,
     onAddClick: () -> Unit,
@@ -95,6 +99,12 @@ fun SettingsScreen(
     ) -> Result<Unit>,
     onSaveHostSerial: (String) -> Unit = {},
 ) {
+    val context = LocalContext.current
+    val resolvedFetchSlaveWifi = onFetchSlaveWifi ?: { _, _, onDone ->
+        onDone(false, context.tr(R.string.settings_slave_fetch_not_impl), null, null)
+    }
+    val probeFallbackName = stringResource(R.string.settings_probe_fallback_name)
+
     Box(modifier = Modifier.fillMaxSize()) {
         BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
             val summaryHeight = maxHeight * ScreenSpec.SETTINGS_PROBE_SUMMARY_HEIGHT_FRACTION
@@ -163,7 +173,7 @@ fun SettingsScreen(
                                     onSaveHost = onCommitHostNetwork,
                                     onSaveSlave = onCommitSlaveNetwork,
                                     onFetchHostWifi = onFetchHostWifi,
-                                    onFetchSlaveWifi = onFetchSlaveWifi,
+                                    onFetchSlaveWifi = resolvedFetchSlaveWifi,
                                     modifier = Modifier.weight(1f),
                                 )
                                 SettingsTab.Time -> TimeSettingsPanel(
@@ -225,7 +235,7 @@ fun SettingsScreen(
             )
         }
         deleteConfirmProbeIndex?.let { index ->
-            val name = manageDrafts.getOrNull(index)?.displayName ?: "该探头"
+            val name = manageDrafts.getOrNull(index)?.displayName ?: probeFallbackName
             DeleteProbeConfirmDialog(
                 probeName = name,
                 onDismiss = onDismissDeleteConfirm,

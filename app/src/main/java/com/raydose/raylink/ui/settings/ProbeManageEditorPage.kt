@@ -34,6 +34,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.res.stringResource
+import com.raydose.raylink.R
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.graphicsLayer
@@ -50,7 +52,7 @@ import com.raydose.raylink.ui.theme.RaylinkTextSecondary
 import com.raydose.raylink.ui.theme.TabletFormFactor
 import com.raydose.raylink.ui.theme.rememberTabletFormFactor
 
-private val FormLabelWidth = 108.dp
+private val FormLabelWidth = 148.dp
 private val FormRowSpacing = 14.dp
 private val FormColumnGap = 28.dp
 private val FieldTextColor = Color(0xFF1E2433)
@@ -94,7 +96,7 @@ fun ProbeManageEditorPage(
         ) {
             TextButton(onClick = onDataDetailClick) {
                 Text(
-                    text = "数据详情",
+                    text = stringResource(R.string.probe_section_data_details),
                     color = RaylinkAccentBlue,
                     fontSize = FormDataDetailSp,
                 )
@@ -107,10 +109,10 @@ fun ProbeManageEditorPage(
         ProbeFormGridRow(
             gap = columnGap,
             left = {
-                ProbeInfoLabelCell(label = "型号", value = draft.savedProbe.model)
+                ProbeInfoLabelCell(label = stringResource(R.string.probe_label_model), value = draft.savedProbe.model)
             },
             right = {
-                ProbeInfoLabelCell(label = "序列号", value = draft.savedProbe.serial)
+                ProbeInfoLabelCell(label = stringResource(R.string.probe_label_serial), value = draft.savedProbe.serial)
             },
         )
 
@@ -119,10 +121,10 @@ fun ProbeManageEditorPage(
         ProbeFormGridRow(
             gap = columnGap,
             left = {
-                ProbeInfoLabelCell(label = "IP 地址", value = draft.ip)
+                ProbeInfoLabelCell(label = stringResource(R.string.network_label_ip), value = draft.ip)
             },
             right = {
-                ProbeInfoLabelCell(label = "设备 ID", value = draft.protoAddr)
+                ProbeInfoLabelCell(label = stringResource(R.string.network_label_device_id), value = draft.protoAddr)
             },
         )
 
@@ -132,7 +134,7 @@ fun ProbeManageEditorPage(
             gap = columnGap,
             left = {
                 ProbeInfoLabelCell(
-                    label = "软件版本",
+                    label = stringResource(R.string.probe_label_software_version),
                     value = draft.softwareVersion.ifBlank { "—" },
                 )
             },
@@ -145,7 +147,7 @@ fun ProbeManageEditorPage(
                     contentAlignment = Alignment.CenterStart,
                 ) {
                     SettingsInlineActionButton(
-                        text = "更新",
+                        text = stringResource(R.string.action_update),
                         onClick = onFirmwareUpdateClick,
                         filled = true,
                         enabled = draft.isTcpOnline,
@@ -160,14 +162,14 @@ fun ProbeManageEditorPage(
             gap = columnGap,
             left = {
                 ProbeLabeledFieldCell(
-                    label = "从机名称",
+                    label = stringResource(R.string.probe_label_slave_name),
                     value = draft.displayName,
                     onValueChange = { onDraftChange(draft.withDisplayName(it)) },
                 )
             },
             right = {
                 ToggleCell(
-                    label = "从机屏幕",
+                    label = stringResource(R.string.probe_label_slave_screen),
                     checked = draft.slaveScreenOn,
                     onCheckedChange = { onDraftChange(draft.copy(slaveScreenOn = it)) },
                     contentAlignment = Alignment.CenterStart,
@@ -182,14 +184,14 @@ fun ProbeManageEditorPage(
             gap = columnGap,
             left = {
                 ProbeLabeledFieldCell(
-                    label = "从机位置",
+                    label = stringResource(R.string.probe_label_slave_location),
                     value = draft.location,
                     onValueChange = { onDraftChange(draft.withLocation(it)) },
                 )
             },
             right = {
                 ToggleCell(
-                    label = "报警灯光",
+                    label = stringResource(R.string.probe_label_alarm_light),
                     checked = draft.alarmLightOn,
                     onCheckedChange = { onDraftChange(draft.copy(alarmLightOn = it)) },
                     contentAlignment = Alignment.CenterStart,
@@ -201,7 +203,7 @@ fun ProbeManageEditorPage(
         Spacer(modifier = Modifier.height(rowSpacing))
 
         ProbeThresholdAlarmRow(
-            thresholdLabel = "报警上限值",
+            thresholdLabel = stringResource(R.string.probe_threshold_upper),
             value = draft.doseUpperUsv,
             onValueChange = { onDraftChange(draft.copy(doseUpperUsv = it)) },
             alarmOn = draft.radiationUpperAlarmOn,
@@ -212,7 +214,7 @@ fun ProbeManageEditorPage(
         Spacer(modifier = Modifier.height(rowSpacing))
 
         ProbeThresholdAlarmRow(
-            thresholdLabel = "报警下限值",
+            thresholdLabel = stringResource(R.string.probe_threshold_lower),
             value = draft.doseLowerUsv,
             onValueChange = { onDraftChange(draft.copy(doseLowerUsv = it)) },
             alarmOn = draft.radiationLowerAlarmOn,
@@ -250,7 +252,7 @@ fun ProbeManageEditorPage(
                         ) {
                             Icon(
                                 imageVector = Icons.Outlined.Delete,
-                                contentDescription = "删除探头",
+                                contentDescription = stringResource(R.string.cd_delete_probe),
                                 tint = if (deleteEnabled) {
                                     RaylinkDoorOpen
                                 } else {
@@ -260,7 +262,11 @@ fun ProbeManageEditorPage(
                             )
                         }
                         Text(
-                            text = if (deleteEnabled) "删除探头" else "在线不可删",
+                            text = if (deleteEnabled) {
+                                stringResource(R.string.probe_delete)
+                            } else {
+                                stringResource(R.string.probe_delete_online_blocked)
+                            },
                             color = if (deleteEnabled) {
                                 RaylinkDoorOpen
                             } else {
@@ -321,7 +327,11 @@ private fun ProbeFormGridRightSlot(
 @Composable
 fun ExternalAlarmBadge(connected: Boolean) {
     Text(
-        text = if (connected) "外置报警 已连接" else "外置报警 未连接",
+        text = if (connected) {
+            stringResource(R.string.probe_ext_alarm_connected)
+        } else {
+            stringResource(R.string.probe_ext_alarm_disconnected)
+        },
         color = if (connected) RaylinkAccentBlue else RaylinkTextSecondary,
         fontSize = FormActionSp,
         modifier = Modifier
@@ -381,6 +391,7 @@ private fun ProbeThresholdAlarmRow(
     onAlarmChange: (Boolean) -> Unit,
     trailingHalf: (@Composable () -> Unit)?,
 ) {
+    val alarmLabel = stringResource(R.string.probe_label_alarm)
     if (trailingHalf == null) {
         ProbeFormGridRow(
             gap = FormColumnGap,
@@ -393,7 +404,7 @@ private fun ProbeThresholdAlarmRow(
             },
             right = {
                 ToggleCell(
-                    label = "报警",
+                    label = alarmLabel,
                     checked = alarmOn,
                     onCheckedChange = onAlarmChange,
                     contentAlignment = Alignment.CenterStart,
@@ -427,7 +438,7 @@ private fun ProbeThresholdAlarmRow(
             contentAlignment = Alignment.CenterStart,
         ) {
             ToggleCell(
-                label = "报警",
+                label = alarmLabel,
                 checked = alarmOn,
                 onCheckedChange = onAlarmChange,
                 contentAlignment = Alignment.CenterStart,
@@ -464,7 +475,7 @@ private fun ThresholdValueCell(
                 .padding(end = 6.dp),
         )
         Text(
-            text = "μSv/h",
+            text = stringResource(R.string.unit_usv_per_hour),
             color = RaylinkTextSecondary,
             fontSize = FormUnitSp,
             modifier = Modifier.padding(start = 2.dp),
@@ -540,7 +551,7 @@ private fun VolumeCell(
         modifier = Modifier.fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        FormLabel(text = "报警音量")
+        FormLabel(text = stringResource(R.string.probe_label_alarm_volume))
         RaylinkSlider(
             value = volume,
             onValueChange = onVolumeChange,

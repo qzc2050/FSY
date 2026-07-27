@@ -57,7 +57,9 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
+import com.raydose.raylink.R
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.Dp
@@ -70,8 +72,8 @@ import com.raydose.raylink.ui.theme.RaylinkSettingsEditorPanel
 import com.raydose.raylink.ui.theme.RaylinkTextPrimary
 import com.raydose.raylink.ui.theme.RaylinkTextSecondary
 
-internal val SettingsFormLabelWidth = 140.dp
-internal val SettingsFormLabelWidthCompact = 120.dp
+internal val SettingsFormLabelWidth = 168.dp
+internal val SettingsFormLabelWidthCompact = 148.dp
 internal val SettingsFormRowSpacing = 12.dp
 /** 标签右侧编辑区占行宽比例（网络信息等页输入框半宽） */
 internal val SettingsFieldAreaFraction = 0.5f
@@ -252,7 +254,7 @@ internal fun SettingsInlineSaveButton(
         modifier = modifier,
         colors = ButtonDefaults.buttonColors(containerColor = RaylinkAccentBlue),
     ) {
-        Text("保存", fontSize = 16.sp, color = RaylinkTextPrimary)
+        Text(stringResource(R.string.action_save), fontSize = 16.sp, color = RaylinkTextPrimary)
     }
 }
 
@@ -344,7 +346,7 @@ fun SettingsPanelScaffold(
                     enabled = saveEnabled,
                     colors = ButtonDefaults.buttonColors(containerColor = RaylinkAccentBlue),
                 ) {
-                    Text("保存", fontSize = 17.sp, color = RaylinkTextPrimary)
+                    Text(stringResource(R.string.action_save), fontSize = 17.sp, color = RaylinkTextPrimary)
                 }
             }
         }
@@ -367,9 +369,10 @@ internal fun SettingsSectionHeaderRow(
     title: String,
     titleFontSize: TextUnit = 20.sp,
     onActionClick: (() -> Unit)? = null,
-    actionText: String = "编辑",
+    actionText: String? = null,
     actionFontSize: TextUnit = 17.sp,
 ) {
+    val resolvedActionText = actionText ?: stringResource(R.string.action_edit)
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -385,7 +388,7 @@ internal fun SettingsSectionHeaderRow(
         )
         if (onActionClick != null) {
             SettingsInlineActionButton(
-                text = actionText,
+                text = resolvedActionText,
                 onClick = onActionClick,
                 filled = true,
                 modifier = Modifier.defaultMinSize(minWidth = 88.dp, minHeight = 44.dp),
@@ -842,7 +845,11 @@ internal fun SettingsValueField(
             ) {
                 Icon(
                     imageVector = if (passwordVisible) Icons.Outlined.VisibilityOff else Icons.Outlined.Visibility,
-                    contentDescription = if (passwordVisible) "隐藏密码" else "显示密码",
+                    contentDescription = if (passwordVisible) {
+                        stringResource(R.string.cd_hide_password)
+                    } else {
+                        stringResource(R.string.cd_show_password)
+                    },
                     tint = RaylinkAccentBlue,
                     modifier = Modifier.size(22.dp),
                 )

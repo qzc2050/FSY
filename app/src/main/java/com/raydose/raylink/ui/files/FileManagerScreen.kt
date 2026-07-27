@@ -45,15 +45,18 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.raydose.raylink.R
 import com.raydose.raylink.model.FileListItem
 import com.raydose.raylink.model.FileStorageLocation
 import com.raydose.raylink.model.PendingFileTransfer
 import com.raydose.raylink.model.SlaveProbeUi
 import com.raydose.raylink.ui.components.CompactRadiationHeader
+import com.raydose.raylink.ui.labelText
 import com.raydose.raylink.ui.theme.RaylinkAccentBlue
 import com.raydose.raylink.ui.theme.RaylinkAtmosphereBackgroundBrush
 import com.raydose.raylink.ui.theme.RaylinkAtmospherePlayerOverlay
@@ -153,10 +156,10 @@ fun FileManagerScreen(
     deleteTarget?.let { item ->
         AlertDialog(
             onDismissRequest = { deleteTarget = null },
-            title = { Text("删除确认", color = RaylinkTextPrimary) },
+            title = { Text(stringResource(R.string.dialog_delete_confirm_title), color = RaylinkTextPrimary) },
             text = {
                 Text(
-                    text = "确定删除 ${item.name} 吗？",
+                    text = stringResource(R.string.dialog_delete_one, item.name),
                     color = RaylinkTextSecondary,
                 )
             },
@@ -166,11 +169,11 @@ fun FileManagerScreen(
                         viewModel.deleteItem(item)
                         deleteTarget = null
                     },
-                ) { Text("删除", color = Color(0xFFFF6B6B)) }
+                ) { Text(stringResource(R.string.action_delete), color = Color(0xFFFF6B6B)) }
             },
             dismissButton = {
                 TextButton(onClick = { deleteTarget = null }) {
-                    Text("取消", color = RaylinkTextSecondary)
+                    Text(stringResource(R.string.action_cancel), color = RaylinkTextSecondary)
                 }
             },
             containerColor = Color(0xFF1B2233),
@@ -180,13 +183,13 @@ fun FileManagerScreen(
     createFolderName?.let { input ->
         AlertDialog(
             onDismissRequest = { createFolderName = null },
-            title = { Text("新建文件夹", color = RaylinkTextPrimary) },
+            title = { Text(stringResource(R.string.dialog_new_folder_title), color = RaylinkTextPrimary) },
             text = {
                 OutlinedTextField(
                     value = input,
                     onValueChange = { createFolderName = it },
                     singleLine = true,
-                    label = { Text("文件夹名称") },
+                    label = { Text(stringResource(R.string.dialog_folder_name_label)) },
                     colors = OutlinedTextFieldDefaults.colors(
                         focusedTextColor = RaylinkTextPrimary,
                         unfocusedTextColor = RaylinkTextPrimary,
@@ -204,11 +207,11 @@ fun FileManagerScreen(
                         viewModel.createFolder(input)
                         createFolderName = null
                     },
-                ) { Text("确定", color = RaylinkAccentBlue) }
+                ) { Text(stringResource(R.string.action_confirm), color = RaylinkAccentBlue) }
             },
             dismissButton = {
                 TextButton(onClick = { createFolderName = null }) {
-                    Text("取消", color = RaylinkTextSecondary)
+                    Text(stringResource(R.string.action_cancel), color = RaylinkTextSecondary)
                 }
             },
             containerColor = Color(0xFF1B2233),
@@ -218,13 +221,13 @@ fun FileManagerScreen(
     renameTarget?.let { item ->
         AlertDialog(
             onDismissRequest = { renameTarget = null },
-            title = { Text("重命名", color = RaylinkTextPrimary) },
+            title = { Text(stringResource(R.string.dialog_rename_title), color = RaylinkTextPrimary) },
             text = {
                 OutlinedTextField(
                     value = renameInput,
                     onValueChange = { renameInput = it },
                     singleLine = true,
-                    label = { Text("新名称") },
+                    label = { Text(stringResource(R.string.dialog_new_name_label)) },
                     colors = OutlinedTextFieldDefaults.colors(
                         focusedTextColor = RaylinkTextPrimary,
                         unfocusedTextColor = RaylinkTextPrimary,
@@ -242,11 +245,11 @@ fun FileManagerScreen(
                         viewModel.renameItem(item, renameInput)
                         renameTarget = null
                     },
-                ) { Text("确定", color = RaylinkAccentBlue) }
+                ) { Text(stringResource(R.string.action_confirm), color = RaylinkAccentBlue) }
             },
             dismissButton = {
                 TextButton(onClick = { renameTarget = null }) {
-                    Text("取消", color = RaylinkTextSecondary)
+                    Text(stringResource(R.string.action_cancel), color = RaylinkTextSecondary)
                 }
             },
             containerColor = Color(0xFF1B2233),
@@ -256,10 +259,10 @@ fun FileManagerScreen(
     if (deleteSelectedPending) {
         AlertDialog(
             onDismissRequest = { deleteSelectedPending = false },
-            title = { Text("批量删除确认", color = RaylinkTextPrimary) },
+            title = { Text(stringResource(R.string.dialog_batch_delete_title), color = RaylinkTextPrimary) },
             text = {
                 Text(
-                    text = "确定删除选中的 ${state.selectedCount} 项吗？",
+                    text = stringResource(R.string.dialog_batch_delete_message, state.selectedCount),
                     color = RaylinkTextSecondary,
                 )
             },
@@ -269,11 +272,11 @@ fun FileManagerScreen(
                         viewModel.deleteSelectedItems()
                         deleteSelectedPending = false
                     },
-                ) { Text("删除", color = Color(0xFFFF6B6B)) }
+                ) { Text(stringResource(R.string.action_delete), color = Color(0xFFFF6B6B)) }
             },
             dismissButton = {
                 TextButton(onClick = { deleteSelectedPending = false }) {
-                    Text("取消", color = RaylinkTextSecondary)
+                    Text(stringResource(R.string.action_cancel), color = RaylinkTextSecondary)
                 }
             },
             containerColor = Color(0xFF1B2233),
@@ -318,20 +321,20 @@ private fun FileManagerToolBar(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
-                text = "文件管理",
+                text = stringResource(R.string.files_title),
                 color = RaylinkTextPrimary,
                 fontSize = 36.sp,
                 fontWeight = FontWeight.SemiBold,
             )
             Spacer(modifier = Modifier.width(16.dp))
             StorageTab(
-                text = FileStorageLocation.Local.label,
+                text = FileStorageLocation.Local.labelText(),
                 selected = storage == FileStorageLocation.Local,
                 onClick = { onStorageChange(FileStorageLocation.Local) },
             )
             Spacer(modifier = Modifier.width(8.dp))
             StorageTab(
-                text = FileStorageLocation.Usb.label,
+                text = FileStorageLocation.Usb.labelText(),
                 selected = storage == FileStorageLocation.Usb,
                 onClick = { onStorageChange(FileStorageLocation.Usb) },
             )
@@ -339,7 +342,7 @@ private fun FileManagerToolBar(
             OutlinedTextField(
                 value = searchQuery,
                 onValueChange = onSearchQueryChange,
-                placeholder = { Text("搜索（含子文件夹）") },
+                placeholder = { Text(stringResource(R.string.files_search_placeholder)) },
                 singleLine = true,
                 colors = OutlinedTextFieldDefaults.colors(
                     focusedTextColor = RaylinkTextPrimary,
@@ -353,17 +356,17 @@ private fun FileManagerToolBar(
             )
             Spacer(modifier = Modifier.width(12.dp))
             if (!selectionMode) {
-                ToolButton(text = "新建文件夹", onClick = onCreateFolderClick)
+                ToolButton(text = stringResource(R.string.files_new_folder), onClick = onCreateFolderClick)
             }
             if (pendingTransfer != null && !selectionMode) {
                 Spacer(modifier = Modifier.width(8.dp))
-                ToolButton(text = "粘贴", onClick = onPasteClick)
+                ToolButton(text = stringResource(R.string.action_paste), onClick = onPasteClick)
                 Spacer(modifier = Modifier.width(8.dp))
-                ToolButton(text = "清空", onClick = onClearClipboardClick)
+                ToolButton(text = stringResource(R.string.action_clear), onClick = onClearClipboardClick)
             }
             if (storage == FileStorageLocation.Usb && requiresUsbAccess && !selectionMode) {
                 Spacer(modifier = Modifier.width(8.dp))
-                ToolButton(text = "授权U盘", onClick = onRequestUsbAccess)
+                ToolButton(text = stringResource(R.string.files_grant_usb), onClick = onRequestUsbAccess)
             }
             Spacer(modifier = Modifier.weight(1f))
             Text(
@@ -381,28 +384,36 @@ private fun FileManagerToolBar(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text(
-                    text = "已选 $selectedCount 项",
+                    text = stringResource(R.string.files_selected_count, selectedCount),
                     color = RaylinkTextPrimary,
                     fontSize = 16.sp,
                     fontWeight = FontWeight.Medium,
                 )
                 Spacer(modifier = Modifier.width(10.dp))
                 ToolButton(
-                    text = if (allVisibleSelected) "取消全选" else "全选",
+                    text = if (allVisibleSelected) {
+                        stringResource(R.string.action_deselect_all)
+                    } else {
+                        stringResource(R.string.action_select_all)
+                    },
                     onClick = if (allVisibleSelected) onClearSelection else onSelectAll,
                 )
                 Spacer(modifier = Modifier.width(8.dp))
-                ToolButton(text = "复制", onClick = onCopySelected)
+                ToolButton(text = stringResource(R.string.action_copy), onClick = onCopySelected)
                 Spacer(modifier = Modifier.width(8.dp))
-                ToolButton(text = "移动", onClick = onMoveSelected)
+                ToolButton(text = stringResource(R.string.action_move), onClick = onMoveSelected)
                 Spacer(modifier = Modifier.width(8.dp))
-                ToolButton(text = "删除", onClick = onDeleteSelected)
+                ToolButton(text = stringResource(R.string.action_delete), onClick = onDeleteSelected)
                 Spacer(modifier = Modifier.weight(1f))
-                ToolButton(text = "完成", onClick = onExitSelection)
+                ToolButton(text = stringResource(R.string.action_done), onClick = onExitSelection)
             }
         }
         Text(
-            text = if (currentPath.isBlank()) "当前路径：-" else "当前路径：$currentPath",
+            text = if (currentPath.isBlank()) {
+                stringResource(R.string.label_current_path_empty)
+            } else {
+                stringResource(R.string.label_current_path, currentPath)
+            },
             color = RaylinkTextSecondary,
             fontSize = 14.sp,
             maxLines = 1,
@@ -412,9 +423,9 @@ private fun FileManagerToolBar(
         pendingTransfer?.let { transfer ->
             Text(
                 text = if (transfer.isMove) {
-                    "待移动：${transfer.sourceName}"
+                    stringResource(R.string.files_pending_move, transfer.sourceName)
                 } else {
-                    "待复制：${transfer.sourceName}"
+                    stringResource(R.string.files_pending_copy, transfer.sourceName)
                 },
                 color = RaylinkTextSecondary,
                 fontSize = 14.sp,
@@ -470,25 +481,25 @@ private fun FileListPanel(
             ) {
                 Icon(
                     imageVector = Icons.Default.KeyboardArrowUp,
-                    contentDescription = "返回上一级",
+                    contentDescription = stringResource(R.string.action_back_parent),
                     tint = RaylinkTextSecondary,
                 )
                 Spacer(modifier = Modifier.width(8.dp))
-                Text("返回上一级", color = RaylinkTextSecondary, fontSize = 18.sp)
+                Text(stringResource(R.string.action_back_parent), color = RaylinkTextSecondary, fontSize = 18.sp)
             }
             Spacer(modifier = Modifier.height(8.dp))
         }
         if (isLoading) {
             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Text("加载中...", color = RaylinkTextSecondary, fontSize = 18.sp)
+                Text(stringResource(R.string.files_loading), color = RaylinkTextSecondary, fontSize = 18.sp)
             }
             return
         }
         if (items.isEmpty()) {
             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 val hint = searchQuery.trim().takeIf { it.isNotEmpty() }?.let { q ->
-                    "未找到匹配「$q」的文件"
-                } ?: "暂无文件"
+                    stringResource(R.string.files_no_match, q)
+                } ?: stringResource(R.string.files_empty)
                 Text(hint, color = RaylinkTextSecondary, fontSize = 18.sp)
             }
             return
@@ -538,7 +549,11 @@ private fun FileItemRow(
         if (selectionMode) {
             Icon(
                 imageVector = if (selected) Icons.Default.CheckBox else Icons.Default.CheckBoxOutlineBlank,
-                contentDescription = if (selected) "已选" else "未选",
+                contentDescription = if (selected) {
+                    stringResource(R.string.cd_selected)
+                } else {
+                    stringResource(R.string.cd_not_selected)
+                },
                 tint = if (selected) RaylinkAccentBlue else RaylinkTextSecondary,
                 modifier = Modifier
                     .size(28.dp)
@@ -578,7 +593,7 @@ private fun FileItemRow(
                     !item.parentPathLabel.isNullOrBlank() && item.isDirectory -> item.parentPathLabel
                     !item.parentPathLabel.isNullOrBlank() ->
                         "${item.parentPathLabel} · ${formatSize(item.sizeBytes)}"
-                    item.isDirectory -> "目录"
+                    item.isDirectory -> stringResource(R.string.files_type_directory)
                     else -> formatSize(item.sizeBytes)
                 },
                 color = RaylinkTextSecondary,
@@ -588,13 +603,13 @@ private fun FileItemRow(
             )
         }
         if (!selectionMode) {
-            ActionButton(text = "复制", background = RaylinkAccentBlue, onClick = { onCopy(item) })
+            ActionButton(text = stringResource(R.string.action_copy), background = RaylinkAccentBlue, onClick = { onCopy(item) })
             Spacer(modifier = Modifier.width(8.dp))
-            ActionButton(text = "移动", background = Color(0xFF4F7EF7), onClick = { onMove(item) })
+            ActionButton(text = stringResource(R.string.action_move), background = Color(0xFF4F7EF7), onClick = { onMove(item) })
             Spacer(modifier = Modifier.width(8.dp))
-            ActionButton(text = "重命名", background = Color(0xFF556EE6), onClick = { onRename(item) })
+            ActionButton(text = stringResource(R.string.action_rename), background = Color(0xFF556EE6), onClick = { onRename(item) })
             Spacer(modifier = Modifier.width(8.dp))
-            ActionButton(text = "删除", background = Color(0xFFE14B4B), onClick = { onDelete(item) })
+            ActionButton(text = stringResource(R.string.action_delete), background = Color(0xFFE14B4B), onClick = { onDelete(item) })
         }
     }
 }

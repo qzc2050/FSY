@@ -21,15 +21,20 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
+import com.raydose.raylink.R
 import com.raydose.raylink.model.HostNetworkSettings
 import com.raydose.raylink.model.SlaveNetworkCard
+import com.raydose.raylink.model.isFactoryHostDisplayName
 import com.raydose.raylink.ui.theme.RaylinkAccentBlue
 import com.raydose.raylink.ui.theme.RaylinkTextPrimary
 import com.raydose.raylink.ui.theme.RaylinkTextSecondary
+import com.raydose.raylink.ui.tr
 
 internal val NetworkHostIdOptions = listOf(0x20, 0x40, 0x60)
 
@@ -40,7 +45,7 @@ sealed class NetworkEditTarget {
 
 private val NetworkLabelSp = 20.sp
 private val NetworkValueSp = 19.sp
-private val NetworkLabelWidth = 176.dp
+private val NetworkLabelWidth = 220.dp
 
 @Composable
 fun NetworkEditDialog(
@@ -53,25 +58,45 @@ fun NetworkEditDialog(
     onFetchHostWifi: (
         (success: Boolean, message: String, wifiName: String?, wifiPassword: String?) -> Unit
     ) -> Unit = {},
-    onFetchSlaveWifi: (
+    onFetchSlaveWifi: ((
         deviceId: Int,
         slaveIp: String,
         onDone: (success: Boolean, message: String, wifiName: String?, wifiPassword: String?) -> Unit,
-    ) -> Unit = { _, _, onDone -> onDone(false, "未实现从机获取", null, null) },
+    ) -> Unit)? = null,
 ) {
+    val context = LocalContext.current
+    val resolvedFetchSlaveWifi = onFetchSlaveWifi ?: { _, _, onDone ->
+        onDone(false, context.tr(R.string.settings_slave_fetch_not_impl), null, null)
+    }
+    val hostTargetLabel = stringResource(R.string.network_target_host)
+    val slaveFallbackLabel = stringResource(R.string.network_target_slave_fallback)
+    val fetchLabel = stringResource(R.string.action_fetch)
+    val fetchingLabel = stringResource(R.string.action_fetching)
+    val hostGatewayHint = stringResource(R.string.network_host_gateway_hint)
+    val slaveIdInvalidRange = stringResource(R.string.network_slave_id_invalid_range)
+
     val initialIndex = when (initialTarget) {
         NetworkEditTarget.Host -> 0
         is NetworkEditTarget.Slave -> initialTarget.index + 1
     }
+    val defaultHostName = stringResource(R.string.host_default_display_name)
     var selectedIndex by remember { mutableIntStateOf(initialIndex.coerceIn(0, slaves.size)) }
-    var draftHost by remember { mutableStateOf(host) }
+    var draftHost by remember(host, defaultHostName) {
+        mutableStateOf(
+            if (isFactoryHostDisplayName(host.hostDisplayName)) {
+                host.copy(hostDisplayName = defaultHostName)
+            } else {
+                host
+            },
+        )
+    }
     var draftSlaves by remember { mutableStateOf(slaves) }
     var fetchingWifi by remember { mutableStateOf(false) }
     var fetchHint by remember { mutableStateOf<String?>(null) }
 
     val targetLabels = buildList {
-        add("主机")
-        addAll(draftSlaves.map { it.displayName.ifBlank { "从机" } })
+        add(hostTargetLabel)
+        addAll(draftSlaves.map { it.displayName.ifBlank { slaveFallbackLabel } })
     }
     val isHostSelected = selectedIndex == 0
 
@@ -84,7 +109,7 @@ fun NetworkEditDialog(
                 .padding(24.dp),
         ) {
             Text(
-                text = "编辑网络信息",
+                text = stringResource(R.string.network_edit_title),
                 color = RaylinkTextPrimary,
                 fontSize = 24.sp,
                 fontWeight = FontWeight.SemiBold,
@@ -97,9 +122,9 @@ fun NetworkEditDialog(
                     .padding(top = 16.dp),
                 verticalArrangement = Arrangement.spacedBy(SettingsFormRowSpacing),
             ) {
-                NetworkDialogLabeledRow(label = "编辑对象") {
+                NetworkDialogLabeledRow(label = stringResource(R.string.network_edit_target)) {
                     SettingsDropdownControl(
-                        value = targetLabels.getOrElse(selectedIndex) { "主机" },
+                        value = targetLabels.getOrElse(selectedIndex) { hostTargetLabel },
                         options = targetLabels,
                         onSelected = { selectedIndex = it },
                         valueFontSize = NetworkValueSp,
@@ -114,7 +139,7 @@ fun NetworkEditDialog(
                 if (isHostSelected) {
                     val deviceIdLabel = "0x${draftHost.hostDeviceId.toString(16).uppercase()}"
                     val deviceIdOptions = NetworkHostIdOptions.map { "0x${it.toString(16).uppercase()}" }
-                    NetworkDialogLabeledRow(label = "设备 ID") {
+                    NetworkDialogLabeledRow(label = stringResource(R.string.network_label_device_id)) {
                         SettingsDropdownControl(
                             value = deviceIdLabel,
                             options = deviceIdOptions,
@@ -130,28 +155,28 @@ fun NetworkEditDialog(
                         )
                     }
                     NetworkDialogTextRow(
-                        label = "设备名称",
+                        label = stringResource(R.string.network_label_device_name),
                         value = draftHost.hostDisplayName,
                         onValueChange = { draftHost = draftHost.copy(hostDisplayName = it) },
                     )
                     NetworkDialogReadOnlyRow(
-                        label = "IP 地址",
+                        label = stringResource(R.string.network_label_ip),
                         value = draftHost.ipAddress.ifBlank { "—" },
                     )
                     NetworkDialogTextRow(
-                        label = "WiFi 名称",
+                        label = stringResource(R.string.network_label_wifi_name),
                         value = draftHost.wifiName,
                         onValueChange = { draftHost = draftHost.copy(wifiName = it) },
                     )
                     NetworkDialogTextRow(
-                        label = "WiFi 密码",
+                        label = stringResource(R.string.network_label_wifi_password),
                         value = draftHost.wifiPassword,
                         onValueChange = { draftHost = draftHost.copy(wifiPassword = it) },
                         isPassword = true,
                     )
-                    NetworkDialogLabeledRow(label = "从网关获取") {
+                    NetworkDialogLabeledRow(label = stringResource(R.string.network_fetch_from_gateway)) {
                         SettingsInlineActionButton(
-                            text = if (fetchingWifi) "获取中…" else "获取",
+                            text = if (fetchingWifi) fetchingLabel else fetchLabel,
                             onClick = {
                                 if (fetchingWifi) return@SettingsInlineActionButton
                                 fetchingWifi = true
@@ -171,7 +196,7 @@ fun NetworkEditDialog(
                             modifier = Modifier.padding(end = 8.dp),
                         )
                         Text(
-                            text = "按主机 IP 访问同网段 .1",
+                            text = hostGatewayHint,
                             color = RaylinkTextSecondary,
                             fontSize = 15.sp,
                             modifier = Modifier.weight(1f),
@@ -186,7 +211,7 @@ fun NetworkEditDialog(
                         )
                     }
                     NetworkDialogTextRow(
-                        label = "蓝牙名称",
+                        label = stringResource(R.string.statusbar_bluetooth_name),
                         value = draftHost.bluetoothName,
                         onValueChange = { draftHost = draftHost.copy(bluetoothName = it) },
                     )
@@ -195,10 +220,16 @@ fun NetworkEditDialog(
                     val slave = draftSlaves.getOrNull(slaveIndex)
                     if (slave != null) {
                         val slaveDeviceId = slave.protoAddr.trim().toIntOrNull()
-                        NetworkDialogReadOnlyRow(label = "设备 ID", value = slave.protoAddr)
-                        NetworkDialogReadOnlyRow(label = "IP 地址", value = slave.ip)
+                        NetworkDialogReadOnlyRow(
+                            label = stringResource(R.string.network_label_device_id),
+                            value = slave.protoAddr,
+                        )
+                        NetworkDialogReadOnlyRow(
+                            label = stringResource(R.string.network_label_ip),
+                            value = slave.ip,
+                        )
                         NetworkDialogTextRow(
-                            label = "WiFi 名称",
+                            label = stringResource(R.string.network_label_wifi_name),
                             value = slave.wifiName,
                             onValueChange = { value ->
                                 draftSlaves = draftSlaves.toMutableList().also {
@@ -207,7 +238,7 @@ fun NetworkEditDialog(
                             },
                         )
                         NetworkDialogTextRow(
-                            label = "WiFi 密码",
+                            label = stringResource(R.string.network_label_wifi_password),
                             value = slave.wifiPassword,
                             onValueChange = { value ->
                                 draftSlaves = draftSlaves.toMutableList().also {
@@ -216,18 +247,21 @@ fun NetworkEditDialog(
                             },
                             isPassword = true,
                         )
-                        NetworkDialogLabeledRow(label = "从网关获取") {
+                        NetworkDialogLabeledRow(label = stringResource(R.string.network_fetch_from_gateway)) {
                             SettingsInlineActionButton(
-                                text = if (fetchingWifi) "获取中…" else "获取",
+                                text = if (fetchingWifi) fetchingLabel else fetchLabel,
                                 onClick = {
                                     if (fetchingWifi) return@SettingsInlineActionButton
                                     if (slaveDeviceId == null || slaveDeviceId !in 1..253) {
-                                        fetchHint = "从机设备 ID 无效：${slave.protoAddr}"
+                                        fetchHint = context.tr(
+                                            R.string.network_slave_id_invalid,
+                                            slave.protoAddr,
+                                        )
                                         return@SettingsInlineActionButton
                                     }
                                     fetchingWifi = true
                                     fetchHint = null
-                                    onFetchSlaveWifi(slaveDeviceId, slave.ip) {
+                                    resolvedFetchSlaveWifi(slaveDeviceId, slave.ip) {
                                             success, message, wifiName, wifiPassword ->
                                         fetchingWifi = false
                                         fetchHint = message
@@ -247,9 +281,13 @@ fun NetworkEditDialog(
                             )
                             Text(
                                 text = if (slaveDeviceId != null && slaveDeviceId in 1..253) {
-                                    "设备ID$slaveDeviceId → 同网段 .${slaveDeviceId + 1}"
+                                    stringResource(
+                                        R.string.network_slave_id_gateway_hint,
+                                        slaveDeviceId,
+                                        slaveDeviceId + 1,
+                                    )
                                 } else {
-                                    "需有效设备 ID（1～253）"
+                                    slaveIdInvalidRange
                                 },
                                 color = RaylinkTextSecondary,
                                 fontSize = 15.sp,
@@ -275,9 +313,12 @@ fun NetworkEditDialog(
                 horizontalArrangement = Arrangement.End,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                SettingsInlineActionButton(text = "取消", onClick = onDismiss)
                 SettingsInlineActionButton(
-                    text = "保存",
+                    text = stringResource(R.string.action_cancel),
+                    onClick = onDismiss,
+                )
+                SettingsInlineActionButton(
+                    text = stringResource(R.string.action_save),
                     onClick = {
                         if (isHostSelected) {
                             onSaveHost(draftHost)

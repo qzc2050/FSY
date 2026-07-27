@@ -26,7 +26,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
+import com.raydose.raylink.R
+import com.raydose.raylink.ui.localizeOtaProgress
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
@@ -46,7 +49,7 @@ import java.io.File
 
 private val AboutLabelSp = 20.sp
 private val AboutValueSp = 19.sp
-private val AboutLabelWidth = 176.dp
+private val AboutLabelWidth = 220.dp
 private const val SerialUnlockClickCount = 3
 private const val SerialUnlockWindowMs = 2_000L
 
@@ -74,7 +77,6 @@ fun AboutPanel(
     var isInstallingApk by remember { mutableStateOf(false) }
     var isUpgradingZjb by remember { mutableStateOf(false) }
     var zjbUpgradeProgress by remember { mutableFloatStateOf(0f) }
-    var zjbUpgradeStatus by remember { mutableStateOf("未开始") }
     var updateHint by remember { mutableStateOf<String?>(null) }
     var pendingZjbUpgrade by remember { mutableStateOf<Pair<FileStorageLocation, FileListItem>?>(null) }
     var showSerialEditButton by remember { mutableStateOf(false) }
@@ -83,6 +85,16 @@ fun AboutPanel(
     var serialClickWindowStart by remember { mutableLongStateOf(0L) }
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
+    val zjbFwNotStarted = stringResource(R.string.zjb_fw_status_not_started)
+    val zjbFwReading = stringResource(R.string.zjb_fw_reading)
+    val zjbFwReadFailed = stringResource(R.string.zjb_fw_read_failed)
+    val zjbFwPushSuccess = stringResource(R.string.zjb_fw_push_success)
+    val zjbFwUpgradeFailed = stringResource(R.string.zjb_fw_upgrade_failed)
+    val apkInstallRestarting = stringResource(R.string.apk_install_restarting)
+    val apkInstallLaunchFailed = stringResource(R.string.apk_install_launch_failed)
+    val apkPrepareFailed = stringResource(R.string.apk_prepare_failed)
+
+    var zjbUpgradeStatus by remember { mutableStateOf(zjbFwNotStarted) }
 
     fun showMessage(message: String, toast: Boolean = true) {
         updateHint = message
@@ -136,8 +148,11 @@ fun AboutPanel(
             )
         }
         SettingsCard {
-            AboutInfoRow("产品名称", info.productName)
-            AboutInfoRow("主机型号", info.hostModel)
+            AboutInfoRow(
+                stringResource(R.string.about_label_product_name),
+                stringResource(R.string.about_product_name),
+            )
+            AboutInfoRow(stringResource(R.string.about_label_host_model), info.hostModel)
             AboutHostSerialRow(
                 serial = info.serialNumber,
                 showEditButton = showSerialEditButton,
@@ -159,31 +174,28 @@ fun AboutPanel(
         scope.launch {
             isUpgradingZjb = true
             zjbUpgradeProgress = 0f
-            zjbUpgradeStatus = "读取固件文件..."
+            zjbUpgradeStatus = zjbFwReading
             updateHint = null
             val bytesResult = withContext(Dispatchers.IO) {
                 fileManagerRepository.readFirmwareBin(location, item.path)
             }
             bytesResult.onFailure { error ->
                 isUpgradingZjb = false
-                showMessage(error.message ?: "读取固件失败")
+                showMessage(error.message ?: zjbFwReadFailed)
                 return@launch
             }
             val bytes = bytesResult.getOrThrow()
             onUpgradeZjbFirmware(bytes) { progress ->
-                zjbUpgradeStatus = progress.statusText
+                zjbUpgradeStatus = context.localizeOtaProgress(progress.statusText)
                 zjbUpgradeProgress = progress.progress
             }.fold(
                 onSuccess = {
                     showZjbUpdateDialog = false
                     pendingZjbUpgrade = null
-                    showMessage(
-                        message = "转接板固件已推送，设备将校验并重启。重启后请返回本页确认硬件版本。",
-                        toast = true,
-                    )
+                    showMessage(message = zjbFwPushSuccess, toast = true)
                 },
                 onFailure = { error ->
-                    showMessage(error.message ?: "转接板固件升级失败")
+                    showMessage(error.message ?: zjbFwUpgradeFailed)
                 },
             )
             isUpgradingZjb = false
@@ -235,17 +247,14 @@ fun AboutPanel(
                         onInstallApk(apkFile).fold(
                             onSuccess = {
                                 showApkUpdateDialog = false
-                                showMessage(
-                                    message = "正在安装更新，完成后将自动重启本应用。",
-                                    toast = false,
-                                )
+                                showMessage(message = apkInstallRestarting, toast = false)
                             },
                             onFailure = { error ->
-                                showMessage(error.message ?: "调起安装失败")
+                                showMessage(error.message ?: apkInstallLaunchFailed)
                             },
                         )
                     }.onFailure { error ->
-                        showMessage(error.message ?: "准备安装包失败")
+                        showMessage(error.message ?: apkPrepareFailed)
                     }
                 }
             },
@@ -298,7 +307,7 @@ private fun AboutHostSerialRow(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         SettingsFormLabel(
-            text = "主机序列号",
+            text = stringResource(R.string.about_label_host_serial),
             width = AboutLabelWidth,
             fontSize = AboutLabelSp,
             maxLines = 1,
@@ -317,7 +326,7 @@ private fun AboutHostSerialRow(
         )
         if (showEditButton) {
             SettingsInlineActionButton(
-                text = "编辑",
+                text = stringResource(R.string.action_edit),
                 onClick = onEditClick,
                 filled = true,
             )
@@ -341,7 +350,7 @@ private fun HostSerialEditDialog(
                 .padding(24.dp),
         ) {
             Text(
-                text = "主机序列号",
+                text = stringResource(R.string.about_label_host_serial),
                 color = RaylinkTextPrimary,
                 fontSize = 22.sp,
                 fontWeight = FontWeight.SemiBold,
@@ -360,10 +369,10 @@ private fun HostSerialEditDialog(
                 horizontalArrangement = Arrangement.End,
             ) {
                 TextButton(onClick = onDismiss) {
-                    Text("取消", color = RaylinkTextPrimary, fontSize = 17.sp)
+                    Text(stringResource(R.string.action_cancel), color = RaylinkTextPrimary, fontSize = 17.sp)
                 }
                 TextButton(onClick = { onSave(draft.trim()) }) {
-                    Text("保存", color = RaylinkAccentBlue, fontSize = 17.sp)
+                    Text(stringResource(R.string.action_save), color = RaylinkAccentBlue, fontSize = 17.sp)
                 }
             }
         }
@@ -380,7 +389,7 @@ private fun AboutSoftwareVersionRow(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         SettingsFormLabel(
-            text = "软件版本",
+            text = stringResource(R.string.about_label_software_version),
             width = AboutLabelWidth,
             fontSize = AboutLabelSp,
             maxLines = 1,
@@ -393,7 +402,7 @@ private fun AboutSoftwareVersionRow(
             modifier = Modifier.weight(1f),
         )
         SettingsInlineActionButton(
-            text = "更新",
+            text = stringResource(R.string.action_update),
             onClick = onUpdateClick,
             filled = true,
         )
@@ -410,7 +419,7 @@ private fun AboutHardwareVersionRow(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         SettingsFormLabel(
-            text = "硬件版本",
+            text = stringResource(R.string.about_label_hardware_version),
             width = AboutLabelWidth,
             fontSize = AboutLabelSp,
             maxLines = 1,
@@ -423,7 +432,7 @@ private fun AboutHardwareVersionRow(
             modifier = Modifier.weight(1f),
         )
         SettingsInlineActionButton(
-            text = "更新",
+            text = stringResource(R.string.action_update),
             onClick = onUpdateClick,
             filled = true,
         )

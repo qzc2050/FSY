@@ -19,7 +19,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
+import com.raydose.raylink.R
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.TextUnit
@@ -29,6 +31,7 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.raydose.raylink.model.DiscoveredDevice
 import com.raydose.raylink.model.SavedProbe
+import com.raydose.raylink.model.linkCanLoraLabel
 import com.raydose.raylink.model.matchesSaved
 import com.raydose.raylink.ui.theme.RaylinkAccentBlue
 import com.raydose.raylink.ui.theme.RaylinkSettingsContentBg
@@ -84,7 +87,7 @@ fun AddProbeDialog(
                     .padding(panelPadding),
             ) {
                 Text(
-                    text = "添加探头 — 在线设备",
+                    text = stringResource(R.string.add_probe_title),
                     color = RaylinkTextPrimary,
                     fontSize = titleSp,
                     fontWeight = FontWeight.SemiBold,
@@ -99,7 +102,7 @@ fun AddProbeDialog(
                 )
                 if (discovered.isEmpty()) {
                     Text(
-                        text = "未发现设备，请确认从机已上电（同网段组播，或经转接板串口/CAN）。",
+                        text = stringResource(R.string.add_probe_no_devices),
                         color = RaylinkTextSecondary,
                         fontSize = headerSp,
                         modifier = Modifier.padding(vertical = 28.dp),
@@ -133,7 +136,7 @@ fun AddProbeDialog(
                     horizontalArrangement = Arrangement.End,
                 ) {
                     TextButton(onClick = onDismiss) {
-                        Text("关闭", color = RaylinkTextPrimary, fontSize = headerSp)
+                        Text(stringResource(R.string.action_close), color = RaylinkTextPrimary, fontSize = headerSp)
                     }
                 }
             }
@@ -156,7 +159,7 @@ private fun AddProbeTableHeader(
         horizontalArrangement = Arrangement.spacedBy(columnGap),
     ) {
         Text(
-            text = "型号",
+            text = stringResource(R.string.probe_label_model),
             color = RaylinkTextSecondary,
             fontSize = headerSp,
             modifier = Modifier.weight(1f),
@@ -209,7 +212,7 @@ private fun AddProbeDeviceRow(
             modifier = Modifier.weight(1f),
         )
         Text(
-            text = device.ip.ifBlank { "串口/CAN" },
+            text = device.ip.ifBlank { linkCanLoraLabel(device.protoAddr) },
             color = RaylinkTextPrimary,
             fontSize = bodySp,
             maxLines = 1,
@@ -229,13 +232,13 @@ private fun AddProbeDeviceRow(
         ) {
             if (added) {
                 Text(
-                    text = "已添加",
+                    text = stringResource(R.string.add_probe_already_added),
                     color = RaylinkTextSecondary,
                     fontSize = bodySp,
                 )
             } else {
                 TextButton(onClick = onAdd) {
-                    Text("添加", color = RaylinkAccentBlue, fontSize = bodySp)
+                    Text(stringResource(R.string.action_add), color = RaylinkAccentBlue, fontSize = bodySp)
                 }
             }
         }

@@ -1,8 +1,8 @@
 package com.raydose.raylink.model
 
-enum class FileStorageLocation(val label: String) {
-    Local("本地存储"),
-    Usb("U盘存储"),
+enum class FileStorageLocation {
+    Local,
+    Usb,
 }
 
 data class FileListItem(

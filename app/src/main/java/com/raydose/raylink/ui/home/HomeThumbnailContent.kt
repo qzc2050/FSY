@@ -23,8 +23,10 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.raydose.raylink.R
 import com.raydose.raylink.model.HostEnvReading
 import com.raydose.raylink.model.HomeUiState
 import com.raydose.raylink.model.SlaveProbeUi
@@ -52,6 +54,8 @@ fun HomeThumbnailContent(
     currentMessageLine: String,
     modifier: Modifier = Modifier,
 ) {
+    val noProbeText = stringResource(R.string.home_no_probe)
+    val noMessagesText = stringResource(R.string.home_no_messages)
     Column(
         modifier = modifier
             .fillMaxSize()
@@ -88,6 +92,7 @@ fun HomeThumbnailContent(
                 ) {
                     ThumbnailMessageLine(
                         text = currentMessageLine,
+                        emptyText = noMessagesText,
                         modifier = Modifier
                             .fillMaxWidth()
                             .fillMaxHeight(0.88f),
@@ -149,6 +154,7 @@ fun HomeThumbnailContent(
                         displayProbes = displayProbes,
                         probesPerPage = probesPerPage,
                         pagerState = pagerState,
+                        noProbeText = noProbeText,
                         modifier = Modifier
                             .fillMaxWidth()
                             .fillMaxHeight(ScreenSpec.STATUS_BAR_THUMBNAIL_PROBE_HEIGHT_FRACTION),
@@ -170,11 +176,12 @@ private fun ThumbnailProbeArea(
     displayProbes: List<SlaveProbeUi>,
     probesPerPage: Int,
     pagerState: PagerState,
+    noProbeText: String,
     modifier: Modifier = Modifier,
 ) {
     if (displayProbes.isEmpty()) {
         SlaveProbeCard(
-            probe = SlaveProbeUi(id = "0", name = "暂无探头", isOnline = false),
+            probe = SlaveProbeUi(id = "0", name = noProbeText, isOnline = false),
             onDetailClick = {},
             modifier = modifier,
         )
@@ -209,6 +216,7 @@ private fun ThumbnailProbeArea(
 @Composable
 private fun ThumbnailMessageLine(
     text: String,
+    emptyText: String,
     modifier: Modifier = Modifier,
 ) {
     Box(
@@ -219,7 +227,7 @@ private fun ThumbnailMessageLine(
         contentAlignment = Alignment.CenterStart,
     ) {
         Text(
-            text = text.ifBlank { "暂无留言" },
+            text = text.ifBlank { emptyText },
             color = RaylinkTextPrimary,
             fontSize = ScreenSpec.STATUS_BAR_THUMBNAIL_MESSAGE_SP.sp,
             maxLines = 1,
@@ -284,7 +292,13 @@ private fun ThumbnailEnvColumn(
                     Alignment.Bottom,
                 ),
             ) {
-                ThumbnailEnvLine("温度 ${envValue(readings, "温度")}  湿度 ${envValue(readings, "湿度")}")
+                ThumbnailEnvLine(
+                    stringResource(
+                        R.string.env_line_temp_humidity,
+                        envValue(readings, "温度"),
+                        envValue(readings, "湿度"),
+                    ),
+                )
                 ThumbnailEnvLine("CO2 ${envValue(readings, "CO2")}  PM2.5 ${envValue(readings, "PM2.5")}")
             }
         }
@@ -294,7 +308,9 @@ private fun ThumbnailEnvColumn(
                 .weight(envWeight),
             contentAlignment = Alignment.Center,
         ) {
-            ThumbnailEnvLine("气压 ${envValue(readings, "气压")}")
+            ThumbnailEnvLine(
+                stringResource(R.string.env_line_pressure, envValue(readings, "气压")),
+            )
         }
     }
 }

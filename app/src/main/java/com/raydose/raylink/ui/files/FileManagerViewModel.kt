@@ -3,11 +3,13 @@ package com.raydose.raylink.ui.files
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.raydose.raylink.R
 import com.raydose.raylink.data.FileManagerRepository
 import com.raydose.raylink.model.FileListItem
 import com.raydose.raylink.model.FileManagerUiState
 import com.raydose.raylink.model.FileStorageLocation
 import com.raydose.raylink.model.PendingFileTransfer
+import com.raydose.raylink.ui.tr
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -18,6 +20,7 @@ import kotlinx.coroutines.withContext
 import java.io.File
 
 class FileManagerViewModel(application: Application) : AndroidViewModel(application) {
+    private val app get() = getApplication<Application>()
     private val repository = FileManagerRepository(application)
     private val _uiState = MutableStateFlow(FileManagerUiState(isLoading = true))
     val uiState: StateFlow<FileManagerUiState> = _uiState.asStateFlow()
@@ -50,7 +53,11 @@ class FileManagerViewModel(application: Application) : AndroidViewModel(applicat
                         items = emptyList(),
                         isLoading = false,
                         requiresUsbAccess = location == FileStorageLocation.Usb,
-                        message = if (location == FileStorageLocation.Usb) "请先授权U盘目录" else "未检测到可用存储",
+                        message = if (location == FileStorageLocation.Usb) {
+                            app.tr(R.string.files_grant_usb_first)
+                        } else {
+                            app.tr(R.string.storage_not_available)
+                        },
                     )
                 }
                 return@launch
@@ -153,7 +160,7 @@ class FileManagerViewModel(application: Application) : AndroidViewModel(applicat
     fun deleteSelectedItems() {
         val items = _uiState.value.items.filter { it.path in _uiState.value.selectedPaths }
         if (items.isEmpty()) {
-            _uiState.update { it.copy(message = "请先勾选文件") }
+            _uiState.update { it.copy(message = app.tr(R.string.files_select_first)) }
             return
         }
         performFileAction {
@@ -169,9 +176,9 @@ class FileManagerViewModel(application: Application) : AndroidViewModel(applicat
                     selectionMode = false,
                     selectedPaths = emptySet(),
                     message = when {
-                        failedCount == 0 -> "已删除 $successCount 项"
-                        successCount == 0 -> "删除失败"
-                        else -> "成功 $successCount 项，失败 $failedCount 项"
+                        failedCount == 0 -> app.tr(R.string.files_deleted_count, successCount)
+                        successCount == 0 -> app.tr(R.string.files_delete_failed)
+                        else -> app.tr(R.string.files_delete_partial, successCount, failedCount)
                     },
                 )
             }
@@ -181,12 +188,14 @@ class FileManagerViewModel(application: Application) : AndroidViewModel(applicat
     fun stageCopySelected() {
         val items = _uiState.value.items.filter { it.path in _uiState.value.selectedPaths }
         val first = items.firstOrNull() ?: run {
-            _uiState.update { it.copy(message = "请先勾选文件") }
+            _uiState.update { it.copy(message = app.tr(R.string.files_select_first)) }
             return
         }
         if (items.size > 1) {
             stageCopy(first)
-            _uiState.update { it.copy(message = "已复制首项到剪贴板：${first.name}（共 ${items.size} 项，粘贴需逐次操作）") }
+            _uiState.update {
+                it.copy(message = app.tr(R.string.files_copy_clipboard_multi, first.name, items.size))
+            }
         } else {
             stageCopy(first)
         }
@@ -195,12 +204,14 @@ class FileManagerViewModel(application: Application) : AndroidViewModel(applicat
     fun stageMoveSelected() {
         val items = _uiState.value.items.filter { it.path in _uiState.value.selectedPaths }
         val first = items.firstOrNull() ?: run {
-            _uiState.update { it.copy(message = "请先勾选文件") }
+            _uiState.update { it.copy(message = app.tr(R.string.files_select_first)) }
             return
         }
         if (items.size > 1) {
             stageMove(first)
-            _uiState.update { it.copy(message = "已选择移动首项：${first.name}（共 ${items.size} 项，移动需逐次操作）") }
+            _uiState.update {
+                it.copy(message = app.tr(R.string.files_move_select_multi, first.name, items.size))
+            }
         } else {
             stageMove(first)
         }
@@ -214,8 +225,12 @@ class FileManagerViewModel(application: Application) : AndroidViewModel(applicat
                 targetLocation = _uiState.value.storageLocation,
                 targetDirectoryPath = targetDirectoryPath,
             )
-                .onSuccess { _uiState.update { state -> state.copy(message = "复制成功") } }
-                .onFailure { ex -> _uiState.update { state -> state.copy(message = "复制失败：${ex.message ?: "未知错误"}") } }
+                .onSuccess { _uiState.update { state -> state.copy(message = app.tr(R.string.files_copy_success)) } }
+                .onFailure { ex ->
+                    _uiState.update { state ->
+                        state.copy(message = app.tr(R.string.files_copy_failed, ex.message ?: app.tr(R.string.error_unknown)))
+                    }
+                }
         }
     }
 
@@ -227,32 +242,48 @@ class FileManagerViewModel(application: Application) : AndroidViewModel(applicat
                 targetLocation = _uiState.value.storageLocation,
                 targetDirectoryPath = targetDirectoryPath,
             )
-                .onSuccess { _uiState.update { state -> state.copy(message = "移动成功") } }
-                .onFailure { ex -> _uiState.update { state -> state.copy(message = "移动失败：${ex.message ?: "未知错误"}") } }
+                .onSuccess { _uiState.update { state -> state.copy(message = app.tr(R.string.files_move_success)) } }
+                .onFailure { ex ->
+                    _uiState.update { state ->
+                        state.copy(message = app.tr(R.string.files_move_failed, ex.message ?: app.tr(R.string.error_unknown)))
+                    }
+                }
         }
     }
 
     fun deleteItem(item: FileListItem) {
         performFileAction {
             repository.deleteItem(item.storageLocation, item.path)
-                .onSuccess { _uiState.update { state -> state.copy(message = "删除成功") } }
-                .onFailure { ex -> _uiState.update { state -> state.copy(message = "删除失败：${ex.message ?: "未知错误"}") } }
+                .onSuccess { _uiState.update { state -> state.copy(message = app.tr(R.string.files_delete_success)) } }
+                .onFailure { ex ->
+                    _uiState.update { state ->
+                        state.copy(message = app.tr(R.string.files_delete_failed_ex, ex.message ?: app.tr(R.string.error_unknown)))
+                    }
+                }
         }
     }
 
     fun createFolder(name: String) {
         performFileAction {
             repository.createFolder(_uiState.value.storageLocation, _uiState.value.currentPath, name)
-                .onSuccess { _uiState.update { state -> state.copy(message = "新建文件夹成功") } }
-                .onFailure { ex -> _uiState.update { state -> state.copy(message = "新建文件夹失败：${ex.message ?: "未知错误"}") } }
+                .onSuccess { _uiState.update { state -> state.copy(message = app.tr(R.string.files_new_folder_success)) } }
+                .onFailure { ex ->
+                    _uiState.update { state ->
+                        state.copy(message = app.tr(R.string.files_new_folder_failed, ex.message ?: app.tr(R.string.error_unknown)))
+                    }
+                }
         }
     }
 
     fun renameItem(item: FileListItem, newName: String) {
         performFileAction {
             repository.renameItem(item.storageLocation, item.path, newName)
-                .onSuccess { _uiState.update { state -> state.copy(message = "重命名成功") } }
-                .onFailure { ex -> _uiState.update { state -> state.copy(message = "重命名失败：${ex.message ?: "未知错误"}") } }
+                .onSuccess { _uiState.update { state -> state.copy(message = app.tr(R.string.files_rename_success)) } }
+                .onFailure { ex ->
+                    _uiState.update { state ->
+                        state.copy(message = app.tr(R.string.files_rename_failed, ex.message ?: app.tr(R.string.error_unknown)))
+                    }
+                }
         }
     }
 
@@ -269,7 +300,7 @@ class FileManagerViewModel(application: Application) : AndroidViewModel(applicat
                     isMove = false,
                     sourceLocation = item.storageLocation,
                 ),
-                message = "已复制到剪贴板：${item.name}",
+                message = app.tr(R.string.files_copied_one, item.name),
             )
         }
     }
@@ -283,34 +314,34 @@ class FileManagerViewModel(application: Application) : AndroidViewModel(applicat
                     isMove = true,
                     sourceLocation = item.storageLocation,
                 ),
-                message = "已选择移动：${item.name}",
+                message = app.tr(R.string.files_move_selected_one, item.name),
             )
         }
     }
 
     fun clearPendingTransfer() {
-        _uiState.update { it.copy(pendingTransfer = null, message = "已清空剪贴板") }
+        _uiState.update { it.copy(pendingTransfer = null, message = app.tr(R.string.files_clipboard_cleared)) }
     }
 
     fun pastePendingTransfer() {
         val pending = _uiState.value.pendingTransfer ?: run {
-            _uiState.update { it.copy(message = "剪贴板为空") }
+            _uiState.update { it.copy(message = app.tr(R.string.files_clipboard_empty)) }
             return
         }
         val currentPath = _uiState.value.currentPath
         val sourceFile = File(pending.sourcePath)
         if (!sourceFile.exists()) {
             if (pending.sourceLocation == FileStorageLocation.Local) {
-                _uiState.update { it.copy(pendingTransfer = null, message = "源文件不存在，已清空剪贴板") }
+                _uiState.update { it.copy(pendingTransfer = null, message = app.tr(R.string.files_source_missing)) }
                 return
             }
         }
         if (pending.sourceLocation == FileStorageLocation.Local && pending.isMove && sourceFile.parentFile?.absolutePath == currentPath) {
-            _uiState.update { it.copy(message = "当前已是目标目录") }
+            _uiState.update { it.copy(message = app.tr(R.string.files_same_directory)) }
             return
         }
         if (pending.sourceLocation == _uiState.value.storageLocation && pending.sourcePath == currentPath) {
-            _uiState.update { it.copy(message = "不能粘贴到自身") }
+            _uiState.update { it.copy(message = app.tr(R.string.files_paste_into_self)) }
             return
         }
         performFileAction {
@@ -324,14 +355,18 @@ class FileManagerViewModel(application: Application) : AndroidViewModel(applicat
                     _uiState.update { state ->
                         state.copy(
                             pendingTransfer = null,
-                            message = if (pending.isMove) "移动成功" else "复制成功",
+                            message = if (pending.isMove) {
+                                app.tr(R.string.files_move_success)
+                            } else {
+                                app.tr(R.string.files_copy_success)
+                            },
                         )
                     }
                 }
                 .onFailure { ex ->
                     _uiState.update { state ->
                         state.copy(
-                            message = "粘贴失败：${ex.message ?: "未知错误"}",
+                            message = app.tr(R.string.files_paste_failed, ex.message ?: app.tr(R.string.error_unknown)),
                         )
                     }
                 }
@@ -374,9 +409,9 @@ class FileManagerViewModel(application: Application) : AndroidViewModel(applicat
                     if (index == 0) null else entry.second
                 }
                 if (names.isEmpty()) {
-                    "U盘 /"
+                    "${app.tr(R.string.storage_usb)} /"
                 } else {
-                    "U盘 / ${names.joinToString(" / ")}"
+                    "${app.tr(R.string.storage_usb)} / ${names.joinToString(" / ")}"
                 }
             }
         }
