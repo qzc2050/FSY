@@ -1035,7 +1035,6 @@ class ProbeConnectionManager(
                 }
             },
         )
-        clients[probe.id] = client
 
         val route = pickBestRoute(appContext, probe.ip)
         if (route != null) {
@@ -1050,7 +1049,7 @@ class ProbeConnectionManager(
 
         if (isStaleConnect(probe.id, generation)) {
             client.close()
-            closeClientOnly(probe.id)
+            collectors.remove(probe.id)
             return
         }
 
@@ -1063,16 +1062,20 @@ class ProbeConnectionManager(
 
         if (isStaleConnect(probe.id, generation)) {
             client.close()
-            closeClientOnly(probe.id)
+            collectors.remove(probe.id)
             return
         }
 
         if (ok) {
+            /* 仅建成后再写入 clients，避免失败残留挡住后续组播重连 */
+            clients[probe.id] = client
             client.beginReading()
             val now = System.currentTimeMillis()
             tcpConnectedAtMs[probe.id] = now
             Log.i(TAG, "TCP 已建立 ${probe.displayName} ${probe.ip}:${probe.controlPort}，等待 0x23")
         } else {
+            client.close()
+            collectors.remove(probe.id)
             setProbeOnline(probe.id, false)
             tcpDiscoveryAnchors.remove(probe.id)
             Log.w(TAG, "TCP 连接失败 ${probe.ip}:${probe.controlPort}，等待组播再次确认 serial/ip")
@@ -1109,6 +1112,7 @@ class ProbeConnectionManager(
             scheduleConnect(resolved)
             return
         }
+        /* 已有建成的 TCP 则跳过；连接失败不得在 clients 里留僵尸（见 connectOnWorker） */
         if (clients[resolved.id] != null) {
             return
         }

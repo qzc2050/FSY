@@ -137,6 +137,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     /** 写配置期间/刚失败后，禁止用自动读配置盖掉用户正在编辑的 draft */
     private val suppressConfigUiOverwriteUntilMs = ConcurrentHashMap<String, Long>()
     private val discoveredMap = ConcurrentHashMap<String, DiscoveredDevice>()
+    /** 各发现项最近一次组播到达时间；用于网线短断时保留 IP，组播真正超时后再降级为串口显示 */
+    private val discoveryMulticastMs = ConcurrentHashMap<String, Long>()
     /** 组播/串口发现快照，驱动下拉「在线设备」与添加探头列表 */
     private val _discoveredSnapshot = MutableStateFlow<List<DiscoveredDevice>>(emptyList())
     // private val multicastLogSeq = AtomicLong(0L) // 组播每秒日志已注释
@@ -1299,6 +1301,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             .firstOrNull { matchesSaved(it, device) && it.ip.isNotBlank() }
         /* 所有本公司组播设备进入发现表 → 下拉「在线设备」；添加探头另按内机型号过滤 */
         discoveredMap[device.stableId] = device
+        discoveryMulticastMs[device.stableId] = device.lastSeenMillis
         syncDiscoveredSnapshot()
         val matchedProbeId = matchedProbe?.id
         if (matchedProbeId != null) {
@@ -1335,13 +1338,26 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    /** 串口 SN 广播：写入发现表，并同步已保存探头（不覆盖已有 IP）。 */
+    /**
+     * 串口 SN 广播：写入发现表，并同步已保存探头。
+     * 若同 SN 已有组播 IP，禁止用空 IP 覆盖（网线重插窗口内 LoRa/CAN 仍上报会导致添加页 IP↔串口跳动）。
+     */
     private fun upsertSerialDiscovery(protoAddr: Int, serial: String) {
         val device = DiscoveredDevice.fromSerialSerialUpload(protoAddr = protoAddr, serial = serial)
-        discoveredMap[device.stableId] = device
+        val existing = discoveredMap[device.stableId]
+        val merged = if (existing != null && existing.ip.isNotBlank() && device.ip.isBlank()) {
+            existing.copy(
+                lastSeenMillis = device.lastSeenMillis,
+                protoAddr = device.protoAddr.ifBlank { existing.protoAddr },
+                serial = device.serial.ifBlank { existing.serial },
+            )
+        } else {
+            device
+        }
+        discoveredMap[device.stableId] = merged
         removeSerialDiscoveryPlaceholder(protoAddr)
         syncDiscoveredSnapshot()
-        applyDiscoveryNetworkUpdate(device)
+        applyDiscoveryNetworkUpdate(merged)
         publishDiscoveredDevicesIfVisible()
     }
 
@@ -1595,9 +1611,30 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun pruneStaleDiscovery() {
-        val cutoff = System.currentTimeMillis() - DISCOVERY_TTL_MS
-        val removed = discoveredMap.entries.removeIf { it.value.lastSeenMillis < cutoff }
-        if (removed) {
+        val now = System.currentTimeMillis()
+        val cutoff = now - DISCOVERY_TTL_MS
+        var changed = false
+        val ids = discoveredMap.keys.toList()
+        for (id in ids) {
+            val device = discoveredMap[id] ?: continue
+            if (device.lastSeenMillis < cutoff) {
+                if (discoveredMap.remove(id, device)) {
+                    discoveryMulticastMs.remove(id)
+                    changed = true
+                }
+                continue
+            }
+            /* 组播超时：仍可能靠 LoRa/CAN 续命 lastSeen，此时应降级显示为串口/CAN */
+            if (device.ip.isNotBlank()) {
+                val mcastAt = discoveryMulticastMs[id]
+                if (mcastAt == null || now - mcastAt >= DISCOVERY_MULTICAST_STALE_MS) {
+                    discoveredMap[id] = device.copy(ip = "", controlPort = 0, dataPort = 0)
+                    discoveryMulticastMs.remove(id)
+                    changed = true
+                }
+            }
+        }
+        if (changed) {
             syncDiscoveredSnapshot()
             if (_settings.value.showAddProbeDialog) {
                 _settings.update {
@@ -1988,6 +2025,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     companion object {
         private const val DISCOVERY_TTL_MS = 30_000L
+        /** 发现表：超过此时长无组播则去掉 IP 显示（串口路径可继续续命条目） */
+        private const val DISCOVERY_MULTICAST_STALE_MS = 8_000L
         /** 网口组播 / 串口 0x23：超过此时间无数据则 UI 离线（PHY 短抖约 2～4s） */
         private const val PROBE_STALE_MS = 8_000L
         /** 阈值输入框停止编辑后延迟下发（不依赖失焦） */

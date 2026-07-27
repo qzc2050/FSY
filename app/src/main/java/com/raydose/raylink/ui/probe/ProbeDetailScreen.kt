@@ -35,6 +35,7 @@ import androidx.compose.ui.window.DialogProperties
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -94,7 +95,9 @@ fun ProbeDetailScreen(
         return
     }
 
-    val orderedProbes = remember(validProbes, initialProbeId) {
+    /* 列表可随遥测重组；草稿/弹窗状态勿依赖整个 probes 对象，否则每秒刷新会打断编辑 */
+    val probeIdsKey = validProbes.joinToString("\u0000") { it.id }
+    val orderedProbes = run {
         val selected = validProbes.firstOrNull { it.id == initialProbeId }
         if (selected == null) {
             validProbes
@@ -102,21 +105,31 @@ fun ProbeDetailScreen(
             listOf(selected) + validProbes.filter { it.id != selected.id }
         }
     }
-    val displayProbes = remember(orderedProbes) { orderedProbes.take(4) }
+    val displayProbes = orderedProbes.take(4)
 
-    val nameDrafts = remember(validProbes) { mutableStateMapOf<String, String>() }
-    val locationDrafts = remember(validProbes) { mutableStateMapOf<String, String>() }
+    val nameDrafts = remember { mutableStateMapOf<String, String>() }
+    val locationDrafts = remember { mutableStateMapOf<String, String>() }
     val columnHints = remember { mutableStateMapOf<String, String>() }
-    var orgNameDraft by remember(organizationName) { mutableStateOf(organizationName) }
-    var orgEditBuffer by remember(organizationName) { mutableStateOf(organizationName) }
+    var orgNameDraft by remember { mutableStateOf(organizationName) }
+    var orgEditBuffer by remember { mutableStateOf(organizationName) }
     var orgEditing by remember { mutableStateOf(false) }
     var pageHint by remember { mutableStateOf<String?>(null) }
 
-    LaunchedEffect(validProbes) {
+    LaunchedEffect(organizationName) {
+        if (!orgEditing) {
+            orgNameDraft = organizationName
+            orgEditBuffer = organizationName
+        }
+    }
+
+    LaunchedEffect(probeIdsKey) {
         validProbes.forEach { probe ->
             if (!nameDrafts.containsKey(probe.id)) nameDrafts[probe.id] = probe.name
             if (!locationDrafts.containsKey(probe.id)) locationDrafts[probe.id] = probe.location
         }
+        val alive = validProbes.map { it.id }.toSet()
+        nameDrafts.keys.filter { it !in alive }.forEach { nameDrafts.remove(it) }
+        locationDrafts.keys.filter { it !in alive }.forEach { locationDrafts.remove(it) }
     }
 
     BoxWithConstraints(modifier = modifier.fillMaxSize()) {
@@ -183,36 +196,43 @@ fun ProbeDetailScreen(
                     verticalAlignment = Alignment.Top,
                 ) {
                     displayProbes.forEachIndexed { index, probe ->
-                        if (index > 0) {
-                            Spacer(modifier = Modifier.width(columnGap))
+                        key(probe.id) {
+                            if (index > 0) {
+                                Spacer(modifier = Modifier.width(columnGap))
+                            }
+                            val name = nameDrafts[probe.id].orEmpty()
+                            val location = locationDrafts[probe.id].orEmpty()
+                            val baseRate = probe.doseRateText.toDoubleOrNull() ?: 0.0
+                            val rows = remember(probe.id) {
+                                dailyDosesFor(probe.id, baseRate)
+                            }
+                            ProbeDataColumn(
+                                probe = probe,
+                                name = name,
+                                location = location,
+                                rows = rows,
+                                hint = columnHints[probe.id],
+                                onNameChange = { nameDrafts[probe.id] = it },
+                                onLocationChange = { locationDrafts[probe.id] = it },
+                                onSave = {
+                                    onSaveIdentity(
+                                        probe.id,
+                                        nameDrafts[probe.id].orEmpty(),
+                                        locationDrafts[probe.id].orEmpty(),
+                                    )
+                                    columnHints[probe.id] = "已保存"
+                                },
+                                fileManagerRepository = fileManagerRepository,
+                                usbGrantEpoch = usbGrantEpoch,
+                                onExportToPath = { storage, directoryPath ->
+                                    columnHints[probe.id] =
+                                        onExportToPath(probe.id, storage, directoryPath)
+                                },
+                                modifier = Modifier
+                                    .width(columnWidth)
+                                    .fillMaxHeight(),
+                            )
                         }
-                        val name = nameDrafts[probe.id].orEmpty()
-                        val location = locationDrafts[probe.id].orEmpty()
-                        val baseRate = probe.doseRateText.toDoubleOrNull() ?: 0.0
-                        val rows = remember(probe.id) {
-                            dailyDosesFor(probe.id, baseRate)
-                        }
-                        ProbeDataColumn(
-                            probe = probe,
-                            name = name,
-                            location = location,
-                            rows = rows,
-                            hint = columnHints[probe.id],
-                            onNameChange = { nameDrafts[probe.id] = it },
-                            onLocationChange = { locationDrafts[probe.id] = it },
-                            onSave = {
-                                onSaveIdentity(probe.id, name, location)
-                                columnHints[probe.id] = "已保存"
-                            },
-                            fileManagerRepository = fileManagerRepository,
-                            usbGrantEpoch = usbGrantEpoch,
-                            onExportToPath = { storage, directoryPath ->
-                                columnHints[probe.id] = onExportToPath(probe.id, storage, directoryPath)
-                            },
-                            modifier = Modifier
-                                .width(columnWidth)
-                                .fillMaxHeight(),
-                        )
                     }
                 }
             }
@@ -486,7 +506,8 @@ private fun ProbeIdentityEditDialog(
     onDismiss: () -> Unit,
     onConfirm: (String, String) -> Unit,
 ) {
-    var nameDraft by remember(initialName, initialLocation) {
+    /* 仅打开时取 initial；弹窗期间父级因遥测重组不得重置输入 */
+    var nameDraft by remember {
         mutableStateOf(
             TextFieldValue(
                 text = initialName,
@@ -494,7 +515,7 @@ private fun ProbeIdentityEditDialog(
             ),
         )
     }
-    var locationDraft by remember(initialName, initialLocation) {
+    var locationDraft by remember {
         mutableStateOf(
             TextFieldValue(
                 text = initialLocation,
