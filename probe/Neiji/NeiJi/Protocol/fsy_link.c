@@ -5,6 +5,7 @@
 #include "can_driver.h"
 #include "can_heartbeat.h"
 #include "lora.h"
+#include "main.h"
 #include "net_tcp.h"
 #include "ota.h"
 #include "uart1_port.h"
@@ -17,6 +18,8 @@
 
 #define FSY_ASM_BUF_SIZE     FSY_FRAME_MAX_LEN
 #define FSY_ASM_DRAIN_CHUNK  32U
+/** 上一次 TCP 发送成功后，连续失败保护窗口（毫秒） */
+#define FSY_TCP_HOLD_MS      10000U
 
 static uint8_t s_uart_asm_buf[FSY_ASM_BUF_SIZE];
 static uint16_t s_uart_asm_len;
@@ -197,10 +200,41 @@ typedef enum {
 } FsyUploadRoute;
 
 static FsyUploadRoute s_last_upload_route = FSY_UPLOAD_ROUTE_NONE;
+static bool s_tcp_success_latched;
+/** 保护窗口起始时刻；0 表示当前未处于失败保护期 */
+static uint32_t s_tcp_fail_since_ms;
+
+static bool fsy_link_tcp_hold_active(void)
+{
+    uint32_t elapsed;
+
+    if (!s_tcp_success_latched || (s_tcp_fail_since_ms == 0U)) {
+        return false;
+    }
+    elapsed = HAL_GetTick() - s_tcp_fail_since_ms;
+    return (elapsed < FSY_TCP_HOLD_MS);
+}
+
+/** 曾 TCP 发送成功、现又断开：在选路前启动 hold，避免首包漏到 LoRa */
+static void fsy_link_tcp_hold_arm_if_needed(void)
+{
+    if (s_tcp_success_latched && !Net_Tcp_IsConnected() &&
+        (s_tcp_fail_since_ms == 0U)) {
+        s_tcp_fail_since_ms = HAL_GetTick();
+    }
+}
 
 static FsyUploadRoute fsy_link_resolve_upload_route(void)
 {
     if (Net_Tcp_IsConnected()) {
+        return FSY_UPLOAD_ROUTE_TCP;
+    }
+    /*
+     * 上一次 TCP 实际发送成功后，连续失败/断开时保留 10 秒保护窗口。
+     * 保护期内不降级到 CAN/LoRa；满 10 秒后下一次选路才允许备用链路。
+     */
+    fsy_link_tcp_hold_arm_if_needed();
+    if (fsy_link_tcp_hold_active()) {
         return FSY_UPLOAD_ROUTE_TCP;
     }
     if (CanDriver_IsReady() && CanHb_IsZjbLinked()) {
@@ -240,6 +274,7 @@ void Fsy_Link_PollUploadRoute(void)
 int Fsy_Link_WriteUpload(const uint8_t *data, uint16_t len)
 {
     int uart_rc;
+    int net_rc;
     FsyUploadRoute route;
 
     if ((data == NULL) || (len == 0U)) {
@@ -247,13 +282,33 @@ int Fsy_Link_WriteUpload(const uint8_t *data, uint16_t len)
     }
 
     Fsy_Link_PollUploadRoute();
-    route = s_last_upload_route;
+    route = fsy_link_resolve_upload_route();
 
     uart_rc = Uart1_Port_Write(data, len);
 
     switch (route) {
     case FSY_UPLOAD_ROUTE_TCP:
-        (void)Net_Tcp_Write(data, len);
+        net_rc = Net_Tcp_Write(data, len);
+        if (net_rc == (int)len) {
+            s_tcp_success_latched = true;
+            s_tcp_fail_since_ms = 0U;
+        } else if (s_tcp_success_latched) {
+            uint32_t now = HAL_GetTick();
+            uint32_t elapsed;
+            char msg[56];
+
+            if (s_tcp_fail_since_ms == 0U) {
+                s_tcp_fail_since_ms = now;
+            }
+            elapsed = now - s_tcp_fail_since_ms;
+            if (elapsed < FSY_TCP_HOLD_MS) {
+                (void)snprintf(msg, sizeof(msg),
+                               "[LINK] TCP hold %lu/%lu ms\r\n",
+                               (unsigned long)elapsed,
+                               (unsigned long)FSY_TCP_HOLD_MS);
+                UartDiag_Write(msg);
+            }
+        }
         break;
     case FSY_UPLOAD_ROUTE_CAN:
         (void)CanDriver_TransmitRtu(data, len);

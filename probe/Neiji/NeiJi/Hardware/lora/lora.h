@@ -28,6 +28,19 @@ extern "C" {
 #define LORA_CFG_RSP_LEN        (6U)    /* 读配置应答：C0 + 5 字节参数 */
 #define LORA_UART_FRAME_GAP_MS  (5U)    /* 字节间隔超过此值视为一帧结束 */
 #define LORA_AUX_TIMEOUT_MS     (500U)
+/* 先听后发：信道刚忙过则随机退避再试，降低多机同频道碰撞 */
+#ifndef LORA_CSMA_QUIET_MS
+#define LORA_CSMA_QUIET_MS      (50U)
+#endif
+#ifndef LORA_CSMA_BACKOFF_MIN_MS
+#define LORA_CSMA_BACKOFF_MIN_MS (15U)
+#endif
+#ifndef LORA_CSMA_BACKOFF_SPAN_MS
+#define LORA_CSMA_BACKOFF_SPAN_MS (65U) /* 实际退避 = MIN + [0..SPAN] */
+#endif
+#ifndef LORA_CSMA_RETRY_MAX
+#define LORA_CSMA_RETRY_MAX     (4U)
+#endif
 #define LORA_CFG_RX_TIMEOUT_MS  (500U)
 #define LORA_SYNC_MAX_RETRY     (3U)    /* 地址/信道与 Flash 不一致时最多写入重试次数 */
 #define LORA_ChanToMHz(chan)    (410U + (uint32_t)(chan))

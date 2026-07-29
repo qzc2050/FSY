@@ -10,6 +10,7 @@
 #include "FreeRTOS.h"
 #include "semphr.h"
 
+#include <stdio.h>
 #include <string.h>
 
 static SemaphoreHandle_t s_net_tx_mutex = NULL;
@@ -18,6 +19,45 @@ static uint8_t s_phy_link_up = 1;
 static uint32_t s_sock_con_ms = 0;
 static uint32_t s_listen_retry_ms = 0;
 static uint8_t s_sock_prev_st = SOCK_CLOSED;
+
+/** 曾建立会话时打印断开；同 reason 1 秒内去重 */
+static void net_tcp_log_disconn(const char *reason, uint8_t prev_st, uint8_t sr)
+{
+    static uint32_t s_last_ms;
+    static char s_last_reason[12];
+    uint32_t now = HAL_GetTick();
+
+    if ((prev_st != SOCK_ESTABLISHED) && (prev_st != SOCK_CLOSE_WAIT)) {
+        return;
+    }
+    if ((s_last_reason[0] != '\0') &&
+        (strncmp(s_last_reason, reason, sizeof(s_last_reason)) == 0) &&
+        ((now - s_last_ms) < 1000U)) {
+        return;
+    }
+    (void)snprintf(s_last_reason, sizeof(s_last_reason), "%s", reason);
+    s_last_ms = now;
+    printf("[TCP] disconnected reason=%s prev=0x%02X sr=0x%02X\r\n",
+           reason, (unsigned)prev_st, (unsigned)sr);
+}
+
+static void net_tcp_log_connected(uint8_t sr)
+{
+    printf("[TCP] connected sr=0x%02X\r\n", (unsigned)sr);
+}
+
+/** 发送失败但 socket 可能仍 ESTABLISHED；1 秒去重 */
+static void net_tcp_log_send_fail(uint8_t sr)
+{
+    static uint32_t s_last_ms;
+    uint32_t now = HAL_GetTick();
+
+    if ((s_last_ms != 0U) && ((now - s_last_ms) < 1000U)) {
+        return;
+    }
+    s_last_ms = now;
+    printf("[TCP] send fail sr=0x%02X (conn may still be up)\r\n", (unsigned)sr);
+}
 
 static void net_tx_mutex_init(void)
 {
@@ -176,6 +216,9 @@ static void net_phy_link_maintain(void)
             return;
         }
         s_phy_link_up = link_up;
+        if ((tcp_sr == SOCK_ESTABLISHED) || (tcp_sr == SOCK_CLOSE_WAIT)) {
+            net_tcp_log_disconn("PHY_DOWN", tcp_sr, tcp_sr);
+        }
         close(SETTING_SOCKET_NUM);
         g_tcp_sock_ready = 0;
         return;
@@ -233,10 +276,17 @@ static void net_tcp_socket_maintain(uint8_t sock, uint16_t port)
     if ((ir & Sn_IR_CON) && (status == SOCK_ESTABLISHED) && (prev_st != SOCK_ESTABLISHED)) {
         setSn_IR(sock, Sn_IR_CON);
         s_sock_con_ms = now;
+        net_tcp_log_connected(status);
     } else if (ir & Sn_IR_CON) {
         setSn_IR(sock, Sn_IR_CON);
     }
 
+    if (ir & Sn_IR_DISCON) {
+        net_tcp_log_disconn("DISCON", prev_st, status);
+    }
+    if (ir & Sn_IR_TIMEOUT) {
+        net_tcp_log_disconn("TIMEOUT", prev_st, status);
+    }
     if (ir & (Sn_IR_DISCON | Sn_IR_TIMEOUT)) {
         setSn_IR(sock, ir & (Sn_IR_DISCON | Sn_IR_TIMEOUT));
         net_tcp_recover_listen(sock, port);
@@ -251,6 +301,7 @@ static void net_tcp_socket_maintain(uint8_t sock, uint16_t port)
 
     case SOCK_CLOSE_WAIT:
         if (prev_st == SOCK_ESTABLISHED) {
+            net_tcp_log_disconn("CLOSE_WAIT", prev_st, status);
             disconnect(sock);
         } else if (prev_st == SOCK_CLOSE_WAIT) {
             net_tcp_recover_listen(sock, port);
@@ -262,6 +313,7 @@ static void net_tcp_socket_maintain(uint8_t sock, uint16_t port)
     case SOCK_TIME_WAIT:
     case SOCK_LAST_ACK:
         if (prev_st != status) {
+            net_tcp_log_disconn("CLOSING", prev_st, status);
             close(sock);
         } else {
             net_tcp_recover_listen(sock, port);
@@ -282,6 +334,7 @@ static void net_tcp_socket_maintain(uint8_t sock, uint16_t port)
         if (prev_st != status) {
             s_sock_con_ms = now;
         } else if ((now - s_sock_con_ms) >= NET_TCP_SYN_HOLD_MS) {
+            net_tcp_log_disconn("SYN_TIMEOUT", prev_st, status);
             net_tcp_recover_listen(sock, port);
         }
         break;
@@ -363,6 +416,7 @@ void Net_Tcp_PeriodicMaintain(void)
             return;
         }
         if (sr == SOCK_CLOSE_WAIT) {
+            net_tcp_log_disconn("CLOSE_WAIT", s_sock_prev_st, sr);
             net_tcp_recover_listen(SETTING_SOCKET_NUM, SETTING_SOCKET_PORT);
         }
         return;
@@ -445,6 +499,9 @@ int Net_Tcp_Write(const uint8_t *data, uint16_t len)
 #if NET_STATUS_LOG
         why = "send_err";
 #endif
+        if (Net_Tcp_IsConnected()) {
+            net_tcp_log_send_fail(getSn_SR(SETTING_SOCKET_NUM));
+        }
         net_tcp_socket_maintain(SETTING_SOCKET_NUM, SETTING_SOCKET_PORT);
     }
 

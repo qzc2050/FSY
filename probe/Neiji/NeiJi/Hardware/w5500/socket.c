@@ -245,7 +245,8 @@ uint16_t send(SOCKET s, const uint8_t * buf, uint16_t len)
     {
       /* OTA 期间勿 close：避免误拆会话后 listen recovered、上位机 DATA 超时 */
       if (OTA_IsRealtimeMuted() == 0U) {
-        printf("SEND_OK Problem!!\r\n");
+        printf("[TCP] disconnected reason=SEND_OK sr=0x%02X\r\n",
+               (unsigned)status);
         close(s);
       }
       return 0;
@@ -253,7 +254,7 @@ uint16_t send(SOCKET s, const uint8_t * buf, uint16_t len)
     if ((HAL_GetTick() - t0) >= busy_ms)
     {
       if (OTA_IsRealtimeMuted() == 0U) {
-        printf("SEND timeout\r\n");
+        printf("[TCP] send timeout sr=0x%02X\r\n", (unsigned)status);
       }
       return 0;
     }

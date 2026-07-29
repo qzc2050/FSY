@@ -26,6 +26,8 @@ static uint32_t s_lora_asm_last_tick;
 static SemaphoreHandle_t s_lora_uart_mtx = NULL;
 static volatile uint8_t s_lora_cfg_active = 0U;
 static volatile uint8_t s_lora_cfg_internal = 0U;
+/** 最近一次观测到信道忙（AUX 低或收到空口数据）的时刻 */
+static volatile uint32_t s_lora_last_busy_ms;
 
 #if LORA_UART_RX_IRQ
 static volatile uint8_t s_lora_rx_ring[LORA_UART_RX_RING_SIZE];
@@ -45,6 +47,9 @@ static void lora_dbg_uart_flags(void);
 #endif
 
 static void lora_delay_ms(uint32_t ms);
+static void lora_mark_channel_busy(void);
+static bool lora_channel_recently_busy(void);
+static uint32_t lora_csma_backoff_ms(void);
 static bool lora_wait_aux_ready(uint32_t timeout_ms);
 static bool lora_wait_after_mode_change(uint32_t timeout_ms);
 static bool lora_uart_poll_byte(uint8_t *b, bool *from_ore);
@@ -208,7 +213,8 @@ bool LORA_Init(void)
 
 bool LORA_Transmit(uint8_t *pdata, uint16_t len)
 {
-    bool ok;
+    bool ok = false;
+    uint8_t attempt;
 
     if (s_lora_sw_enable == 0U || s_lora_ready == 0U) {
         return false;
@@ -226,19 +232,39 @@ bool LORA_Transmit(uint8_t *pdata, uint16_t len)
        xSemaphoreTake(s_lora_uart_mtx, pdMS_TO_TICKS(500)) != pdTRUE)
         return false;
 
-    if(!lora_wait_aux_ready(LORA_AUX_TIMEOUT_MS))
-    {
-        if(s_lora_uart_mtx != NULL)
-            (void)xSemaphoreGive(s_lora_uart_mtx);
-        return false;
-    }
+    for (attempt = 0U; attempt < LORA_CSMA_RETRY_MAX; attempt++) {
+        if (!lora_wait_aux_ready(LORA_AUX_TIMEOUT_MS)) {
+            break;
+        }
 
-    ok = lora_uart_transmit_raw(pdata, len);
-    if(ok)
-        ok = lora_wait_aux_ready(LORA_AUX_TIMEOUT_MS);
+        /*
+         * 信道刚忙过（别人刚发完/本机刚收完）：随机退避后再侦听，
+         * 最后一次尝试不再退避，避免长期饿死。
+         */
+        if (lora_channel_recently_busy() &&
+            ((uint8_t)(attempt + 1U) < LORA_CSMA_RETRY_MAX)) {
+            uint32_t backoff = lora_csma_backoff_ms();
+            char msg[56];
 
-    if(ok) {
-        printf("[LORA] TX %u bytes\r\n", (unsigned)len);
+            (void)snprintf(msg, sizeof(msg),
+                           "[LORA] CSMA backoff %lu ms (%u/%u)\r\n",
+                           (unsigned long)backoff,
+                           (unsigned)(attempt + 1U),
+                           (unsigned)LORA_CSMA_RETRY_MAX);
+            UartDiag_Write(msg);
+            lora_delay_ms(backoff);
+            continue;
+        }
+
+        ok = lora_uart_transmit_raw(pdata, len);
+        if (ok) {
+            lora_mark_channel_busy();
+            ok = lora_wait_aux_ready(LORA_AUX_TIMEOUT_MS);
+        }
+        if (ok) {
+            printf("[LORA] TX %u bytes\r\n", (unsigned)len);
+        }
+        break;
     }
 
     if(s_lora_uart_mtx != NULL)
@@ -547,6 +573,7 @@ static bool lora_uart_rx_ring_push(uint8_t b)
 
     s_lora_rx_ring[s_lora_rx_head] = b;
     s_lora_rx_head = next;
+    lora_mark_channel_busy();
     return true;
 }
 
@@ -680,12 +707,41 @@ static void lora_delay_ms(uint32_t ms)
         HAL_Delay(ms);
 }
 
+static void lora_mark_channel_busy(void)
+{
+    s_lora_last_busy_ms = HAL_GetTick();
+}
+
+static bool lora_channel_recently_busy(void)
+{
+    uint32_t last = s_lora_last_busy_ms;
+    uint32_t now;
+
+    if (last == 0U) {
+        return false;
+    }
+    now = HAL_GetTick();
+    return ((now - last) < LORA_CSMA_QUIET_MS);
+}
+
+static uint32_t lora_csma_backoff_ms(void)
+{
+    uint32_t seed = HAL_GetTick();
+    uint8_t addr = Fsy_Dispatch_GetDeviceAddr();
+
+    /* 用 tick + 地址打散，避免多机选到同一退避间隔 */
+    seed ^= ((uint32_t)addr * 2654435761U);
+    seed ^= (seed << 7) ^ (seed >> 3);
+    return LORA_CSMA_BACKOFF_MIN_MS + (seed % (LORA_CSMA_BACKOFF_SPAN_MS + 1U));
+}
+
 static bool lora_wait_aux_ready(uint32_t timeout_ms)
 {
     uint32_t start = HAL_GetTick();
 
     while(HAL_GPIO_ReadPin(LORA_AUX_GPIO_Port, LORA_AUX_Pin) == GPIO_PIN_RESET)
     {
+        lora_mark_channel_busy();
         if((HAL_GetTick() - start) >= timeout_ms)
         {
             LORA_DBG("AUX 等待就绪超时 (%lu ms)\r\n", (unsigned long)timeout_ms);
@@ -1354,6 +1410,7 @@ void LORA_Poll(void)
 
     n = LORA_Receive(chunk, 0, 0);
     if (n > 0U) {
+        lora_mark_channel_busy();
         lora_log_rx_data(chunk, n);
         if ((s_lora_asm_len + n) > (uint16_t)sizeof(s_lora_asm_buf)) {
             s_lora_asm_len = 0U;
